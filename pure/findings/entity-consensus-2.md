@@ -33,6 +33,6 @@ og (`core/`, `jurisdictions/`) is the spec. Tests: `pure/diff/entity-consensus-2
 | prepareDispute, disputeStart, disputeFinalize | PARTIAL | prepare/start are FIXED (entity-txs-3 T3-7), except orderbook removal, argument override and cross-j. disputeFinalize is REMAINING (finalize-proof selection, crontab) |
 | settle_* | REMAINING | og payments/settle.ts entity settlement orchestration is not ported (entity-txs-3) |
 | entityProvider* | FIXED | boards.md EP-1..EP-5 |
-| boardHandover | REMAINING | boards.md BH-1 |
+| boardHandover | FIXED | entity-j.md EJ-6 (consensus signing parts REMAINING: EJ-R3) |
 | entityCommand, runtimeOutput | PARTIAL | entityCommand is FIXED (entity-txs-3 T3-1). runtimeOutput is REMAINING (the cross-j agent owns it) |
 | j-batch / r2r / r2c, cross-j, htlcPayment / onion, lending | n/a | Owned by other agents |

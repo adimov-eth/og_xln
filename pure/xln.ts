@@ -869,11 +869,11 @@ const earliestDebt = (l: DebtLedger, dir: "out" | "in", tokenId: number, debtor:
 export const applyDebtEvent = (l: DebtLedger, entity: string, e: Extract<JEvent, { readonly type: "DebtCreated" }> | Extract<JEvent, { readonly type: "DebtEnforced" }> | Extract<JEvent, { readonly type: "DebtForgiven" }>): Result<DebtLedger, JObserveError> => {
   const me = entity.toLowerCase(), tokenId = Number(e.tokenId), block = e.meta?.blockNumber ?? 0, txHash = e.meta?.transactionHash ?? "";
   if (e.type === "DebtCreated") {
-    if (e.amount <= 0n) return observeErr("DEBT_CREATED_AMOUNT_INVALID");
+    if (e.amount <= 0n) return observeErr(`DEBT_CREATED_AMOUNT_INVALID:${e.amount}`);
     const index = Number(e.debtIndex), debtId = `${e.debtor.toLowerCase()}:${tokenId}:${index}:${block}:${txHash.toLowerCase()}`, dir = debtSide(me, e.debtor, e.creditor);
     if (dir === undefined) return ok(l);
     const held = l[dir].get(tokenId)?.get(debtId);
-    if (held !== undefined) return held.lastEventType === "DebtCreated" && held.createdAmount === e.amount && held.remainingAmount === e.amount && held.paidAmount === 0n ? ok(l) : observeErr("DEBT_CREATED_ID_CONFLICT");
+    if (held !== undefined) return held.lastEventType === "DebtCreated" && held.createdAmount === e.amount && held.remainingAmount === e.amount && held.paidAmount === 0n ? ok(l) : observeErr(`DEBT_CREATED_ID_CONFLICT:${debtId}`);
     return ok(putDebt(l, { debtId, tokenId, debtor: e.debtor, creditor: e.creditor, counterparty: dir === "out" ? e.creditor : e.debtor, direction: dir, createdAmount: e.amount, paidAmount: 0n, remainingAmount: e.amount,
       createdDebtIndex: index, currentDebtIndex: index, status: "open", createdAtBlock: block, createdTxHash: txHash, lastUpdatedBlock: block, lastUpdatedTxHash: txHash, lastEventType: "DebtCreated" }));
   }
@@ -881,13 +881,13 @@ export const applyDebtEvent = (l: DebtLedger, entity: string, e: Extract<JEvent,
   if (dir === undefined) return ok(l);
   if (e.type === "DebtForgiven") {
     const d = earliestDebt(l, dir, tokenId, e.debtor, e.creditor, Number(e.debtIndex));
-    if (d === undefined) return observeErr("DEBT_LEDGER_DIVERGENCE:DebtForgiven");
-    return e.amountForgiven !== d.remainingAmount ? observeErr("DEBT_FORGIVEN_AMOUNT_MISMATCH") : ok(retireDebt(l, d));
+    if (d === undefined) return observeErr(`DEBT_LEDGER_DIVERGENCE:DebtForgiven:missing-open-debt:index=${Number(e.debtIndex)}:${tokenId}:${e.debtor}:${e.creditor}`);
+    return e.amountForgiven !== d.remainingAmount ? observeErr(`DEBT_FORGIVEN_AMOUNT_MISMATCH:${d.debtId}:expected=${d.remainingAmount}:actual=${e.amountForgiven}`) : ok(retireDebt(l, d));
   }
   const d = earliestDebt(l, dir, tokenId, e.debtor, e.creditor);
-  if (d === undefined) return observeErr("DEBT_LEDGER_DIVERGENCE:DebtEnforced");
-  if (e.amountPaid <= 0n || e.remainingAmount < 0n || e.amountPaid + e.remainingAmount !== d.remainingAmount) return observeErr("DEBT_ENFORCED_AMOUNT_MISMATCH");
-  if (Number(e.newDebtIndex) !== (e.remainingAmount === 0n ? d.currentDebtIndex + 1 : d.currentDebtIndex)) return observeErr("DEBT_ENFORCED_INDEX_MISMATCH");
+  if (d === undefined) return observeErr(`DEBT_LEDGER_DIVERGENCE:DebtEnforced:missing-open-debt:${tokenId}:${e.debtor}:${e.creditor}`);
+  if (e.amountPaid <= 0n || e.remainingAmount < 0n || e.amountPaid + e.remainingAmount !== d.remainingAmount) return observeErr(`DEBT_ENFORCED_AMOUNT_MISMATCH:${d.debtId}:before=${d.remainingAmount}:paid=${e.amountPaid}:after=${e.remainingAmount}`);
+  if (Number(e.newDebtIndex) !== (e.remainingAmount === 0n ? d.currentDebtIndex + 1 : d.currentDebtIndex)) return observeErr(`DEBT_ENFORCED_INDEX_MISMATCH:${d.debtId}:expected=${e.remainingAmount === 0n ? d.currentDebtIndex + 1 : d.currentDebtIndex}:actual=${Number(e.newDebtIndex)}`);
   if (e.remainingAmount === 0n) return ok(retireDebt(l, d));
   return ok(putDebt(l, { ...d, paidAmount: d.paidAmount + e.amountPaid, remainingAmount: e.remainingAmount, currentDebtIndex: Number(e.newDebtIndex), lastUpdatedBlock: block, lastUpdatedTxHash: txHash, lastEventType: "DebtEnforced" }));
 };
@@ -971,8 +971,10 @@ export const disputeFinalizedInput = (e: Extract<JEvent, { readonly type: "Dispu
 // ---- og jBatchState (core/jurisdiction/machine/batch/{index,reserve-simulation}.ts, entity/tx/handlers/j-batch/*, j-events-batch.ts) ----
 export type SentJBatch = {
   readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly firstSubmittedAt: number; readonly lastSubmittedAt: number; readonly submitAttempts: number;
-  readonly terminalFailure?: { readonly message: string; readonly failedAt: number } | undefined; readonly feeOverrides?: { readonly gasBumpBps: number } | undefined;
+  readonly terminalFailure?: { readonly message: string; readonly failedAt: number } | undefined; readonly feeOverrides?: FeeOverrides | undefined;
 };
+/** og JTx batch `feeOverrides` (types/jurisdiction-runtime.ts). */
+export type FeeOverrides = { readonly gasBumpBps?: number | undefined; readonly maxFeePerGasWei?: string | undefined; readonly maxPriorityFeePerGasWei?: string | undefined };
 /** og JBatchState: the editable draft, the one in-flight sent batch, recovered work that broadcasts first, and the last chain-observed entity nonce. */
 export type JBatchState = {
   readonly batch: Batch; readonly jurisdiction: null; readonly lastBroadcast: number; readonly broadcastCount: number; readonly failedAttempts: number; readonly status: "empty" | "accumulating" | "sent" | "failed";
@@ -1136,7 +1138,7 @@ export const queueR2E = (e: JEntity, receivingEntity: string, tokenId: number, a
 };
 /** og handleE2R: a non-zero token contract and a positive amount, credited to this Entity when the batch executes. */
 export const queueE2R = (e: JEntity, x: { readonly contractAddress: string; readonly amount: bigint; readonly tokenType?: number | undefined; readonly externalTokenId?: bigint | undefined; readonly internalTokenId?: number | undefined }): Result<JBatchState, JBatchError> => {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(x.contractAddress) || /^0x0{40}$/.test(x.contractAddress)) return batchErr(`Invalid external token contract: ${x.contractAddress}`);
+  if (usableAddress(x.contractAddress) === null) return batchErr(`Invalid external token contract: ${x.contractAddress}`);
   if (x.amount <= 0n) return batchErr("External → Reserve amount must be positive");
   return addOp(e.jBatch ?? initJBatch(), "externalTokenToReserve", { entity: e.entityId, contractAddress: x.contractAddress, externalTokenId: x.externalTokenId ?? 0n, tokenType: BigInt(x.tokenType ?? 0), internalTokenId: BigInt(x.internalTokenId ?? 0), amount: x.amount }, "externalTokenToReserve");
 };
@@ -1165,12 +1167,12 @@ export const takeBroadcastBatch = (b: Batch): { readonly selected: Batch; readon
   return { selected: { ...emptyBatch(), ...base, disputeFinalizations: b.disputeFinalizations.slice(0, 1) }, remainder: { ...b, disputeStarts: [], counterDisputes: [], disputeFinalizations: b.disputeFinalizations.slice(1), revealSecrets: [] }, disputePriority: true };
 };
 /** og JTx `batch` (types/jurisdiction-runtime.ts) as j_broadcast emits it, before the quorum Hanko is attached. */
-export type JBatchTx = { readonly type: "batch"; readonly entityId: string; readonly data: { readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly batchGeneration: number; readonly batchSize: number; readonly signerId: string; readonly feeOverrides?: { readonly gasBumpBps: number } | undefined }; readonly timestamp: number };
+export type JBatchTx = { readonly type: "batch"; readonly entityId: string; readonly data: { readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly batchGeneration: number; readonly batchSize: number; readonly signerId: string; readonly feeOverrides?: FeeOverrides | undefined }; readonly timestamp: number };
 /** og HashToSign of type "jBatch" (the Entity quorum signs the batch hash for Hanko). */
 export type JBatchHashToSign = { readonly hash: string; readonly type: "jBatch"; readonly context: string };
 export type Broadcast = { readonly jBatch: JBatchState; readonly jTx?: JBatchTx | undefined; readonly hashToSign?: JBatchHashToSign | undefined; readonly note?: string | undefined };
 /** og handleJBroadcast: refuse while a batch is in flight; skip an empty draft; seal the next batch (recovery first) at entityNonce + 1, park the rest, and hand its batch hash to the quorum. */
-export const jBroadcast = (s: JBatchState | undefined, ctx: { readonly entityId: string; readonly chainId: number; readonly depository: string; readonly signerId: string; readonly timestamp: number }): Result<Broadcast, JBatchError> => {
+export const jBroadcast = (s: JBatchState | undefined, ctx: { readonly entityId: string; readonly chainId: number; readonly depository: string; readonly signerId: string; readonly timestamp: number; readonly feeOverrides?: FeeOverrides | undefined }): Result<Broadcast, JBatchError> => {
   if (s === undefined) return batchErr("No jBatchState found for j_broadcast");
   if (s.sentBatch !== undefined) return batchErr(`Cannot broadcast: sentBatch pending nonce=${s.sentBatch.entityNonce} attempts=${s.sentBatch.submitAttempts}`);
   if (!hasJBatchWork(s)) return ok({ jBatch: s, note: "j_broadcast skipped: jBatch is empty" });
@@ -1180,12 +1182,15 @@ export const jBroadcast = (s: JBatchState | undefined, ctx: { readonly entityId:
   if (!domainOf({ chainId: ctx.chainId, depositoryAddress: ctx.depository }).ok || /^0x0{40}$/.test(ctx.depository)) return batchErr(`INVALID_HANKO_DOMAIN:${ctx.chainId}:${ctx.depository}`);
   const limit = jBatchLimitIssue(selected);
   if (limit !== undefined) return batchErr(`J_BATCH_LIMIT_EXCEEDED: j_broadcast: ${limit}`);
-  const nonce = (s.entityNonce ?? 0) + 1, encodedBatch = encodeBatch(selected), batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(nonce) }), generation = s.broadcastCount + 1;
+  const encoded = encodeJBatch(selected);
+  if (!encoded.ok) return encoded;
+  const nonce = (s.entityNonce ?? 0) + 1, encodedBatch = encoded.value, batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(nonce) }), generation = s.broadcastCount + 1;
+  const fee = ctx.feeOverrides === undefined ? {} : { feeOverrides: { ...ctx.feeOverrides } };
   const queue = fromRecovery ? (batchEmpty(remainder) ? (s.recoveryBatches ?? []).slice(1) : [remainder, ...(s.recoveryBatches ?? []).slice(1)]) : s.recoveryBatches;
   const { recoveryBatches: _r, autoBroadcastDraft: _a, ...rest } = s;
   const parked: JBatchState = { ...rest, batch: fromRecovery ? s.batch : remainder, ...(queue === undefined || queue.length === 0 ? {} : { recoveryBatches: queue }) };
-  const jBatch: JBatchState = { ...parked, ...(hasJBatchWork(parked) ? { autoBroadcastDraft: true } : {}), sentBatch: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, firstSubmittedAt: ctx.timestamp, lastSubmittedAt: 0, submitAttempts: 0 }, broadcastCount: generation, lastBroadcast: ctx.timestamp, status: "sent" };
-  return ok({ jBatch, jTx: { type: "batch", entityId: ctx.entityId, data: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, batchGeneration: generation, batchSize: batchOpCount(selected), signerId: ctx.signerId }, timestamp: ctx.timestamp },
+  const jBatch: JBatchState = { ...parked, ...(hasJBatchWork(parked) ? { autoBroadcastDraft: true } : {}), sentBatch: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, firstSubmittedAt: ctx.timestamp, lastSubmittedAt: 0, submitAttempts: 0, ...fee }, broadcastCount: generation, lastBroadcast: ctx.timestamp, status: "sent" };
+  return ok({ jBatch, jTx: { type: "batch", entityId: ctx.entityId, data: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, batchGeneration: generation, ...fee, batchSize: batchOpCount(selected), signerId: ctx.signerId }, timestamp: ctx.timestamp },
     hashToSign: { hash: batchHash, type: "jBatch", context: `jBatch:${ctx.entityId.slice(-4)}:nonce:${nonce}` } });
 };
 /** og j-events-batch.ts applyHankoBatchProcessedEvent: the chain nonce is authoritative; the exact pending (nonce, hash) finalizes, a different hash at or past it quarantines the pending batch.
@@ -1215,13 +1220,15 @@ export const jRebroadcast = (s: JBatchState | undefined, ctx: { readonly entityI
   if (ctx.signerId === "") return batchErr("❌ No signerId available for j_rebroadcast");
   const bump = gasBump(ctx.gasBumpBps);
   if (ctx.chainId === 0) return ok({ jBatch: s, note: "❌ Missing chainId for j_rebroadcast" });
-  if (!domainOf({ chainId: ctx.chainId, depositoryAddress: ctx.depository }).ok || /^0x0{40}$/.test(ctx.depository)) return ok({ jBatch: s, note: `❌ Jurisdiction unavailable for j_rebroadcast: depository ${ctx.depository}` });
+  if (!domainOf({ chainId: ctx.chainId, depositoryAddress: ctx.depository }).ok || /^0x0{40}$/.test(ctx.depository)) return ok({ jBatch: s, note: "❌ Jurisdiction unavailable for j_rebroadcast: INVALID_DEPOSITORY_ADDRESS" });
   const generation = s.broadcastCount + 1;
   if (batchEmpty(sent.batch)) {
     const { sentBatch: _s, ...rest } = s;
     return ok({ jBatch: { ...rest, status: batchEmpty(s.batch) ? "empty" : "accumulating" }, note: `🧹 j_rebroadcast cleared empty stale sentBatch nonce=${sent.entityNonce}` });
   }
-  const encodedBatch = encodeBatch(sent.batch), batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(sent.entityNonce) }), fee = bump === undefined ? {} : { feeOverrides: { gasBumpBps: bump } };
+  const encoded = encodeJBatch(sent.batch);
+  if (!encoded.ok) return encoded;
+  const encodedBatch = encoded.value, batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(sent.entityNonce) }), fee = bump === undefined ? {} : { feeOverrides: { gasBumpBps: bump } };
   const jBatch: JBatchState = { ...s, sentBatch: { ...sent, batchHash, encodedBatch, ...fee }, lastBroadcast: ctx.timestamp, broadcastCount: generation, status: "sent" };
   return ok({ jBatch, note: `📤 Rebroadcast intent queued nonce=${sent.entityNonce}${bump === undefined ? "" : ` bump=${bump}bps`}`,
     jTx: { type: "batch", entityId: ctx.entityId, data: { batch: sent.batch, batchHash, encodedBatch, entityNonce: sent.entityNonce, batchGeneration: generation, batchSize: batchOpCount(sent.batch), signerId: ctx.signerId, ...fee }, timestamp: ctx.timestamp },
@@ -4609,7 +4616,23 @@ export type EntityTx =
   | { readonly type: "initOrderbookExt"; readonly data: { readonly name: string; readonly spreadDistribution: SpreadDistribution; readonly referenceTokenId: number; readonly usdQuoteAuthorityEntityId: string; readonly minTradeSize: bigint; readonly supportedPairs: readonly string[] } }
   | SwapRequestEntityTx
   | LendingEntityTx
-  | SettleEntityTx;
+  | SettleEntityTx
+  | JBatchEntityTx;
+/** og types/entity-tx.ts J-batch txs (entity/tx/handlers/j-batch): queue reserve ops into the committed jBatchState, seal / resend / abort / clear it, the direct admin mint. */
+export type JBatchEntityTx =
+  | { readonly type: "r2r"; readonly data: { readonly toEntityId: string; readonly tokenId: number; readonly amount: bigint } }
+  | { readonly type: "r2e"; readonly data: { readonly receivingEntity: string; readonly tokenId: number; readonly amount: bigint } }
+  | { readonly type: "r2c"; readonly data: { readonly counterpartyId: string; readonly receivingEntityId?: string | undefined; readonly tokenId: number; readonly amount: bigint; readonly rebalanceQuoteId?: number | undefined; readonly rebalanceFeeTokenId?: number | undefined; readonly rebalanceFeeAmount?: bigint | undefined } }
+  | { readonly type: "e2r"; readonly data: { readonly contractAddress: string; readonly tokenType?: number | undefined; readonly externalTokenId?: bigint | undefined; readonly internalTokenId?: number | undefined; readonly amount: bigint } }
+  | { readonly type: "j_broadcast"; readonly data: { readonly hankoSignature?: string | undefined; readonly feeOverrides?: FeeOverrides | undefined } }
+  | { readonly type: "j_rebroadcast"; readonly data: { readonly gasBumpBps?: number | undefined } }
+  | { readonly type: "j_abort_sent_batch"; readonly data: { readonly reason?: string | undefined; readonly requeueToCurrent?: boolean | undefined } }
+  | { readonly type: "j_clear_batch"; readonly data: { readonly reason?: string | undefined } }
+  | { readonly type: "mintReserves"; readonly data: { readonly tokenId: number; readonly amount: bigint } }
+  // og j_event: the active proposer's signed, canonical J range (JurisdictionEventData) the Entity certifies
+  | { readonly type: "j_event"; readonly data: { readonly [field: string]: Binary } }
+  // og boardHandover: the new board an on-chain BoardActivated chain in the same frame's j_event authorizes
+  | { readonly type: "boardHandover"; readonly data: { readonly board: HandoverConfig } };
 /** og types/entity-tx.ts settlement workspace operations (payments/settle.ts). */
 export type SettleEntityTx =
   | { readonly type: "settle_propose"; readonly data: { readonly counterpartyEntityId: EntityId; readonly ops: readonly SettlementOp[]; readonly executorIsLeft?: boolean | undefined; readonly memo?: string | undefined; readonly continuation?: SettlementContinuationPlan | undefined } }
@@ -4647,7 +4670,7 @@ export type LendingEntityTx =
   | { readonly type: "lendingClosePosition"; readonly data: { readonly hubEntityId: string; readonly positionId: string } };
 /** og ProfileUpdateTx & { entityId }. */
 export type ProfileUpdate = { readonly entityId: string; readonly name?: string | undefined; readonly entityKind?: string | null | undefined; readonly sectors?: readonly string[] | undefined; readonly avatar?: string | undefined; readonly bio?: string | undefined; readonly website?: string | undefined };
-export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "settlement" | "entityProviderAction"; readonly context: string };
+export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "settlement" | "entityProviderAction" | "jBatch"; readonly context: string };
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
   readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[]; readonly leader: FrameLeader;
@@ -5255,7 +5278,7 @@ export const localTimeoutVote = (r: EntityReplica, timestamp: bigint): EntityInp
 };
 
 /** `activeJurisdiction`: og EntityRuntimeContext.activeJurisdiction (the Runtime's first imported J), the Htlc* jurisdictionId fallback. */
-type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined };
+type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined; readonly boardHandover?: HandoverConfig | undefined };
 type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 /** Who the tx is about: og routes accountInput by its envelope, the rest by an explicit counterparty. */
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
@@ -5269,6 +5292,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   settle_propose: (x) => x.data.counterpartyEntityId, settle_update: (x) => x.data.counterpartyEntityId, settle_approve: (x) => x.data.counterpartyEntityId, settle_execute: (x) => x.data.counterpartyEntityId, settle_reject: (x) => x.data.counterpartyEntityId,
   prepareCrossJurisdictionSwap: () => self, materializeCrossJurisdictionSwap: () => self, registerCrossJurisdictionSwap: () => self,
   admitCrossJurisdictionBookOrder: () => self, removeCrossJurisdictionBookOrder: () => self, crossJurisdictionBookOrderRemoved: () => self, crossJurisdictionFillNotice: () => self, requestCrossJurisdictionClear: () => self, materializeCrossJurisdictionClear: () => self, crossPullClose: () => self, orderbookSweepCrossJurisdiction: () => self, runtimeOutput: () => self, proposeAccountsNow: () => self, initOrderbookExt: () => self,
+  r2r: () => self, r2e: () => self, r2c: () => self, e2r: () => self, j_broadcast: () => self, j_rebroadcast: () => self, j_abort_sent_batch: () => self, j_clear_batch: () => self, mintReserves: () => self, j_event: () => self, boardHandover: () => self,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -6328,18 +6352,188 @@ export const executeCrontab = (state: EntityState, replicas: Replicas, now: numb
 });
 /**
  * og handleScheduledWakeEntityTx: validate the wake against the frame state, run the crontab at the frame timestamp, then apply its self-directed
- * collective txs in the same frame (og approvedEntityTxs). og's entity j_broadcast and orderbookSweepCrossJurisdiction are not Entity txs here.
+ * collective txs in the same frame (og approvedEntityTxs), j_broadcast and j_abort_sent_batch included. orderbookSweepCrossJurisdiction is the cross-j owner's.
  */
 const foldWake = (state: EntityState, replicas: Replicas, w: Extract<EntityTx, { type: "scheduledWake" }>["data"], ctx: FoldContext): Result<Draft, EntityError> =>
   chain(checkWake(state, w, Number(ctx.timestamp)), () => chain(executeCrontab(state, replicas, Number(ctx.timestamp)), (run): Result<Draft, EntityError> => {
-    const approved = run.outputs.flatMap((o) => o.txs), missing = approved.find((tx) => tx.type === "j_broadcast" || tx.type === "j_abort_sent_batch");
-    if (missing !== undefined) return invariant(`${missing.type === "j_broadcast" ? "J_BROADCAST" : "J_ABORT_SENT_BATCH"}_ENTITY_TX_NOT_PORTED`);
+    const approved = run.outputs.flatMap((o) => o.txs);
     // og returns the crontab's outputs to other Entities and its hashesToSign beside the approved self txs
     const own = (d: Draft): Draft => { const hashes = [...run.hashes, ...(d.hashes ?? [])]; return { ...d, outputs: [...run.sent, ...d.outputs], ...(hashes.length === 0 ? {} : { hashes }) }; };
     // og applyLocalAccountEffects: the wake's returned Account txs (a lending_overdue revoke) are admitted before its approved self txs
     const queued = run.accountTxs.reduce(queueReturned, { state: run.state, accountReplicas: run.accountReplicas, outputs: [] } as Draft);
     return map(approved.length === 0 ? ok(queued) : foldNested(queued.state, queued.accountReplicas, approved as readonly EntityTx[], ctx, "collective"), own);
   }));
+// ---- og entity/tx/handlers/j-batch/{r2r,r2e,e2r,r2c,j-broadcast,j-rebroadcast,j-abort-sent-batch,j-clear-batch,mint-reserves}.ts: the Entity J-batch txs on the committed (og-shaped) jBatchState ----
+type OgRow = { readonly [field: string]: unknown };
+type OgBatchRows = { readonly [field: string]: readonly Binary[] };
+const bigOf = (v: unknown): bigint => (typeof v === "bigint" ? v : BigInt(v as number | string));
+/** og ProofBodyStruct (Int512 offdeltas as {high, low}, numeric response seconds) or a rewrite ProofBody, as the ABI reads it. */
+const proofBodyOfOg = (p: OgRow): ProofBody => ({
+  watchSeed: String(p["watchSeed"]), leftResponseSeconds: bigOf(p["leftResponseSeconds"]), rightResponseSeconds: bigOf(p["rightResponseSeconds"]),
+  offdeltas: (p["offdeltas"] as readonly unknown[]).map((v) => (typeof v === "object" && v !== null ? bigOf((v as OgRow)["high"]) * (1n << 256n) + bigOf((v as OgRow)["low"]) : bigOf(v))),
+  tokenIds: (p["tokenIds"] as readonly unknown[]).map(bigOf),
+  transformers: (p["transformers"] as readonly OgRow[]).map((c) => ({ transformerAddress: String(c["transformerAddress"]), encodedBatch: String(c["encodedBatch"]),
+    allowances: (c["allowances"] as readonly OgRow[]).map((a) => ({ deltaIndex: bigOf(a["deltaIndex"]), rightAllowance: bigOf(a["rightAllowance"]), leftAllowance: bigOf(a["leftAllowance"]) })) })),
+});
+/** The ABI view of a committed og JBatch (og encodeJBatch's input): numbers widen to uint256, og Int512 offdeltas join. Idempotent on a rewrite Batch. */
+export const batchOfOg = (b: OgBatchRows | Batch): Batch => {
+  const rows = (f: string): readonly OgRow[] => ((b as unknown as OgBatchRows)[f] ?? []) as readonly OgRow[], s = (v: unknown): string => String(v);
+  return {
+    reserveToReserve: rows("reserveToReserve").map((r) => ({ receivingEntity: s(r["receivingEntity"]), tokenId: bigOf(r["tokenId"]), amount: bigOf(r["amount"]) })),
+    reserveToCollateral: rows("reserveToCollateral").map((r) => ({ tokenId: bigOf(r["tokenId"]), receivingEntity: s(r["receivingEntity"]), pairs: (r["pairs"] as readonly OgRow[]).map((p) => ({ entity: s(p["entity"]), amount: bigOf(p["amount"]) })) })),
+    collateralToReserve: rows("collateralToReserve").map((r) => ({ counterparty: s(r["counterparty"]), tokenId: bigOf(r["tokenId"]), amount: bigOf(r["amount"]), nonce: bigOf(r["nonce"]), sig: s(r["sig"]) })),
+    settlements: rows("settlements").map((r) => ({ leftEntity: s(r["leftEntity"]), rightEntity: s(r["rightEntity"]),
+      diffs: (r["diffs"] as readonly OgRow[]).map((d) => ({ tokenId: bigOf(d["tokenId"]), leftDiff: bigOf(d["leftDiff"]), rightDiff: bigOf(d["rightDiff"]), collateralDiff: bigOf(d["collateralDiff"]), ondeltaDiff: bigOf(d["ondeltaDiff"]) })),
+      forgiveDebtsInTokenIds: (r["forgiveDebtsInTokenIds"] as readonly unknown[]).map(bigOf), sig: s(r["sig"]), nonce: bigOf(r["nonce"]) })),
+    disputeStarts: rows("disputeStarts").map((r) => ({ counterentity: s(r["counterentity"]), nonce: bigOf(r["nonce"]), proposerIsLeft: r["proposerIsLeft"] === true, proofbodyHash: s(r["proofbodyHash"]), initialProofbody: proofBodyOfOg(r["initialProofbody"] as OgRow),
+      watchSeed: s(r["watchSeed"]), sig: s(r["sig"]), starterInitialArguments: s(r["starterInitialArguments"]), starterCounterArguments: s(r["starterCounterArguments"]), starterCounterProofCommitment: s(r["starterCounterProofCommitment"]) })),
+    counterDisputes: rows("counterDisputes").map((r) => ({ counterentity: s(r["counterentity"]), initialNonce: bigOf(r["initialNonce"]), initialProofbodyHash: s(r["initialProofbodyHash"]), counterNonce: bigOf(r["counterNonce"]), proposerIsLeft: r["proposerIsLeft"] === true, counterProofbody: proofBodyOfOg(r["counterProofbody"] as OgRow), sig: s(r["sig"]) })),
+    disputeFinalizations: rows("disputeFinalizations").map((r) => ({ counterentity: s(r["counterentity"]), initialNonce: bigOf(r["initialNonce"]), finalNonce: bigOf(r["finalNonce"]), proposerIsLeft: r["proposerIsLeft"] === true, initialProofbodyHash: s(r["initialProofbodyHash"]),
+      finalProofbody: proofBodyOfOg(r["finalProofbody"] as OgRow), starterArguments: s(r["starterArguments"]), otherArguments: s(r["otherArguments"]), sig: s(r["sig"]), startedByLeft: r["startedByLeft"] === true, cooperative: r["cooperative"] === true })),
+    externalTokenToReserve: rows("externalTokenToReserve").map((r) => ({ entity: s(r["entity"]), contractAddress: s(r["contractAddress"]), externalTokenId: bigOf(r["externalTokenId"]), tokenType: bigOf(r["tokenType"]), internalTokenId: bigOf(r["internalTokenId"]), amount: bigOf(r["amount"]) })),
+    reserveToExternalToken: rows("reserveToExternalToken").map((r) => ({ receivingEntity: s(r["receivingEntity"]), tokenId: bigOf(r["tokenId"]), amount: bigOf(r["amount"]) })),
+    revealSecrets: rows("revealSecrets").map((r) => ({ transformer: s(r["transformer"]), secret: s(r["secret"]) })),
+    hashLadderRegistrations: rows("hashLadderRegistrations").map((r) => {
+      const w = r["witness"] as OgRow, [a, b2, c, d] = (w["reveals"] as readonly unknown[]).map(s);
+      return { counterpartyEntity: s(r["counterpartyEntity"]), targetRole: r["targetRole"] === true, fullHash: s(r["fullHash"]), partialRoot: s(r["partialRoot"]), witness: { fillRatio: bigOf(w["fillRatio"]), fullSecret: s(w["fullSecret"]), reveals: [a ?? "", b2 ?? "", c ?? "", d ?? ""] as const } };
+    }),
+  };
+};
+/** og J_BATCH_CONTRACT_LIMITS.maxEncodedBatchBytes (encodeJBatch). */
+const MAX_ENCODED_BATCH_BYTES = 256 * 1024;
+/** og encodeJBatch: the ABI bytes of the batch, refused past the contract's encoded-size limit. */
+export const encodeJBatch = (b: OgBatchRows | Batch): Result<string, JBatchError> => {
+  const encoded = encodeBatch(batchOfOg(b)), size = (encoded.length - 2) / 2;
+  return size > MAX_ENCODED_BATCH_BYTES ? batchErr(`J_BATCH_ENCODED_BYTES_EXCEEDED:${size}/${MAX_ENCODED_BATCH_BYTES}`) : ok(encoded);
+};
+/** The committed jBatchState as the shared J-batch functions read it (every field they touch is shape-agnostic over og's numeric rows). */
+const entityJBatch = (state: EntityState): JBatchState | undefined => state.committed["jBatchState"] as unknown as JBatchState | undefined;
+const withEntityJBatch = (state: EntityState, jb: JBatchState | undefined): EntityState => (jb === undefined ? state : { ...state, committed: { ...state.committed, jBatchState: jb as unknown as Binary } });
+/** og EntityState outDebtsByToken / inDebtsByToken as the reserve simulation reads them. */
+const committedDebts = (state: EntityState): DebtLedger => {
+  const book = (v: Binary | undefined): DebtBook => (v instanceof Map ? (v as unknown as DebtBook) : new Map());
+  return { out: book(state.committed["outDebtsByToken"]), in: book(state.committed["inDebtsByToken"]) };
+};
+/** og getReserveCandidateIssue over the Entity's committed reserves, outgoing debts and draft batch. */
+const entityReserveIssue = (state: EntityState, replicas: Replicas, c: ReserveCandidate): ReserveIssue | undefined => {
+  const jb = entityJBatch(state);
+  return reserveCandidateIssue({ entityId: state.id, reserves: committedReserves(state), debts: committedDebts(state), accounts: new Set(replicas.keys()), jBatch: jb === undefined ? undefined : { ...jb, batch: batchOfOg(jb.batch) } }, c);
+};
+/** og batchAddReserveToReserve / batchAddReserveToExternal / batchAddExternalTokenToReserve: one appended og row within the 50-op contract limit. */
+const appendOgRow = (jb: JBatchState, field: "reserveToReserve" | "reserveToExternalToken" | "externalTokenToReserve", row: OgRow): Result<JBatchState, EntityError> => {
+  const next = batchOpCount(jb.batch) + 1;
+  if (next > J_BATCH_LIMITS.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: ${field} would exceed total ops ${next}/${J_BATCH_LIMITS.maxTotalOps}`);
+  return ok({ ...jb, batch: { ...jb.batch, [field]: [...jb.batch[field], row] }, status: jb.status === "empty" ? "accumulating" : jb.status });
+};
+const jSay = (d: Draft, ...messages: readonly string[]): Draft => ({ ...d, events: [...(d.events ?? []), ...messages.map(status)] });
+const jQueued = (d: Draft, jb: JBatchState, message: string): Draft => jSay({ ...d, state: withEntityJBatch(d.state, jb) }, message);
+/** og getJurisdictionConfigName: the rewrite's Entity names its J replica in its own config (og re-reads the stack from that replica). */
+const jurisdictionNameOf = (state: EntityState): string => (state.jurisdictionConfig?.name ?? "").trim();
+type EntityJTx<T extends string> = Extract<EntityTx, { readonly type: T }>["data"];
+/** og handleR2R / handleR2E: debt-aware reserve admission (a plain Error), then one appended row. */
+const entityR2R = (d: Draft, x: EntityJTx<"r2r">): Result<Draft, EntityError> => {
+  const issue = entityReserveIssue(d.state, d.accountReplicas, { type: "reserveToReserve", receivingEntity: x.toEntityId, tokenId: x.tokenId, amount: x.amount });
+  if (issue !== undefined) return invariant(`❌ Insufficient spendable reserve: have ${issue.availableAfterDebt}, need ${x.amount} token ${x.tokenId}`);
+  return map(appendOgRow(entityJBatch(d.state) ?? initJBatch(), "reserveToReserve", { receivingEntity: x.toEntityId, tokenId: x.tokenId, amount: x.amount }),
+    (jb) => jQueued(d, jb, `📦 Queued R→R: ${x.amount} token ${x.tokenId} to ${x.toEntityId.slice(-4)} (use jBroadcast to commit)`));
+};
+const entityR2E = (d: Draft, x: EntityJTx<"r2e">): Result<Draft, EntityError> => {
+  const issue = entityReserveIssue(d.state, d.accountReplicas, { type: "reserveToExternalToken", receivingEntity: x.receivingEntity, tokenId: x.tokenId, amount: x.amount });
+  if (issue !== undefined) return invariant(`❌ Insufficient spendable reserve: have ${issue.availableAfterDebt}, need ${x.amount} token ${x.tokenId}`);
+  return map(appendOgRow(entityJBatch(d.state) ?? initJBatch(), "reserveToExternalToken", { receivingEntity: x.receivingEntity, tokenId: x.tokenId, amount: x.amount }),
+    (jb) => jQueued(d, jb, `📦 Queued R→E: ${x.amount} token ${x.tokenId} to ${x.receivingEntity.slice(-8)} (use jBroadcast to commit)`));
+};
+/** og handleE2R: a checksum-valid non-zero token contract (ethers.isAddress) and a positive amount, credited to this Entity when the batch executes. */
+const entityE2R = (d: Draft, x: EntityJTx<"e2r">): Result<Draft, EntityError> => {
+  if (usableAddress(x.contractAddress) === null) return invariant(`❌ Invalid external token contract: ${x.contractAddress}`);
+  if (x.amount <= 0n) return invariant("❌ External → Reserve amount must be positive");
+  const row: OgRow = { entity: d.state.id, contractAddress: x.contractAddress, externalTokenId: typeof x.externalTokenId === "bigint" ? x.externalTokenId : 0n,
+    tokenType: typeof x.tokenType === "number" ? x.tokenType : 0, internalTokenId: typeof x.internalTokenId === "number" ? x.internalTokenId : 0, amount: x.amount };
+  return map(appendOgRow(entityJBatch(d.state) ?? initJBatch(), "externalTokenToReserve", row), (jb) => jQueued(d, jb, `📦 Queued E→R: ${x.amount} via ${x.contractAddress.slice(0, 10)}... (use j_broadcast to commit)`));
+};
+/**
+ * og handleR2C: admission, debt-aware reserve and local-account refusals are status messages; a deposit carrying `rebalanceQuoteId` needs the
+ * Account's accepted `shadow.rebalance.activeQuote`, which og consensus never writes (r2c.ts collectRebalanceFee), so it is refused the same way.
+ */
+const entityR2C = (d: Draft, x: EntityJTx<"r2c">): Result<Draft, EntityError> => {
+  const self = d.state.id.trim().toLowerCase(), receiving = String(x.receivingEntityId || d.state.id || "").trim().toLowerCase(), local = receiving === self;
+  if (x.amount <= 0n || !Number.isSafeInteger(x.tokenId) || x.tokenId <= 0) return ok(jSay(d, "❌ Collateral deposit requires a positive amount and registered tokenId"));
+  if (!receiving || receiving === x.counterpartyId.toLowerCase()) return ok(jSay(d, "❌ Collateral deposit requires two distinct non-empty entities"));
+  const issue = entityReserveIssue(d.state, d.accountReplicas, { type: "reserveToCollateral", receivingEntity: receiving, counterparty: x.counterpartyId, tokenId: x.tokenId, amount: x.amount });
+  if (issue !== undefined) return ok(jSay(d, `❌ Insufficient spendable reserve for collateral deposit: have ${issue.availableAfterDebt}, need ${x.amount} token ${x.tokenId}`));
+  if (local && !d.accountReplicas.has(x.counterpartyId as EntityId)) return ok(jSay(d, `❌ Cannot deposit collateral: no account with ${x.counterpartyId.slice(-4)}`));
+  if (x.rebalanceQuoteId !== undefined) return ok(jSay(d, local ? `❌ Rebalance fee: no active quote for ${x.counterpartyId.slice(-4)}` : "❌ Rebalance fee unsupported for remote reserve → account deposits"));
+  return map(addCommittedR2C((entityJBatch(d.state) ?? initJBatch()) as unknown as OgJBatchState, receiving, x.counterpartyId, x.tokenId, x.amount),
+    (jb) => jQueued(d, jb as unknown as JBatchState, `📦 Queued R→C: ${x.amount} token ${x.tokenId} to ${receiving.slice(-4)}↔${x.counterpartyId.slice(-4)} (use j_broadcast to commit)`));
+};
+const jOutput = (d: Draft, name: string, jTx: unknown, hash?: JBatchHashToSign): Draft =>
+  ({ ...d, jOutputs: [...(d.jOutputs ?? []), { jurisdictionName: name, jTxs: [jTx as Binary] }], ...(hash === undefined ? {} : { hashes: [...(d.hashes ?? []), hash] }) });
+/**
+ * og handleJBroadcast: a missing jBatchState or an in-flight sentBatch is a plain Error; an empty draft, a missing jurisdiction, chain id or
+ * leader is a status message; unusable contract addresses, a contract-limit or encoded-size overflow are plain Errors. The sealed batch goes out
+ * as og's `batch` JTx with the quorum's jBatch hash to sign. og's flush of deferred hash-ladder reveals (flushDeferredHashLadderReveals) is the
+ * cross-j owner's: the rewrite's consensus never parks a reveal on a route, so a parked one is refused rather than silently kept.
+ */
+const entityJBroadcast = (d: Draft, x: EntityJTx<"j_broadcast">, timestamp: bigint): Result<Draft, EntityError> => {
+  const jb = entityJBatch(d.state);
+  if (jb === undefined) return invariant("❌ No jBatchState found for j_broadcast");
+  if (jb.sentBatch === undefined && [...(d.state.crossJurisdictionSwaps?.values() ?? [])].some((r) => r.pendingSourceRegistryReveal !== undefined || r.pendingTargetRegistryReveal !== undefined)) return invariant("J_BROADCAST_REVEAL_FLUSH_CROSS_J_OWNED");
+  if (jb.sentBatch !== undefined) return invariant(`❌ Cannot broadcast: sentBatch pending nonce=${jb.sentBatch.entityNonce} attempts=${jb.sentBatch.submitAttempts}`);
+  if (!hasJBatchWork(jb)) return ok(jSay(d, "ℹ️ j_broadcast skipped: jBatch is empty"));
+  const name = jurisdictionNameOf(d.state);
+  if (name === "") return ok(jSay(d, "❌ No jurisdiction configured for this entity"));
+  if (d.state.jurisdiction.chainId === 0) return ok(jSay(d, "❌ Missing chainId"));
+  const signer = leaderStateOf(d.state).activeValidatorId;
+  if (signer === "") return ok(jSay(d, "❌ No signerId available"));
+  if (usableAddress(d.state.jurisdiction.depositoryAddress) === null) return invariant("INVALID_DEPOSITORY_ADDRESS");
+  if (usableAddress(d.state.jurisdictionConfig?.entityProviderAddress) === null) return invariant("INVALID_ENTITY_PROVIDER_ADDRESS");
+  const sealed = jBroadcast(jb, { entityId: d.state.id, chainId: d.state.jurisdiction.chainId, depository: d.state.jurisdiction.depositoryAddress, signerId: signer, timestamp: Number(timestamp), feeOverrides: x.feeOverrides });
+  if (!sealed.ok) return invariant(sealed.error.reason);
+  const b = sealed.value, jTx = b.jTx!, first = jb.recoveryBatches?.[0], priority = takeBroadcastBatch(first !== undefined && batchOpCount(first) > 0 ? first : jb.batch).disputePriority;
+  const said = jSay({ ...d, state: withEntityJBatch(d.state, b.jBatch) }, `📤 Batch (${jTx.data.batchSize} ops) → hashesToSign [nonce=${jTx.data.entityNonce}]`, ...(priority ? ["⚖️ Dispute operations broadcast before ordinary queued operations"] : []));
+  return ok(jOutput(said, name, jTx, b.hashToSign));
+};
+/** og handleJRebroadcast: resend the stored sentBatch at its own nonce (the jurisdiction name is checked before the chain); refusals as in the shared jRebroadcast. */
+const entityJRebroadcast = (d: Draft, x: EntityJTx<"j_rebroadcast">, timestamp: bigint): Result<Draft, EntityError> => {
+  const jb = entityJBatch(d.state), sent = jb?.sentBatch, name = jurisdictionNameOf(d.state), signer = leaderStateOf(d.state).activeValidatorId;
+  if (sent !== undefined && sent.terminalFailure === undefined && signer !== "" && name === "") return ok(jSay(d, "❌ No jurisdiction configured for j_rebroadcast"));
+  const r = jRebroadcast(jb, { entityId: d.state.id, chainId: d.state.jurisdiction.chainId, depository: d.state.jurisdiction.depositoryAddress, signerId: signer, timestamp: Number(timestamp), gasBumpBps: x.gasBumpBps });
+  if (!r.ok) return invariant(r.error.reason);
+  const next = jSay(jb === undefined ? d : { ...d, state: withEntityJBatch(d.state, r.value.jBatch) }, ...(r.value.note === undefined ? [] : [r.value.note]));
+  return ok(r.value.jTx === undefined ? next : jOutput(next, name, r.value.jTx, r.value.hashToSign));
+};
+/** og releaseR2CSubmittedLatches / clear's submitted-marker reset and releaseFinalizeLatches on the Entity's Accounts. */
+const releaseEntityLatches = (d: Draft, release: JLatchRelease): Draft => {
+  let replicas = d.accountReplicas;
+  for (const { accountId, tokenId } of release.submitted) {
+    const c = replicas.get(accountId as EntityId);
+    if (c !== undefined) replicas = mapSet(replicas, accountId as EntityId, { ...c, state: setRebalanceSubmittedAt(c.state, tokenId, undefined) } as AccountReplica);
+  }
+  let folded: Folded = { state: d.state, accountReplicas: replicas };
+  for (const peer of release.finalizers) {
+    const c = folded.accountReplicas.get(peer as EntityId);
+    if (c !== undefined && c._tag === "disputed" && c.active !== undefined) folded = latchFinalize(folded, peer, c, c.active, false);
+  }
+  return { ...d, ...folded };
+};
+/** og handleJAbortSentBatch: requeue (default) drops finalizations and stale C2Rs by the Account's jNonce and parks the rest first; drop releases the R2C markers. */
+const entityJAbort = (d: Draft, x: EntityJTx<"j_abort_sent_batch">): Draft => {
+  const jb = entityJBatch(d.state), r = jAbortSentBatch(jb, x, (peer) => (d.accountReplicas.get(peer as EntityId) ?? d.accountReplicas.get(lower(peer) as EntityId))?.state.jNonce ?? 0);
+  return jSay(releaseEntityLatches(jb?.sentBatch === undefined ? d : { ...d, state: withEntityJBatch(d.state, r.jBatch) }, r.release), r.note);
+};
+/** og handleJClearBatch: drop every batch, reset every Account's submitted markers, release the dropped finalize latches. */
+const entityJClear = (d: Draft, x: EntityJTx<"j_clear_batch">): Draft => {
+  const jb = entityJBatch(d.state), submitted = new Map([...d.accountReplicas].map(([peer, c]) => [peer as string, [...(c.state.submittedAt ?? new Map<number, number>()).keys()]] as const));
+  const r = jClearBatch(jb, x, jb === undefined ? new Map() : submitted);
+  return jSay(releaseEntityLatches(jb === undefined ? d : { ...d, state: withEntityJBatch(d.state, r.jBatch) }, r.release), r.note);
+};
+/** og handleMintReserves: the direct admin `mint` JTx to the Entity's J replica (outside the batch). */
+const entityMint = (d: Draft, x: EntityJTx<"mintReserves">, timestamp: bigint): Draft => {
+  const name = jurisdictionNameOf(d.state);
+  if (name === "") return jSay(d, "❌ Jurisdiction unavailable for mint: entity jurisdiction is not configured");
+  const m = mintReservesTx(d.state.id, x.tokenId, x.amount, Number(timestamp));
+  return jOutput(jSay(d, m.note), name, m.jTx);
+};
 // ---- og entity/tx/j-events.ts J7 Entity-side dispute effects and tx/dispute-finalize-guards.ts: J batch retirement, nonce sync, the dispute-deadline hook ----
 type BatchRows = { readonly [field: string]: readonly Binary[] };
 type BatchRow = { readonly counterentity?: unknown; readonly initialProofbodyHash?: unknown; readonly targetRole?: unknown; readonly counterpartyEntity?: unknown };
@@ -8188,8 +8382,8 @@ const materializeSettlements = (d: Draft, ctx: FoldContext): Result<Draft, Entit
 };
 /**
  * og selectSettlementContinuation + materializeSettlementContinuation: at most one continuation per frame (lowest counterparty), waiting passively
- * until its workspace is ready and the jBatch is idle; a missing / changed / submitted workspace discards it. The execute path runs settle_execute;
- * og's follow-up r2r / r2e / r2c and j_broadcast are Entity txs the rewrite carries only on the Host J layer.
+ * until its workspace is ready and the jBatch is idle; a missing / changed / submitted workspace discards it. The execute path runs settle_execute,
+ * then og's follow-up r2r / r2e / r2c and j_broadcast Entity txs, and drops the continuation only when all of them succeeded.
  */
 const materializeContinuation = (d: Draft, ctx: FoldContext, queue: SettleEnqueue): Result<Draft, EntityError> => {
   const entry = [...continuationsOf(d.state)].sort(([a], [b]) => asc(a, b))[0];
@@ -8207,8 +8401,16 @@ const materializeContinuation = (d: Draft, ctx: FoldContext, queue: SettleEnqueu
     if (w.executorIsLeft !== isLeft(d.state.id, replicaId(child))) return invariant(`SETTLEMENT_CONTINUATION_EXECUTOR_MISMATCH:${peer}`);
     const jb = committedJBatch(d.state);
     if (jb?.sentBatch !== undefined || (jb !== undefined && ogBatchOps(jb.batch) > 0)) return ok(d);
-    if (c.actions.length > 0 || c.broadcast) return invariant("SETTLEMENT_CONTINUATION_J_ACTIONS_NOT_PORTED");
-    return map(settleExecute(d, { counterpartyEntityId: peer as EntityId }, ctx.verify, queue), (x) => ({ ...x, state: withContinuations(x.state, mapDelete(continuationsOf(x.state), peer)) }));
+    // og continuationActionToTx: settle_execute (no C2R shortcut when actions follow), the r2r / r2e / r2c follow-ups, then j_broadcast, all as one collective run
+    const follow: readonly EntityTx[] = [...c.actions.map((a): EntityTx => a.type === "r2r" ? { type: "r2r", data: { toEntityId: a.toEntityId, tokenId: a.tokenId, amount: a.amount } }
+      : a.type === "r2e" ? { type: "r2e", data: { receivingEntity: a.receivingEntity, tokenId: a.tokenId, amount: a.amount } }
+      : { type: "r2c", data: { counterpartyId: a.counterpartyId, ...(a.receivingEntityId ? { receivingEntityId: a.receivingEntityId } : {}), tokenId: a.tokenId, amount: a.amount } }), ...(c.broadcast ? [{ type: "j_broadcast", data: {} } satisfies EntityTx] : [])];
+    return chain(settleExecute(d, { counterpartyEntityId: peer as EntityId, ...(c.actions.length > 0 ? { disableC2RShortcut: true } : {}) }, ctx.verify, queue), (x) => {
+      const done = (y: Draft): Draft => ({ ...y, state: withContinuations(y.state, mapDelete(continuationsOf(y.state), peer)) });
+      if (follow.length === 0) return ok(done(x));
+      return map(foldNested(x.state, x.accountReplicas, follow, ctx, "collective"), (y) => done({ ...y, outputs: [...x.outputs, ...y.outputs], events: [...(x.events ?? []), ...(y.events ?? [])], runtimeEvents: [...(x.runtimeEvents ?? []), ...(y.runtimeEvents ?? [])],
+        touched: [...(x.touched ?? []), ...(y.touched ?? [])], ...frameEffects(x, y), swaps: joinSwapEvents(x.swaps, y.swaps) }));
+    });
   });
 };
 const settleQueue = (ctx: FoldContext): SettleEnqueue => (d, peer, tx) => withChild(d.accountReplicas, peer, (child) => map(admitAt(child, [tx], d.state.id, L0_CLOCK, ctx.verify), (admitted) => ({ ...d, ...putChild(d.state, d.accountReplicas, peer, admitted) })));
@@ -8874,6 +9076,12 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     materializeCrossJurisdictionClear: (x) => map(materializeCrossClear(bookHostOf(state, replicas, ctx.timestamp), x.data), (s) => clearDraft(skip, s, ctx.timestamp)),
     crossPullClose: (x) => map(crossPullCloseTx(bookHostOf(state, replicas, ctx.timestamp), x.data), (s) => clearDraft(skip, s, ctx.timestamp)),
     orderbookSweepCrossJurisdiction: (x) => map(crossSweep(bookHostOf(state, replicas, ctx.timestamp), x.data.reason), (s) => clearDraft(skip, s, ctx.timestamp)),
+    // og entity/tx/handlers/j-batch on the committed jBatchState
+    r2r: (x) => entityR2R(skip, x.data), r2e: (x) => entityR2E(skip, x.data), e2r: (x) => entityE2R(skip, x.data), r2c: (x) => entityR2C(skip, x.data),
+    j_broadcast: (x) => entityJBroadcast(skip, x.data, ctx.timestamp), j_rebroadcast: (x) => entityJRebroadcast(skip, x.data, ctx.timestamp),
+    j_abort_sent_batch: (x) => ok(entityJAbort(skip, x.data)), j_clear_batch: (x) => ok(entityJClear(skip, x.data)), mintReserves: (x) => ok(entityMint(skip, x.data, ctx.timestamp)),
+    j_event: (x) => entityJEvent(skip, x.data as JRec, ctx),
+    boardHandover: (x) => entityBoardHandover(skip, x.data.board, ctx.boardHandover),
     runtimeOutput: (x) => {
       if (x.data.protocol !== "cross-j") return invariant(`RUNTIME_OUTPUT_PROTOCOL_INVALID:${String(x.data.protocol)}`);
       const refused = runtimeOutputAuthError(state, x.data);
@@ -9019,12 +9227,15 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   // og assertScheduledWakeFrameOrder (prepareEntityFrameWorkingSet): a plain Error for the whole frame
   const misordered = wakeOrderIssue(txs);
   if (misordered !== undefined) return err(misordered);
-  return chain(normalizeGovernance(state), (normalized) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
-    const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
+  // og getBoardHandoverFrameConfig over the normalized pre-frame state: the authority a [j_event, boardHandover] frame is certified under
+  return chain(normalizeGovernance(state), (normalized) => chain(handoverFrameConfig(normalized, txs), (handover) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
+    const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, handover === null ? ctx : { ...ctx, boardHandover: handover });
     if (r.ok) return ok({ ...acc, included: [...acc.included, tx], draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs], events: [...(acc.draft.events ?? []), ...(r.value.events ?? [])], runtimeEvents: [...(acc.draft.runtimeEvents ?? []), ...(r.value.runtimeEvents ?? [])], touched: [...(acc.draft.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc.draft, r.value), swaps: joinSwapEvents(acc.draft.swaps, r.value.swaps) } });
     return fatalTx(tx, r.error) ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
+    // og finishAuthorityTransitionOnly: a board handover frame primes no Account work and runs no post-tx phases
+    if (handover !== null) return ok(folded);
     // og materializeSettlementContinuation, then drainPostOrderbookAccountWork's settlement approvals, before proposePendingAccountFrames.
     // og applyPostEntityTxPhases: cancels + orderbook matching, then drainPostOrderbookAccountWork.
     return chain(chain(chain(materializeContinuation(folded.draft, ctx, settleQueue(ctx)), (d) => bookPhase(d, ctx.timestamp)), (d) => materializeSettlements(d, ctx)), (settled) => {
@@ -9034,7 +9245,7 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
       // og refreshChangedAccountCommitments: after the Account proposals, a changed certified frame re-arms its board Hanko refresh
       return map(rearmBoardRefreshes(replicas, { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) }, Number(ctx.timestamp)), (draft) => ({ ...folded, draft }));
     });
-  }));
+  })));
 };
 const EMPTY_COLLECTION = { radix: 16, leafCount: 0, root: ZERO_WORD } as const;
 /** og applyEntityFrame `state.crontabState ??= initCrontab()`: the hubRebalance task at the 1s cadence, no hooks. */
@@ -9556,9 +9767,11 @@ export type Runtime = {
   readonly adapterFrontiers: ReadonlyMap<string, AdapterFrontier>; readonly encryptionSeeds: ReadonlyMap<string, string>; readonly frameHash: string;
   /** og infrastructure.certifiedRegistrationEvidence: receipt-proven EntityProvider registrations, keyed `stackKey:entityId`. */
   readonly registrationEvidence: ReadonlyMap<string, RegistrationEvidence>;
+  /** og infrastructure.numberedRegistrationIntents: durable numbered-registration intents (pending / completed / quarantined), keyed by intentId. */
+  readonly numberedRegistrationIntents: ReadonlyMap<string, RuntimeData>;
 };
 /** A whole-frame refusal carries og's error code (og throws out of the Runtime reducer, so nothing of the frame applies). */
-export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }> | Tagged<"runtime_frame" | "runtime_tx" | "runtime_tx_unsupported", { code: string }>;
+export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }> | Tagged<"runtime_frame" | "runtime_tx", { code: string }>;
 export type Verifiers = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign };
 /** og capability markers: `local` holds the exact RuntimeTx (and proposeAccountsNow EntityTx) objects this process authorized (og's Symbol tags); replay trusts the WAL. */
 export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; readonly local?: ReadonlySet<RuntimeTx | EntityTx> | undefined;
@@ -9573,7 +9786,7 @@ export const bareJReplica = (name: string): JReplica => ({ name, blockNumber: 0n
 export const createRuntime = (jurisdictions: Iterable<string | JReplica> = [], runtimeId?: string): Runtime => ({
   entities: new Map(), height: 0n, timestamp: 0n, jReplicas: new Map([...jurisdictions].map((j): [string, JReplica] => (typeof j === "string" ? [j, bareJReplica(j)] : [j.name, j]))),
   ...opt("runtimeId", runtimeId), pendingJImports: new Map(), pendingCommittedJOutbox: [], replicaLocal: new Map(), adapterFrontiers: new Map(), encryptionSeeds: new Map(), frameHash: ZERO_FRAME_HASH,
-  registrationEvidence: new Map(),
+  registrationEvidence: new Map(), numberedRegistrationIntents: new Map(),
 });
 export const spawn = (rt: Runtime, r: EntityReplica): Runtime => ({ ...rt, entities: mapSet(rt.entities, replicaKey(r.state.id, r.signerId), r) });
 /** og resolveEntityProposerId: an Account message goes to the receiver's active leader (the CEO `validators[0]` until a view change); a consensus input to the named validator. */
@@ -9728,7 +9941,9 @@ const boardValidatorId = (v: string): Result<string, RuntimeError> => {
   return txErr("BOARD_VALIDATOR_ADDRESS_REQUIRED");
 };
 /** og factory.ts encodeBoard -> hashBoard: the lazy Entity id of a board config (validators positional, shares as uint16 powers, zero delays). */
-export const lazyBoardEntityId = (config: EntityRootConfig): Result<string, RuntimeError> => {
+export const lazyBoardEntityId = (config: EntityRootConfig): Result<string, RuntimeError> => map(lazyBoardEncoding(config), (encoded) => keccak256Hex(hexToBytes(encoded)));
+/** og factory.ts encodeBoard: abi.encode(Board) of a board config. */
+export const lazyBoardEncoding = (config: EntityRootConfig): Result<string, RuntimeError> => {
   if (config.validators.length === 0) return txErr("BOARD_EMPTY");
   const seen = new Set<string>();
   for (const v of config.validators) { const id = lower(v); if (id === "" || seen.has(id)) return txErr("BOARD_VALIDATOR_DUPLICATE_OR_EMPTY"); seen.add(id); }
@@ -9749,7 +9964,7 @@ export const lazyBoardEntityId = (config: EntityRootConfig): Result<string, Runt
     if (config.threshold <= 0n) return txErr("BOARD_THRESHOLD_NOT_POSITIVE");
     if (config.threshold > 0xffffn) return txErr("BOARD_THRESHOLD_OUT_OF_RANGE");
     if (config.threshold > powers.reduce((t, p) => t + BigInt(p), 0n)) return txErr("BOARD_THRESHOLD_EXCEEDS_POWER");
-    return ok(boardHashOf({ votingThreshold: Number(config.threshold), entityIds: ids, votingPowers: powers, boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 }));
+    return ok(encodeBoardBytes({ votingThreshold: Number(config.threshold), entityIds: ids, votingPowers: powers, boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 }));
   });
 };
 const quorumOf = (config: ImportConfig): Result<Authority, RuntimeError> => {
@@ -10935,6 +11150,461 @@ const rewindJHistory = (rt: Runtime, d: Extract<RuntimeTx, { type: "rewindJHisto
     : map(rewindJHistoryTo(replica.state, history), (jHistory) => withLocal(rt, key, { jHistory })));
 };
 
+// ---- og entity/tx/j-events.ts applyJEvent over jurisdiction/machine/{range-budget, j-event-range-validation, history-consensus, local-history}: the Entity-certified J range ----
+const jCode = (e: RuntimeError): string => ("code" in e ? e.code : e._tag);
+const jHistoryText = (v: unknown): string => keccak256Hex(utf8(String(v ?? "").trim().toLowerCase()));
+/** og EMPTY_J_HISTORY_ROOT. */
+export const EMPTY_J_HISTORY_ROOT = keccak256Hex(utf8("xln:j-history-empty:v1"));
+const jRoot = (v: unknown, label: string): Result<string, string> => { const s = String(v ?? "").trim().toLowerCase(); return WORD32.test(s) ? ok(s) : err(`J_HISTORY_INVALID_${label}`); };
+const jHeight = (v: unknown, label: string): Result<number, string> => { const n = Number(v); return Number.isSafeInteger(n) && n >= 0 ? ok(n) : err(`J_HISTORY_INVALID_${label}`); };
+type JHistoryIdentity = { readonly jurisdictionRef: string; readonly jHeight: unknown; readonly jBlockHash: string; readonly eventsHash: string; readonly disputeFinalizationEvidenceHash?: string | undefined };
+/** og canonicalJHistoryObservationLeaf. */
+const jHistoryLeaf = (o: JHistoryIdentity): Result<string, string> => chain(jHeight(o.jHeight, "OBSERVATION_HEIGHT"), (h) => chain(jRoot(o.eventsHash, "EVENTS_ROOT"), (events) =>
+  map(o.disputeFinalizationEvidenceHash ? jRoot(o.disputeFinalizationEvidenceHash, "EVIDENCE_ROOT") : ok(ZERO_WORD), (evidence) =>
+    keccak256Hex(abiEncode([A.b32(jHistoryText("xln:j-history-event-block:v1")), A.b32(jHistoryText(o.jurisdictionRef)), A.uint(BigInt(h)), A.b32(jHistoryText(o.jBlockHash)), A.b32(events), A.b32(evidence)])))));
+/** og foldJHistoryRoot: observations by height; the same leaf twice is one leaf, two leaves at one height are an equivocation. */
+export const foldJHistoryRoot = (base: string, observations: readonly JHistoryIdentity[]): Result<string, string> => chain(jRoot(base, "BASE_ROOT"), (start) => {
+  for (const o of observations) { const h = jHeight(o.jHeight, "OBSERVATION_HEIGHT"); if (!h.ok) return h; }
+  const ordered = [...observations].sort((l, r) => Number(l.jHeight) - Number(r.jHeight)), byHeight = new Map<number, string>();
+  let root = start;
+  for (const o of ordered) {
+    const leaf = jHistoryLeaf(o);
+    if (!leaf.ok) return leaf;
+    const h = Number(o.jHeight), existing = byHeight.get(h);
+    if (existing !== undefined && existing !== leaf.value) return err(`J_HISTORY_EQUIVOCATION_AT_HEIGHT:${h}`);
+    if (existing !== undefined) continue;
+    byHeight.set(h, leaf.value);
+    root = keccak256Hex(abiEncode([A.b32(jHistoryText("xln:j-history-fold:v1")), A.b32(root), A.b32(leaf.value)]));
+  }
+  return ok(root);
+});
+/** og JurisdictionEventBlock after normalizeStrictJEventBlock: canonical events in canonical order, dispute evidence with its hash. */
+type JRangeBlock = { readonly blockNumber: number; readonly blockHash: string; readonly eventsHash: string; readonly events: readonly WireJEvent[]; readonly disputeFinalizationEvidence?: readonly unknown[] | undefined; readonly disputeFinalizationEvidenceHash?: string | undefined };
+const jBlockIdentity = (jurisdictionRef: string) => (b: JRangeBlock): JHistoryIdentity => ({ jurisdictionRef, jHeight: b.blockNumber, jBlockHash: nText(b.blockHash), eventsHash: nText(b.eventsHash), ...opt("disputeFinalizationEvidenceHash", b.disputeFinalizationEvidenceHash ? nText(b.disputeFinalizationEvidenceHash) : undefined) });
+/** og canonicalJEventRangeHash: keccak(abi.encode(domain, heights[], blockHashes[], eventsHashes[], evidenceHashes[])). */
+const jRangeHash = (jurisdictionRef: string, blocks: readonly JRangeBlock[]): Result<string, string> => {
+  const heights: bigint[] = [], hashes: string[] = [], events: string[] = [], evidence: string[] = [];
+  let previous = -1;
+  for (const b of blocks) {
+    const h = jHeight(b.blockNumber, "RANGE_BLOCK_HEIGHT");
+    if (!h.ok) return h;
+    if (h.value <= previous) return err("J_HISTORY_RANGE_BLOCK_ORDER_INVALID");
+    previous = h.value;
+    const e = jRoot(b.eventsHash, "RANGE_EVENTS_ROOT");
+    if (!e.ok) return e;
+    const x = nText(b.disputeFinalizationEvidenceHash), ev = x ? jRoot(x, "RANGE_EVIDENCE_ROOT") : ok(ZERO_WORD);
+    if (!ev.ok) return ev;
+    heights.push(BigInt(h.value)); hashes.push(jHistoryText(b.blockHash)); events.push(e.value); evidence.push(ev.value);
+  }
+  return ok(keccak256Hex(abiEncode([A.b32(jHistoryText("xln:j-history-range-body:v1")), A.array(heights.map(A.uint)), A.array(hashes.map(A.b32)), A.array(events.map(A.b32)), A.array(evidence.map(A.b32))])));
+};
+type JRangeSigned = { readonly entityId: string; readonly jurisdictionRef: string; readonly signerId: string; readonly baseHeight: number; readonly scannedThroughHeight: number; readonly tipBlockHash: string; readonly eventHistoryRoot: string; readonly rangeHash: string };
+/** og buildJEventRangeDigest: what the Entity's active proposer signs over one J range. */
+export const jRangeDigest = (d: JRangeSigned): Result<string, string> => chain(jHeight(d.baseHeight, "BASE_HEIGHT"), (base) => chain(jHeight(d.scannedThroughHeight, "SCANNED_HEIGHT"), (scanned) => {
+  if (scanned <= base) return err("J_HISTORY_RANGE_EMPTY");
+  if (!String(d.tipBlockHash || "").trim()) return err("J_HISTORY_RANGE_TIP_HASH_MISSING");
+  return chain(jRoot(d.eventHistoryRoot, "EVENT_HISTORY_ROOT"), (root) => map(jRoot(d.rangeHash, "RANGE_ROOT"), (range) => keccak256Hex(abiEncode([
+    A.b32(jHistoryText("xln:j-history-range:v1")), A.b32(jHistoryText(d.entityId)), A.b32(jHistoryText(d.jurisdictionRef)), A.b32(jHistoryText(d.signerId)), A.uint(BigInt(base)), A.uint(BigInt(scanned)), A.b32(jHistoryText(d.tipBlockHash)), A.b32(root), A.b32(range),
+  ]))));
+}));
+/** og normalizeStrictJEventBlock (J_RANGE codes): exact fields, a height above the previous block and within the scan, canonical events already in canonical order, both hashes as claimed. */
+const strictJBlock = (value: unknown, previous: number, scanned: number): Result<JRangeBlock, string> => {
+  const raw = boundaryRec(value);
+  if (raw === null) return err("J_RANGE_BLOCK_INVALID");
+  const fields = jExactKeys(raw, ["blockNumber", "blockHash", "eventsHash", "events"], ["disputeFinalizationEvidence", "disputeFinalizationEvidenceHash"], "J_RANGE_BLOCK_FIELDS_INVALID");
+  if (!fields.ok) return err(jCode(fields.error));
+  const blockNumber = Number(raw["blockNumber"]);
+  if (!Number.isSafeInteger(blockNumber) || blockNumber < 0) return err("J_RANGE_BLOCK_HEIGHT_INVALID");
+  if (blockNumber <= previous || blockNumber > scanned) return err("J_RANGE_BLOCK_ORDER_INVALID");
+  const blockHash = nText(raw["blockHash"]), rawEvents = raw["events"];
+  if (!WORD32.test(blockHash)) return err("J_RANGE_BLOCK_HASH_INVALID");
+  if (!Array.isArray(rawEvents) || rawEvents.length === 0) return err("J_RANGE_EVENT_BLOCK_EMPTY");
+  const canonical = canonicalJEvents(rawEvents);
+  if (!canonical.ok) return err(jCode(canonical.error));
+  const events = canonical.value, ordered = [...events].sort(compareJEvents);
+  if (events.length !== rawEvents.length) return err("J_RANGE_EVENT_INVALID");
+  if (!events.every((e, i) => jEventKey(e) === jEventKey(ordered[i] as WireJEvent))) return err("J_RANGE_EVENT_ORDER_INVALID");
+  if (events.some((e) => Number(e.blockNumber) !== blockNumber || nText(e.blockHash) !== blockHash)) return err("J_RANGE_EVENT_BLOCK_MISMATCH");
+  const eventsHash = jEventsHash(events);
+  if (!eventsHash.ok) return err(jCode(eventsHash.error));
+  const claimed = nText(raw["eventsHash"]);
+  if (!WORD32.test(claimed)) return err("J_RANGE_EVENTS_HASH_INVALID");
+  if (claimed !== eventsHash.value) return err("J_RANGE_EVENTS_HASH_MISMATCH");
+  const rawEvidence = raw["disputeFinalizationEvidence"];
+  if (rawEvidence !== undefined && !Array.isArray(rawEvidence)) return err("J_RANGE_EVIDENCE_INVALID");
+  const evidence = normalizeEvidence(rawEvidence ?? []);
+  if (!evidence.ok) return err(jCode(evidence.error));
+  const evidenceHash = evidence.value.length > 0 ? `0x${keccakUtf8(JSON.stringify(evidence.value.map((x) => x.key)))}` : "";
+  if (nText(raw["disputeFinalizationEvidenceHash"]) !== evidenceHash) return err("J_RANGE_EVIDENCE_HASH_MISMATCH");
+  return ok({ blockNumber, blockHash, eventsHash: eventsHash.value, events, ...(evidence.value.length > 0 ? { disputeFinalizationEvidence: evidence.value.map((x) => x.entry) } : {}), ...(evidenceHash ? { disputeFinalizationEvidenceHash: evidenceHash } : {}) });
+};
+/** og JurisdictionEventData after validateJEventRangeEnvelope. */
+type JRange = JRangeSigned & { readonly observedAt: number; readonly blocks: readonly JRangeBlock[]; readonly signature: string };
+/** og validateJEventRangeEnvelope: the active proposer's signed, strictly canonical range for this Entity's jurisdiction (a refusal is og's code). */
+const jRangeEnvelope = (state: EntityState, data: JRec): Result<JRange, string> => {
+  const signerId = nText(data["from"]), jurisdictionRef = nText(data["jurisdictionRef"]);
+  if (!signerId || signerId !== nText(leaderStateOf(state).activeValidatorId)) return err("J_RANGE_NOT_ACTIVE_PROPOSER");
+  if (jurisdictionRef !== nText(jEventJurisdictionRef(state))) return err("J_RANGE_JURISDICTION_MISMATCH");
+  const height = (v: unknown, code: string): Result<number, string> => { const n = Number(v); return Number.isSafeInteger(n) && n >= 0 ? ok(n) : err(code); };
+  const word = (v: unknown, code: string): Result<string, string> => { const s = nText(v); return WORD32.test(s) ? ok(s) : err(code); };
+  return chain(height(data["baseHeight"], "J_RANGE_BASE_HEIGHT_INVALID"), (baseHeight) => chain(height(data["scannedThroughHeight"], "J_RANGE_SCANNED_HEIGHT_INVALID"), (scannedThroughHeight) => {
+    if (scannedThroughHeight <= baseHeight) return err("J_RANGE_HEIGHT_INVALID");
+    return chain(height(data["observedAt"], "J_RANGE_OBSERVED_AT_INVALID"), (observedAt) => {
+      if (observedAt !== scannedThroughHeight) return err("J_RANGE_OBSERVED_AT_MISMATCH");
+      return chain(word(data["tipBlockHash"], "J_RANGE_TIP_HASH_INVALID"), (tipBlockHash) => {
+        const rawBlocks = data["blocks"];
+        if (!Array.isArray(rawBlocks)) return err("J_RANGE_BLOCKS_INVALID");
+        const blocks: JRangeBlock[] = [];
+        let previous = baseHeight;
+        for (const raw of rawBlocks as readonly unknown[]) { const b = strictJBlock(raw, previous, scannedThroughHeight); if (!b.ok) return b; blocks.push(b.value); previous = b.value.blockNumber; }
+        return chain(jRangeHash(jurisdictionRef, blocks), (rangeHash) => chain(word(data["rangeHash"], "J_RANGE_BODY_HASH_INVALID"), (claimed) => {
+          if (claimed !== rangeHash) return err("J_RANGE_BODY_HASH_MISMATCH");
+          return chain(word(data["eventHistoryRoot"], "J_RANGE_HISTORY_ROOT_INVALID"), (eventHistoryRoot) => {
+            const signature = nText(data["signature"]);
+            if (!signature) return err("J_RANGE_PROPOSER_SIGNATURE_INVALID");
+            const signed: JRangeSigned = { entityId: state.id, jurisdictionRef, signerId, baseHeight, scannedThroughHeight, tipBlockHash, eventHistoryRoot, rangeHash };
+            // og verifyAccountSignature for an EOA signer: a canonical compact signature recovering to the signer id
+            return chain(jRangeDigest(signed), (digest) => (witnessSigned(digest, signature, signerId) ? ok({ ...signed, observedAt, blocks, signature }) : err("J_RANGE_PROPOSER_SIGNATURE_INVALID")));
+          });
+        }));
+      });
+    });
+  }));
+};
+const J_RANGE_FRAME_PAYLOAD_DOMAIN = "xln.entity-frame.j-range-payload.v1", MAX_ENTITY_FRAME_J_RANGE_BYTES = 10 * 1024 * 1024;
+/** og assertEntityFrameJRangeBudget for one range: a valid span, and its canonical frame payload within 10 MiB. */
+const jRangeBudgetIssue = (data: JRec): string | undefined => {
+  const base = Number(data["baseHeight"]), scanned = Number(data["scannedThroughHeight"]);
+  if (!Number.isSafeInteger(base) || base < 0) return `J_RANGE_FRAME_BASE_HEIGHT_INVALID:${String(data["baseHeight"])}`;
+  if (!Number.isSafeInteger(scanned) || scanned <= base) return `J_RANGE_FRAME_SCANNED_HEIGHT_INVALID:${String(data["scannedThroughHeight"])}`;
+  const bytes = authConsensusBytes({ domain: J_RANGE_FRAME_PAYLOAD_DOMAIN, version: 1, ranges: [data] });
+  if (!bytes.ok) return "CANONICAL_ENCODING_INVALID";
+  return bytes.value.length > MAX_ENTITY_FRAME_J_RANGE_BYTES ? `J_RANGE_FRAME_BYTE_LIMIT_EXCEEDED:${bytes.value.length}:${MAX_ENTITY_FRAME_J_RANGE_BYTES}` : undefined;
+};
+type JSuffix = { readonly baseHeight: number; readonly scannedThroughHeight: number; readonly tipBlockHash: string; readonly eventHistoryRoot: string; readonly blocks: readonly JRangeBlock[] };
+/** og reconcileJEventRangeWithFinalizedState: a fully applied range is a no-op; a crossing one is rebased onto the certified head and must still fold to its signed root. */
+const reconcileJRange = (state: EntityState, d: JRange): Result<JSuffix | null, string> => {
+  const finalized = Number(state.committed["lastFinalizedJHeight"] || 0);
+  if (d.scannedThroughHeight <= finalized) return ok(null);
+  if (d.baseHeight > finalized) return err(`J_RANGE_BASE_HEIGHT_AHEAD:${d.baseHeight}:${finalized}`);
+  return chain(mapErr(certifiedJAnchor(state), jCode), (anchor) => {
+    if (anchor !== null && d.jurisdictionRef !== anchor.jurisdictionRef) return err("J_HISTORY_FINALITY_JURISDICTION_CONFLICT");
+    const blocks = d.blocks.filter((b) => b.blockNumber > finalized);
+    return chain(foldJHistoryRoot(anchor?.eventHistoryRoot ?? EMPTY_J_HISTORY_ROOT, blocks.map(jBlockIdentity(d.jurisdictionRef))), (root) =>
+      root !== d.eventHistoryRoot ? err("J_RANGE_HISTORY_ROOT_MISMATCH") : ok({ baseHeight: finalized, scannedThroughHeight: d.scannedThroughHeight, tipBlockHash: d.tipBlockHash, eventHistoryRoot: root, blocks }));
+  });
+};
+/** A canonical (og-shaped) J event as the rewrite's typed JEvent; null for a type the Entity handlers below do not read typed. */
+const typedJEvent = (e: WireJEvent): JEvent | null => {
+  const d = e.data, s = (k: string): string => String(d[k] ?? ""), b = (k: string): bigint => BigInt(String(d[k] ?? "0"));
+  const meta: JEventMeta = { ...opt("blockNumber", e.blockNumber), ...opt("blockHash", e.blockHash), ...opt("transactionHash", e.transactionHash), ...opt("logIndex", e.logIndex) };
+  switch (e.type) {
+    case "FoundationBootstrapped": return { type: e.type, recipient: s("recipient"), boardHash: s("boardHash"), controlTokenId: b("controlTokenId"), dividendTokenId: b("dividendTokenId"), meta };
+    case "EntityRegistered": return { type: e.type, entityId: s("entityId"), entityNumber: b("entityNumber"), boardHash: s("boardHash"), meta };
+    case "BoardActivated": return { type: e.type, entityId: s("entityId"), previousBoardHash: s("previousBoardHash"), newBoardHash: s("newBoardHash"), previousBoardValidUntil: b("previousBoardValidUntil"), meta };
+    case "DebtCreated": return { type: e.type, debtor: s("debtor"), creditor: s("creditor"), tokenId: b("tokenId"), amount: b("amount"), debtIndex: b("debtIndex"), meta };
+    case "DebtEnforced": return { type: e.type, debtor: s("debtor"), creditor: s("creditor"), tokenId: b("tokenId"), amountPaid: b("amountPaid"), remainingAmount: b("remainingAmount"), newDebtIndex: b("newDebtIndex"), meta };
+    case "DebtForgiven": return { type: e.type, debtor: s("debtor"), creditor: s("creditor"), tokenId: b("tokenId"), amountForgiven: b("amountForgiven"), debtIndex: b("debtIndex"), meta };
+    case "HankoBatchProcessed": return { type: e.type, entityId: s("entityId"), batchHash: s("batchHash"), nonce: b("nonce"), meta };
+    case "EntityProviderActionExecuted": return { type: e.type, entityId: s("entityId"), actionNonce: b("actionNonce"), actionHash: s("actionHash"), actionKind: Number(d["actionKind"]) as 0 | 1, meta };
+    case "EntityProviderActionCancelled": return { type: e.type, entityId: s("entityId"), actionNonce: b("actionNonce"), cancelledActionHash: s("cancelledActionHash"), cancelledActionKind: Number(d["cancelledActionKind"]) as 0 | 1, cancelHash: s("cancelHash"), meta };
+    default: return null;
+  }
+};
+const TOKEN_SYMBOLS: ReadonlyMap<number, string> = new Map([[1, "USDC"], [2, "WETH"], [3, "USDT"], [4, "TRX"], [5, "SUN"]]);
+/** og formatTokenAmount: ethers formatUnits over the token's decimals, then its symbol (an unknown token is a plain Error). */
+const tokenAmountText = (tokenId: number, amount: bigint): Result<string, EntityError> => chain(tokenDecimals(tokenId), (decimals) => {
+  const d = Number(decimals), digits = (amount < 0n ? -amount : amount).toString().padStart(d + 1, "0");
+  const whole = d === 0 ? digits : digits.slice(0, -d), frac = d === 0 ? "0" : digits.slice(-d).replace(/0+$/, "") || "0";
+  return ok(`${amount < 0n ? "-" : ""}${whole}.${frac} ${TOKEN_SYMBOLS.get(tokenId) ?? ""}`);
+});
+const rawUnits = (tokenId: number, amount: unknown): string => `${BigInt(String(amount ?? "0")).toString()} raw units of token #${tokenId}`;
+/** One finalized event's Entity effects: the Draft so far, the Account claims it queued, the Accounts it touched. */
+type JEventStep = { readonly draft: Draft; readonly claims: readonly JClaimOp[]; readonly dirty: readonly string[] };
+/** og applyAccountSettledJEvent: own reserve from the row, then a j_event_claim for an active Account (a non-active one only notes the suppression). */
+const settledJEvent = (step: JEventStep, e: WireJEvent, blockNumber: number): Result<JEventStep, EntityError> => {
+  const d = e.data, state = step.draft.state, me = lower(state.id), left = lower(d["leftEntity"]), right = lower(d["rightEntity"]);
+  if (me !== left && me !== right) return ok(step);
+  const tokenId = Number(d["tokenId"]), counterparty = me === left ? right : left, own = me === left ? d["leftReserve"] : d["rightReserve"];
+  const reserved = own === undefined || own === null ? state : { ...state, committed: { ...state.committed, reserves: mapSet(committedReserves(state), tokenId, BigInt(String(own))) as unknown as Binary } };
+  const draft: Draft = { ...step.draft, state: reserved }, child = draft.accountReplicas.get(counterparty as EntityId);
+  if (child === undefined) return ok({ ...step, draft });
+  if (!liveAccount(child)) return ok({ ...step, draft: jSay(draft, `⚖️ OBSERVED: non-active Account ${counterparty.slice(-4)} reserve updated; bilateral claim suppressed (${child._tag === "preparing" ? "dispute_preparing" : "disputed"})`) });
+  const token: TokenSettlement = { tokenId: BigInt(tokenId), leftReserve: BigInt(String(d["leftReserve"])), rightReserve: BigInt(String(d["rightReserve"])), collateral: BigInt(String(d["collateral"])), ondelta: BigInt(String(d["ondelta"])), ...opt("eventIndex", e.eventIndex) };
+  const meta: JEventMeta = { ...opt("blockNumber", e.blockNumber), ...opt("blockHash", e.blockHash), ...opt("transactionHash", e.transactionHash), ...opt("logIndex", e.logIndex) };
+  const jHeight = BigInt(e.blockNumber ?? blockNumber);
+  const claim: TxOf<"j_event_claim"> = { type: "j_event_claim", jHeight, jBlockHash: (e.blockHash || "") as Hash, events: [{ left, right, tokens: [token], nonce: BigInt(String(d["nonce"])), meta }], observedAt: jHeight };
+  return map(tokenAmountText(tokenId, token.collateral), (coll) => ({
+    draft: jSay(draft, `⚖️ OBSERVED: ${counterparty.slice(-4)} | coll=${coll} | j-block ${blockNumber} (awaiting 2-of-2)`), claims: [...step.claims, { accountId: counterparty, tx: claim }], dirty: [...step.dirty, counterparty],
+  }));
+};
+/** og applyHankoBatchProcessedEvent on the committed jBatchState: finalize the exact pending batch (and queue its follow-up j_broadcast), or quarantine it. */
+const batchProcessedJEvent = (step: JEventStep, e: Extract<JEvent, { readonly type: "HankoBatchProcessed" }>, blockNumber: number, timestamp: bigint): Result<JEventStep, EntityError> => {
+  const state = step.draft.state;
+  if (lower(e.entityId) !== lower(state.id)) return ok(step);
+  const before = entityJBatch(state), sent = before?.sentBatch, nonce = Number(e.nonce), hash = lower(e.batchHash);
+  return chain(mapErr(applyHankoBatchProcessed(before, state.id, e, Number(timestamp)), (x): EntityError => ({ _tag: "entity_invariant", reason: x.reason })), (r) => {
+    const draft: Draft = { ...step.draft, state: withEntityJBatch(state, r.jBatch) };
+    if (sent === undefined || nonce < sent.entityNonce) return ok({ ...step, draft });
+    if (sent.entityNonce !== nonce || lower(sent.batchHash) !== hash) return ok({ ...step, draft: jSay(draft, `❌ Pending jBatch nonce ${sent.entityNonce} quarantined: chain finalized different batch ${hash} at nonce ${nonce}`) });
+    const leader = [...membersOf(state.quorum).keys()][0] ?? "";
+    const outputs: readonly EntityOutput[] = r.autoBroadcast ? [{ to: state.id, signerId: signerId(leader) as Address, input: { kind: "txs", timestamp, txs: [{ type: "j_broadcast", data: {} }] } }] : [];
+    return ok({ ...step, draft: jSay({ ...draft, outputs: [...draft.outputs, ...outputs] }, `✅ jBatch finalized (nonce ${nonce}) | Block ${blockNumber}`) });
+  });
+};
+/** og applyFinalizedJEvent: one canonical event's Entity handler. Dispute, HTLC-secret and hash-ladder events are not ported. */
+const finalizedJEvent = (step: JEventStep, e: WireJEvent, ctx: FoldContext): Result<JEventStep, EntityError> => {
+  const blockNumber = e.blockNumber ?? 0, txHash = e.transactionHash || "unknown", d = e.data, state = step.draft.state, typed = typedJEvent(e);
+  const said = (s: EntityState, ...messages: readonly string[]): JEventStep => ({ ...step, draft: jSay({ ...step.draft, state: s }, ...messages) });
+  switch (e.type) {
+    case "FoundationBootstrapped": case "EntityRegistered": case "BoardActivated":
+      return map(applyBoardJEvent(state, typed as JEvent, blockNumber, step.draft.accountReplicas, ctx.timestamp), (b) => ({ ...step, draft: { ...step.draft, state: b.state, accountReplicas: b.accountReplicas, events: [...(step.draft.events ?? []), ...b.events] } }));
+    case "ReserveUpdated": {
+      const tokenId = Number(d["tokenId"]), mine = lower(d["entity"]) === lower(state.id);
+      const next = mine ? { ...state, committed: { ...state.committed, reserves: mapSet(committedReserves(state), tokenId, BigInt(String(d["newBalance"]))) as unknown as Binary } } : state;
+      return ok(said(next, `📊 RESERVE: ${rawUnits(tokenId, d["newBalance"])} | Block ${blockNumber} | Tx ${txHash.slice(0, 10)}...`));
+    }
+    case "DebtCreated": case "DebtEnforced": case "DebtForgiven": {
+      const held = committedDebts(state);
+      return chain(mapErr(applyDebtEvent(held, state.id, typed as Extract<JEvent, { readonly type: "DebtCreated" | "DebtEnforced" | "DebtForgiven" }>), (x): EntityError => ({ _tag: "entity_invariant", reason: x.reason })), (debts) => {
+        const next = debts === held ? state : { ...state, committed: { ...state.committed, outDebtsByToken: debts.out as unknown as Binary, inDebtsByToken: debts.in as unknown as Binary } };
+        const tokenId = Number(d["tokenId"]), tail = (v: unknown): string => String(v).slice(-8);
+        return ok(said(next, e.type === "DebtCreated" ? `🔴 DEBT: ${tail(d["debtor"])} owes ${rawUnits(tokenId, d["amount"])} to ${tail(d["creditor"])} | Block ${blockNumber}`
+          : e.type === "DebtEnforced" ? `✅ DEBT PAID: ${rawUnits(tokenId, d["amountPaid"])} to ${tail(d["creditor"])} | Block ${blockNumber}`
+            : `🩶 DEBT FORGIVEN: ${rawUnits(tokenId, d["amountForgiven"])} between ${tail(d["debtor"])} and ${tail(d["creditor"])} | Block ${blockNumber} · debt #${String(d["debtIndex"])}`));
+      });
+    }
+    case "ExternalWalletSnapshot": case "ExternalWalletDelta": return externalWalletJEvent(step, e, blockNumber, txHash);
+    case "AccountSettled": return settledJEvent(step, e, blockNumber);
+    case "HankoBatchProcessed": return batchProcessedJEvent(step, typed as Extract<JEvent, { readonly type: "HankoBatchProcessed" }>, blockNumber, ctx.timestamp);
+    case "EntityProviderActionExecuted": case "EntityProviderActionCancelled":
+      return map(applyEntityProviderActionJEvent(state, typed as JEvent, blockNumber), (b) => said(b.state, ...b.events.map((x) => x.message)));
+    default: return invariant(`J_EVENT_${e.type}_ENTITY_HANDLER_NOT_PORTED`);
+  }
+};
+/**
+ * og handleJEventEntityTx + applyJEvent: the active proposer's signed range is validated before anything else, a fully applied range is a no-op,
+ * the suffix's events apply block by block (each block advancing lastFinalizedJHeight), and the certified J head, history root and board-registry
+ * finality then commit. Queued Account claims merge (og mergeJEventClaimOps) and enter their Accounts' mempools like og's returned accountTxs.
+ */
+const entityJEvent = (d: Draft, data: JRec, ctx: FoldContext): Result<Draft, EntityError> => {
+  const state = d.state, rawBlocks = Array.isArray(data["blocks"]) ? (data["blocks"] as readonly unknown[]) : [];
+  const received = rawBlocks.flatMap((b) => { const block = recOf(b) ?? {}; return (Array.isArray(block["events"]) ? (block["events"] as readonly unknown[]) : []).map((raw): EntityRuntimeEvent => {
+    const ev = recOf(raw) ?? {};
+    return { eventName: "JEventReceived", data: { ...(recOf(ev["data"]) ?? {}), entityId: state.id, eventType: ev["type"] ?? "unknown", blockNumber: block["blockNumber"], txHash: ev["transactionHash"] } };
+  }); });
+  const runtimeEvents = [...(d.runtimeEvents ?? []), ...(received.length > 0 ? received : [{ eventName: "JEventReceived", data: { entityId: state.id, eventType: "liveness" } }])];
+  const budget = jRangeBudgetIssue(data);
+  if (budget !== undefined) return invariant(budget);
+  const range = jRangeEnvelope(state, data);
+  if (!range.ok) return invariant(range.error === "J_RANGE_PROPOSER_SIGNATURE_INVALID" ? `j_event rejected: invalid proposer signature for ${nText(data["from"])}` : `j_event rejected: ${range.error}`);
+  const r = range.value;
+  return chain(mapErr(reconcileJRange(state, r), (reason): EntityError => ({ _tag: "entity_invariant", reason })), (suffix): Result<Draft, EntityError> => {
+    if (suffix === null) return ok({ ...d, runtimeEvents, touched: [] });
+    let step: JEventStep = { draft: { ...d, runtimeEvents }, claims: [], dirty: [] }, root = anchorRoot(state);
+    for (const block of suffix.blocks) {
+      const folded = foldJHistoryRoot(root, [jBlockIdentity(r.jurisdictionRef)(block)]);
+      if (!folded.ok) return invariant(folded.error);
+      root = folded.value;
+      const s = step.draft.state;
+      step = { ...step, draft: { ...step.draft, state: { ...s, committed: { ...s.committed, lastFinalizedJHeight: block.blockNumber } } } };
+      for (const e of block.events) { const next = finalizedJEvent(step, e, ctx); if (!next.ok) return next; step = next.value; }
+    }
+    if (root !== suffix.eventHistoryRoot) return invariant(`J_HISTORY_FINALITY_ROOT_CORRUPTION:expected=${root}:certified=${suffix.eventHistoryRoot}`);
+    const applied = step.draft.state, stack = entityBoardStack(applied);
+    const finality: Binary = { jurisdictionRef: r.jurisdictionRef, baseHeight: suffix.baseHeight, finalizedThroughHeight: suffix.scannedThroughHeight, tipBlockHash: suffix.tipBlockHash, eventHistoryRoot: suffix.eventHistoryRoot,
+      proposerSignerId: r.signerId, proposerSignature: r.signature, entityHeight: Number(state.height) + 1 };
+    if (stack === undefined) return invariant("CERTIFIED_BOARD_ENTITY_JURISDICTION_MISSING");
+    return chain(fromRegistry(advanceBoardFinality(entityBoardRegistry(applied), stack, suffix.scannedThroughHeight, suffix.tipBlockHash, suffix.eventHistoryRoot)), (board) =>
+      chain(mapErr(mergeClaimOps(step.claims), (x): EntityError => ({ _tag: "entity_invariant", reason: x.reason })), (claims) => {
+        let draft: Draft = { ...step.draft, state: { ...applied, committed: { ...applied.committed, lastFinalizedJHeight: suffix.scannedThroughHeight, jHistoryFinality: finality, certifiedBoardState: { ...board } } } };
+        // og applyLocalAccountEffects: a claim for a missing or non-active Account, or one the Account refuses, is skipped
+        for (const op of claims) {
+          const child = draft.accountReplicas.get(op.accountId as EntityId);
+          if (child === undefined || !liveAccount(child)) continue;
+          const admitted = admitAt(child, [op.tx], state.id, L0_CLOCK, ctx.verify);
+          if (admitted.ok) draft = { ...draft, ...putChild(draft.state, draft.accountReplicas, op.accountId as EntityId, admitted.value) };
+        }
+        return ok({ ...draft, touched: [...new Set(step.dirty)] as EntityId[] });
+      }));
+  });
+};
+/** og finalizedJHistoryRoot: the certified head's root, or the empty root before the first certified range. */
+const anchorRoot = (state: EntityState): string => { const a = certifiedJAnchor(state); return a.ok && a.value !== null ? a.value.eventHistoryRoot : EMPTY_J_HISTORY_ROOT; };
+const liveAccount = (c: AccountReplica): boolean => c._tag !== "preparing" && c._tag !== "disputed";
+// ---- og entity/consensus/authority/board-handover.ts + entity/tx/handlers/board-handover.ts: the on-chain BoardActivated handover ----
+/** og ConsensusConfig as boardHandover carries it (mode, threshold, validators, shares). */
+export type HandoverConfig = { readonly mode: string; readonly threshold: bigint; readonly validators: readonly string[]; readonly shares: { readonly [signer: string]: bigint } };
+/** og FinancialDataCorruptionError / TypeSafetyViolationError messages. */
+const safetyText = (message: string, context?: Record<string, unknown>): string => `🚨 FINANCIAL-SAFETY VIOLATION: ${message}${context === undefined ? "" : `\nContext: ${stableJson(context)}`}`;
+const typeSafetyText = (message: string, value: unknown): string => `🛡️ TYPE-SAFETY VIOLATION: ${message}${value === undefined ? "" : `\nReceived: ${typeof value} = ${String(value)}`}`;
+/** og validateConsensusConfig: mode, threshold, validators, shares, then voting power (a refusal is og's Error message). */
+export const consensusConfigIssue = (value: unknown, context: string): Result<HandoverConfig, string> => {
+  const c = recOf(value) ?? {}, mode = c["mode"], threshold = c["threshold"];
+  if (mode !== "proposer-based" && mode !== "gossip-based") return err(safetyText(`${context}.mode must be proposer-based or gossip-based`));
+  if (typeof threshold !== "bigint" || threshold <= 0n) return err(safetyText(`${context}.threshold must be positive bigint`));
+  if (threshold > 0xffffn) return err(safetyText(`${context}.threshold exceeds uint16 board encoding`, { threshold }));
+  const rawValidators = c["validators"];
+  if (!Array.isArray(rawValidators)) return err(typeSafetyText(`${context}.validators must be an array`, rawValidators));
+  if (rawValidators.length === 0) return err(safetyText(`${context}.validators cannot be empty`));
+  const normalized = new Set<string>(), validators: string[] = [];
+  for (const [index, validator] of (rawValidators as readonly unknown[]).entries()) {
+    if (typeof validator !== "string" || validator.trim().length === 0) return err(safetyText(`${context}.validators[${index}] must be a non-empty string`));
+    const id = validator.trim().toLowerCase();
+    if (normalized.has(id)) return err(safetyText(`${context}.validators has duplicate signer`, { validator }));
+    normalized.add(id);
+    validators.push(validator);
+  }
+  const rawShares = c["shares"];
+  if (!rawShares || typeof rawShares !== "object" || Array.isArray(rawShares)) return err(typeSafetyText(`${context}.shares must be a non-null object`, rawShares));
+  const shares = rawShares as Readonly<Record<string, unknown>>;
+  for (const [id, power] of Object.entries(shares)) if (typeof power !== "bigint") return err(safetyText(`${context}.shares.${id} must be bigint`));
+  const byId = new Map<string, bigint>();
+  for (const [raw, power] of Object.entries(shares)) {
+    const id = raw.trim().toLowerCase();
+    if (byId.has(id)) return err(safetyText(`${context}.shares has case-duplicate signer`, { rawSigner: raw }));
+    byId.set(id, power as bigint);
+  }
+  let total = 0n;
+  for (const validator of validators) {
+    const power = byId.get(validator.trim().toLowerCase());
+    if (power === undefined || power <= 0n) return err(safetyText(`${context}.shares missing positive power for validator`, { validator }));
+    if (power > 0xffffn) return err(safetyText(`${context}.shares exceeds uint16 board encoding`, { validator, power }));
+    total += power;
+  }
+  for (const id of Object.keys(shares)) if (!normalized.has(id.trim().toLowerCase())) return err(safetyText(`${context}.shares contains signer outside validators`, { shareSigner: id }));
+  if (total < threshold) return err(safetyText(`${context}.threshold exceeds total validator power`, { threshold, totalPower: total }));
+  return ok({ mode, threshold, validators, shares: shares as Readonly<Record<string, bigint>> });
+};
+/** og hashBoard(encodeBoard(config)); og's encodeBoard refusals keep the rewrite's lazyBoardEncoding codes except the proposer's (og `BOARD_PROPOSER_EOA_REQUIRED:<proposer>`). */
+const handoverBoardHash = (config: HandoverConfig): Result<string, EntityError> => {
+  const encoded = lazyBoardEncoding({ mode: "proposer-based", threshold: config.threshold, validators: config.validators, shares: config.shares });
+  if (encoded.ok) return ok(keccak256Hex(hexToBytes(encoded.value)).toLowerCase());
+  return invariant(jCode(encoded.error) === "BOARD_PROPOSER_EOA_REQUIRED" ? `BOARD_PROPOSER_EOA_REQUIRED:${config.validators[0] ?? ""}` : jCode(encoded.error));
+};
+/** og assertCanonicalConfig: a valid config in the Entity's own mode with lowercase validators and share signers. */
+const canonicalHandoverConfig = (board: unknown): Result<HandoverConfig, EntityError> => {
+  const config = consensusConfigIssue(board, "BOARD_HANDOVER_CONFIG");
+  if (!config.ok) return invariant(`BOARD_HANDOVER_CONFIG_INVALID:${config.error}`);
+  const c = config.value;
+  if (c.mode !== "proposer-based") return invariant(`BOARD_HANDOVER_MODE_CHANGE_FORBIDDEN:proposer-based:${c.mode}`);
+  for (const v of c.validators) if (v !== v.trim().toLowerCase()) return invariant(`BOARD_HANDOVER_VALIDATOR_NON_CANONICAL:${v}`);
+  for (const s of Object.keys(c.shares)) if (s !== s.trim().toLowerCase()) return invariant(`BOARD_HANDOVER_SHARE_SIGNER_NON_CANONICAL:${s}`);
+  return ok(c);
+};
+/**
+ * og getBoardHandoverFrameConfig: a frame carrying boardHandover must be exactly [j_event, boardHandover], and the j_event's own
+ * BoardActivated chain must run from the committed board to the new config's board. The authority the frame is certified under.
+ */
+export const handoverFrameConfig = (state: EntityState, txs: readonly EntityTx[]): Result<HandoverConfig | null, EntityError> => {
+  const handovers = txs.filter((tx) => tx.type === "boardHandover");
+  if (handovers.length === 0) return ok(null);
+  if (handovers.length !== 1) return invariant(`BOARD_HANDOVER_COUNT_INVALID:${handovers.length}`);
+  const [range, handover] = txs;
+  if (txs.length !== 2 || range?.type !== "j_event" || handover?.type !== "boardHandover") return invariant(`BOARD_HANDOVER_FRAME_SHAPE_INVALID:${txs.map((tx) => tx.type).join(",")}`);
+  return chain(canonicalHandoverConfig(handover.data.board), (config) => {
+    const me = lower(state.id), blocks = Array.isArray(range.data["blocks"]) ? (range.data["blocks"] as readonly unknown[]) : [];
+    const activations = blocks.flatMap((b) => { const events = recOf(b)?.["events"]; return Array.isArray(events) ? (events as readonly unknown[]) : []; })
+      .map((e) => recOf(e) ?? {}).filter((e) => e["type"] === "BoardActivated" && lower((recOf(e["data"]) ?? {})["entityId"]) === me).map((e) => recOf(e["data"]) ?? {});
+    if (activations.length === 0) return invariant("BOARD_HANDOVER_ACTIVATION_MISSING");
+    let expected = configBoardHash(state.quorum).toLowerCase();
+    for (const a of activations) {
+      const received = lower(a["previousBoardHash"]);
+      if (received !== expected) return invariant(`BOARD_HANDOVER_ACTIVATION_CHAIN_INVALID:${received}:${expected}`);
+      expected = lower(a["newBoardHash"]);
+    }
+    return chain(handoverBoardHash(config), (hash) => (hash !== expected ? invariant(`BOARD_HANDOVER_CONFIG_HASH_MISMATCH:${hash}:${expected}`) : ok(config)));
+  });
+};
+/**
+ * og handleBoardHandoverEntityTx: the frame-authorized config replaces the board once the Entity's certified registry holds its own
+ * BoardActivated record for exactly that board; the new CEO leads from view 0. Validators must be EOAs here (nested Entity validators are not ported).
+ */
+const entityBoardHandover = (d: Draft, board: unknown, authorized: HandoverConfig | undefined): Result<Draft, EntityError> => {
+  const state = d.state, config = consensusConfigIssue(board, "BOARD_HANDOVER_CONFIG");
+  if (!config.ok) return invariant(config.error);
+  const c = config.value;
+  if (c.mode !== "proposer-based") return invariant("BOARD_HANDOVER_MODE_CHANGE_FORBIDDEN");
+  if (authorized === undefined) return invariant("BOARD_HANDOVER_TRANSITION_PROOF_REQUIRED");
+  return chain(observerBoardRecord(state, state.id), (record) => {
+    if (record === null || record.source !== "BoardActivated") return invariant("BOARD_HANDOVER_CERTIFIED_ACTIVATION_REQUIRED");
+    const previous = configBoardHash(state.quorum).toLowerCase();
+    return chain(handoverBoardHash(c), (next) => chain(handoverBoardHash(authorized), (auth) => {
+      if (auth !== next || record.boardHash !== next) return invariant(`BOARD_HANDOVER_CERTIFIED_AUTHORITY_MISMATCH:previous=${record.previousBoardHash}:${previous}:certified=${record.boardHash}:authorized=${auth}:next=${next}`);
+      const members = new Map<Address, { readonly shares: bigint }>();
+      for (const v of c.validators) {
+        const a = address(v), share = Object.entries(c.shares).find(([k]) => lower(k) === lower(v))?.[1];
+        if (!a.ok || share === undefined) return invariant(`BOARD_HANDOVER_ENTITY_VALIDATOR_NOT_PORTED:${v}`);
+        members.set(a.value, { shares: share });
+      }
+      const active = c.validators[0];
+      if (active === undefined) return invariant("BOARD_HANDOVER_VALIDATOR_MISSING");
+      return chain(admitQuorum({ _tag: "teaching", threshold: c.threshold, members }), (quorum) =>
+        ok({ ...d, state: { ...state, quorum, leaderState: { activeValidatorId: active, view: 0, changedAtHeight: Number(state.height) + 1 } }, touched: [] }));
+    }));
+  });
+};
+/** og entity/auth/signer-wallet.ts on the committed externalWallet {balances, allowances}: owner -> token (or token:spender) -> row. */
+type WalletBook = ReadonlyMap<string, ReadonlyMap<string, Binary>>;
+const NATIVE_EXTERNAL_TOKEN = `0x${"00".repeat(20)}`;
+const walletAddress = (v: unknown, label: string): Result<string, EntityError> => { const s = String(v || "").trim().toLowerCase(); return /^0x[0-9a-f]{40}$/.test(s) ? ok(s) : invariant(`j_event rejected: invalid external wallet ${label}`); };
+const walletTokenId = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined);
+/** og applyExternalWalletJEvent: a signer-Entity validator's on-chain wallet snapshot (baseline) or delta (on an existing baseline row). */
+const externalWalletJEvent = (step: JEventStep, e: WireJEvent, blockNumber: number, txHash: string): Result<JEventStep, EntityError> => {
+  const state = step.draft.state, d = e.data;
+  if (lower(d["entityId"]) !== lower(state.id)) return ok(step);
+  return chain(walletAddress(d["owner"], "owner"), (owner): Result<JEventStep, EntityError> => {
+    if (![...membersOf(state.quorum).keys()].some((v) => lower(v) === owner)) return invariant(`EXTERNAL_WALLET_OWNER_NOT_SIGNER entity=${String(state.id).slice(0, 12)} owner=${owner}`);
+    const held = recOf(state.committed["externalWallet"]), book = (k: string): WalletBook => { const v = held?.[k]; return v instanceof Map ? (v as WalletBook) : new Map(); };
+    const balances = book("balances"), allowances = book("allowances"), jHeight = Number(e.blockNumber ?? blockNumber);
+    if (!Number.isSafeInteger(jHeight) || jHeight < 0) return invariant("PROTOCOL_J_HEIGHT_INVALID");
+    const own = new Map(balances.get(owner) ?? []), ownAllowed = new Map(allowances.get(owner) ?? []);
+    const done = (nextBalances: WalletBook, nextAllowances: WalletBook, kind: string): JEventStep => {
+      const changed = nextBalances !== balances || nextAllowances !== allowances, wallet: Binary = { balances: nextBalances, allowances: nextAllowances } as unknown as Binary;
+      const next = changed ? { ...state, committed: { ...state.committed, externalWallet: wallet } } : state;
+      return { ...step, draft: jSay({ ...step.draft, state: next }, `💼 EXTERNAL: ${owner.slice(0, 10)} ${kind} | Block ${blockNumber} | Tx ${txHash.slice(0, 10)}...`) };
+    };
+    if (e.type === "ExternalWalletSnapshot") {
+      if (d["nativeBalance"] !== undefined) own.set(NATIVE_EXTERNAL_TOKEN, { tokenAddress: NATIVE_EXTERNAL_TOKEN, tokenId: 0, balance: BigInt(String(d["nativeBalance"])), jHeight, transactionHash: txHash } as unknown as Binary);
+      for (const raw of (Array.isArray(d["tokenBalances"]) ? d["tokenBalances"] : []) as readonly unknown[]) {
+        const entry = recOf(raw) ?? {}, token = walletAddress(entry["tokenAddress"], "tokenAddress");
+        if (!token.ok) return token;
+        const tokenId = walletTokenId(entry["tokenId"]);
+        own.set(token.value, { tokenAddress: token.value, ...(tokenId !== undefined ? { tokenId } : {}), balance: BigInt(String(entry["balance"])), jHeight, transactionHash: txHash } as unknown as Binary);
+      }
+      for (const raw of (Array.isArray(d["allowances"]) ? d["allowances"] : []) as readonly unknown[]) {
+        const entry = recOf(raw) ?? {}, token = walletAddress(entry["tokenAddress"], "tokenAddress");
+        if (!token.ok) return token;
+        const spender = walletAddress(entry["spender"], "spender");
+        if (!spender.ok) return spender;
+        ownAllowed.set(`${token.value}:${spender.value}`, { tokenAddress: token.value, spender: spender.value, allowance: BigInt(String(entry["allowance"])), jHeight, transactionHash: txHash } as unknown as Binary);
+      }
+      return ok(done(mapSet(balances, owner, own), mapSet(allowances, owner, ownAllowed), "snapshot"));
+    }
+    return chain(walletAddress(d["tokenAddress"], "tokenAddress"), (token): Result<JEventStep, EntityError> => {
+      const entity = String(d["entityId"]).slice(0, 12);
+      let nextBalances = balances, nextAllowances = allowances;
+      if (d["balanceDelta"] !== undefined) {
+        const current = balances.get(owner)?.get(token) as { readonly tokenId?: number; readonly balance: bigint } | undefined;
+        if (current === undefined) return invariant(`EXTERNAL_WALLET_BASELINE_MISSING:balance entity=${entity} owner=${owner} token=${token}`);
+        const balance = current.balance + BigInt(String(d["balanceDelta"]));
+        if (balance < 0n) return invariant(`EXTERNAL_WALLET_BALANCE_UNDERFLOW entity=${entity} owner=${owner} token=${token}`);
+        const tokenId = walletTokenId(d["tokenId"]) ?? current.tokenId;
+        own.set(token, { tokenAddress: token, ...(tokenId !== undefined ? { tokenId } : {}), balance, jHeight, transactionHash: txHash } as unknown as Binary);
+        nextBalances = mapSet(balances, owner, own);
+      }
+      if (d["allowance"] !== undefined || d["spender"] !== undefined) {
+        const spender = walletAddress(d["spender"], "spender");
+        if (!spender.ok) return spender;
+        const current = allowances.get(owner)?.get(`${token}:${spender.value}`) as { readonly allowance: bigint } | undefined;
+        if (current === undefined) return invariant(`EXTERNAL_WALLET_BASELINE_MISSING:allowance entity=${entity} owner=${owner} token=${token} spender=${spender.value}`);
+        ownAllowed.set(`${token}:${spender.value}`, { tokenAddress: token, spender: spender.value, allowance: d["allowance"] !== undefined ? BigInt(String(d["allowance"])) : current.allowance, jHeight, transactionHash: txHash } as unknown as Binary);
+        nextAllowances = mapSet(allowances, owner, ownAllowed);
+      }
+      return ok(done(nextBalances, nextAllowances, "delta"));
+    });
+  });
+};
 // ---- og jurisdiction/machine/registration-evidence, receipt-codec verifyCanonicalReceiptProof (@ethereumjs/mpt 10 + @ethereumjs/rlp 10) ----
 type RlpItem = Uint8Array | readonly RlpItem[];
 /** @ethereumjs/rlp _decode: canonical prefixes only; a failure is null. */
@@ -11181,6 +11851,241 @@ const recordAuthenticatedJAuthority = (rt: Runtime, e: RegistrationEvidence): Re
     return chain(registrationClaimHash(existing), (held) => chain(registrationClaimHash(e), (incoming) => (held !== incoming ? txErr(`J_AUTHORITY_EVIDENCE_CONFLICT:${key}:${held}:${incoming}`) : ok(rt))));
   }));
 
+// ---- og runtime/registration/numbered-registration-{codec,intent}.ts + ethers v6 Transaction.from: durable numbered-registration intents ----
+/**
+ * An EVM transaction as ethers Transaction.from reads it: `hash` / `from` are null for an unsigned transaction; `from` is ethers' lazy sender
+ * recovery, so an unrecoverable signature is an error only when the sender is asked for.
+ */
+export type EvmTx = { readonly type: 0 | 1 | 2; readonly hash: string | null; readonly from: Result<string, string> | null; readonly chainId: bigint; readonly nonce: number; readonly to: string | null; readonly value: bigint; readonly data: string };
+type EvmRlp = Uint8Array | readonly EvmRlp[];
+/** ethers decodeRlp: length prefixes are taken as given (no canonical-form check), a child may not overrun its list, nothing may trail. */
+const evmRlpDecode = (data: Uint8Array): EvmRlp | null => {
+  const int = (at: number, n: number): number => { let r = 0; for (let i = 0; i < n; i++) r = r * 256 + (data[at + i] ?? 0); return r; };
+  const decode = (offset: number): { readonly item: EvmRlp; readonly consumed: number } | null => {
+    const b = data[offset] ?? 0, fits = (end: number): boolean => end <= data.length;
+    const children = (start: number, length: number): { readonly item: EvmRlp; readonly consumed: number } | null => {
+      const items: EvmRlp[] = [];
+      for (let at = start; at < offset + 1 + length;) { const d = decode(at); if (d === null) return null; items.push(d.item); at += d.consumed; if (at > offset + 1 + length) return null; }
+      return { item: items, consumed: 1 + length };
+    };
+    if (b >= 0xf8) { const ll = b - 0xf7; if (!fits(offset + 1 + ll)) return null; const n = int(offset + 1, ll); return fits(offset + 1 + ll + n) ? children(offset + 1 + ll, ll + n) : null; }
+    if (b >= 0xc0) { const n = b - 0xc0; return fits(offset + 1 + n) ? children(offset + 1, n) : null; }
+    if (b >= 0xb8) { const ll = b - 0xb7; if (!fits(offset + 1 + ll)) return null; const n = int(offset + 1, ll); return fits(offset + 1 + ll + n) ? { item: data.slice(offset + 1 + ll, offset + 1 + ll + n), consumed: 1 + ll + n } : null; }
+    if (b >= 0x80) { const n = b - 0x80; return fits(offset + 1 + n) ? { item: data.slice(offset + 1, offset + 1 + n), consumed: 1 + n } : null; }
+    return { item: data.slice(offset, offset + 1), consumed: 1 };
+  };
+  if (data.length === 0) return null;
+  const d = decode(0);
+  return d === null || d.consumed !== data.length ? null : d.item;
+};
+const EVM_MAX_UINT = (1n << 256n) - 1n, SECP_N = secp256k1.CURVE.n;
+/** ethers toBeArray: the minimal big-endian bytes (0 is empty). */
+const evmBytes = (n: bigint): Uint8Array => (n === 0n ? new Uint8Array(0) : magnitude(n));
+const bytesItem = (x: EvmRlp | undefined, label: string): Result<Uint8Array, string> => (x instanceof Uint8Array ? ok(x) : err(`invalid ${label}`));
+/** ethers handleUint: any byte string up to 2^256 - 1 (leading zeros are accepted). */
+const evmUint = (x: EvmRlp | undefined, label: string): Result<bigint, string> => chain(bytesItem(x, label), (b) => {
+  const n = b.length === 0 ? 0n : BigInt(bytesToHex(b));
+  return n > EVM_MAX_UINT ? err(`value exceeds uint size: ${label}`) : ok(n);
+});
+/** ethers handleNumber: a safe integer. */
+const evmNumber = (x: EvmRlp | undefined, label: string): Result<number, string> => chain(evmUint(x, label), (n) => (n > BigInt(Number.MAX_SAFE_INTEGER) ? err(`overflow: ${label}`) : ok(Number(n))));
+/** ethers handleAddress: empty is contract creation, anything else must be 20 bytes. */
+const evmTo = (x: EvmRlp | undefined): Result<Uint8Array | null, string> => chain(bytesItem(x, "to"), (b) => (b.length === 0 ? ok(null) : b.length === 20 ? ok(b) : err("invalid address")));
+/** ethers accessListify on decoded fields: [address(20), [slot(32)...]] rows, re-encoded as read. */
+const evmAccessList = (x: EvmRlp | undefined): Result<EvmRlp, string> => {
+  if (!Array.isArray(x)) return err("invalid access list");
+  for (const row of x as readonly EvmRlp[]) {
+    if (!Array.isArray(row) || row.length !== 2) return err("invalid slot set");
+    const [addr, keys] = row as readonly EvmRlp[];
+    if (!(addr instanceof Uint8Array) || addr.length !== 20 || !Array.isArray(keys)) return err("invalid address-slot set");
+    if ((keys as readonly EvmRlp[]).some((k) => !(k instanceof Uint8Array) || k.length !== 32)) return err("invalid slot");
+  }
+  return ok(x);
+};
+/** ethers zeroPadValue(_, 32) then Signature.from: r / s are at most 32 bytes. */
+const evmSigWord = (x: EvmRlp | undefined, label: string): Result<bigint, string> => chain(bytesItem(x, label), (b) => (b.length > 32 ? err(`invalid ${label}`) : ok(b.length === 0 ? 0n : BigInt(bytesToHex(b)))));
+type EvmSig = { readonly r: bigint; readonly s: bigint; readonly yParity: number };
+/** ethers Transaction.hash (keccak of the re-serialized signed form) and .from (recovery over the unsigned hash; a high s recovers the same key). */
+type EvmSigned = { readonly hash: string | null; readonly from: Result<string, string> | null };
+const evmSigned = (sig: EvmSig, unsigned: Uint8Array, signed: (sig: EvmSig) => Result<Uint8Array, string>): Result<EvmSigned, string> =>
+  map(signed(sig), (serialized) => {
+    const key = sig.r === 0n || sig.r >= SECP_N || sig.s === 0n || sig.s >= SECP_N ? null : recoverPublicKey(keccak_256(unsigned), wordOf(sig.r), wordOf(sig.s), sig.yParity);
+    return { hash: bytesToHex(keccak_256(serialized)), from: key === null ? err("invalid signature") : ok(addressOf(key).toLowerCase()) };
+  });
+/**
+ * ethers v6 Transaction.from(raw) for a legacy (pre-EIP-155 or EIP-155), EIP-2930 (type 1) or EIP-1559 (type 2) transaction: RLP-decode the fields,
+ * derive the chain id from a legacy v, hash the re-serialized signed form, recover the sender. Blob (3) and set-code (4) transactions are refused.
+ */
+export const parseEvmTx = (raw: string): Result<EvmTx, string> => {
+  if (!/^0x([0-9a-fA-F]{2})+$/.test(raw)) return err("invalid BytesLike value");
+  const payload = hexToBytes(raw), first = payload[0] ?? 0;
+  const rlpOf = (items: readonly EvmRlp[]): Uint8Array => rlp(items as Rlp);
+  if (first >= 0x7f) {
+    const fields = evmRlpDecode(payload);
+    if (!Array.isArray(fields) || (fields.length !== 9 && fields.length !== 6)) return err("invalid field count for legacy transaction");
+    const f = fields as readonly EvmRlp[];
+    return chain(evmNumber(f[0], "nonce"), (nonce) => chain(evmUint(f[1], "gasPrice"), (gasPrice) => chain(evmUint(f[2], "gasLimit"), (gasLimit) => chain(evmTo(f[3]), (to) =>
+      chain(evmUint(f[4], "value"), (value) => chain(bytesItem(f[5], "data"), (data) => {
+        const body = [evmBytes(BigInt(nonce)), evmBytes(gasPrice), evmBytes(gasLimit), to ?? new Uint8Array(0), evmBytes(value), data];
+        const tx = (chainId: bigint, signed: EvmSigned): EvmTx => ({ type: 0, ...signed, chainId, nonce, to: to === null ? null : bytesToHex(to), value, data: bytesToHex(data) });
+        if (f.length === 6) return ok(tx(0n, { hash: null, from: null }));
+        return chain(evmUint(f[6], "v"), (v) => chain(evmUint(f[7], "r"), (r) => chain(evmUint(f[8], "s"), (s) => {
+          if (r === 0n && s === 0n) return ok(tx(v, { hash: null, from: null }));
+          const derived = (v - 35n) / 2n, chainId = derived < 0n ? 0n : derived;
+          if (chainId === 0n && v !== 27n && v !== 28n) return err("non-canonical legacy v");
+          return chain(evmSigWord(f[7], "r"), (rw) => chain(evmSigWord(f[8], "s"), (sw) => {
+            const yParity = v === 27n ? 0 : v === 28n ? 1 : v % 2n === 1n ? 0 : 1;
+            const unsigned = rlpOf(chainId === 0n ? body : [...body, evmBytes(chainId), new Uint8Array(0), new Uint8Array(0)]);
+            const vOut = chainId === 0n ? 27n + BigInt(yParity) : chainId * 2n + 35n + BigInt(yParity);
+            return map(evmSigned({ r: rw, s: sw, yParity }, unsigned, (sig) => ok(rlpOf([...body, evmBytes(vOut), evmBytes(sig.r), evmBytes(sig.s)]))), (signed) => tx(chainId, signed));
+          }));
+        })));
+      }))))));
+  }
+  if (first !== 1 && first !== 2) return err("unsupported transaction type");
+  const typed = first as 1 | 2, fields = evmRlpDecode(payload.subarray(1)), plain = typed === 1 ? 8 : 9;
+  if (!Array.isArray(fields) || (fields.length !== plain && fields.length !== plain + 3)) return err(`invalid field count for transaction type: ${typed}`);
+  const f = fields as readonly EvmRlp[], o = typed === 2 ? 1 : 0;
+  return chain(evmUint(f[0], "chainId"), (chainId) => chain(evmNumber(f[1], "nonce"), (nonce) => chain(evmUint(f[2], typed === 2 ? "maxPriorityFeePerGas" : "gasPrice"), (fee0) =>
+    chain(typed === 2 ? evmUint(f[3], "maxFeePerGas") : ok(0n), (fee1) => chain(evmUint(f[3 + o], "gasLimit"), (gasLimit) => chain(evmTo(f[4 + o]), (to) => chain(evmUint(f[5 + o], "value"), (value) =>
+      chain(bytesItem(f[6 + o], "data"), (data) => chain(evmAccessList(f[7 + o]), (accessList) => {
+        const body: EvmRlp[] = [evmBytes(chainId), evmBytes(BigInt(nonce)), evmBytes(fee0), ...(typed === 2 ? [evmBytes(fee1)] : []), evmBytes(gasLimit), to ?? new Uint8Array(0), evmBytes(value), data, accessList];
+        const tx = (signed: EvmSigned): EvmTx => ({ type: typed, ...signed, chainId, nonce, to: to === null ? null : bytesToHex(to), value, data: bytesToHex(data) });
+        const envelope = (items: readonly EvmRlp[]): Uint8Array => concat([Uint8Array.of(typed), rlpOf(items)]);
+        if (f.length === plain) return ok(tx({ hash: null, from: null }));
+        return chain(evmNumber(f[plain], "yParity"), (yParity) => {
+          if (yParity !== 0 && yParity !== 1) return err("invalid yParity");
+          return chain(evmSigWord(f[plain + 1], "r"), (r) => chain(evmSigWord(f[plain + 2], "s"), (s) =>
+            // ethers inferTypes refuses an EIP-1559 fee cap below its priority fee, and Signature.s a word with its top bit set, when the signed form is serialized.
+            map(evmSigned({ r, s, yParity }, envelope(body), (sig) => (typed === 2 && fee1 < fee0 ? err("priorityFee cannot be more than maxFee") : sig.s >> 255n !== 0n ? err("non-canonical s; use ._s")
+              : ok(envelope([...body, evmBytes(BigInt(sig.yParity)), evmBytes(sig.r), evmBytes(sig.s)])))), tx)));
+        });
+      })))))))));
+};
+const REGISTER_NUMBERED_ENTITIES_BATCH_SELECTOR = nobleHex(keccak_256(utf8("registerNumberedEntitiesBatch(bytes[])")).slice(0, 4));
+/** og encodeNumberedRegistrationCalldata: EntityProvider.registerNumberedEntitiesBatch(bytes[] encodedBoards), lowercased. */
+export const numberedRegistrationCalldata = (encodedBoards: readonly string[]): string =>
+  `0x${REGISTER_NUMBERED_ENTITIES_BATCH_SELECTOR}${hexBody(abiEncodeHex([A.array(encodedBoards.map((b) => A.bytes(b)))]))}`.toLowerCase();
+const MAX_NUMBERED_REGISTRATION_ENTITIES = 128;
+type Loose = { readonly [field: string]: unknown };
+const looseRecord = (v: unknown): Loose => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : {});
+/** og numberedRegistrationBytes32. */
+const numberedBytes32 = (v: unknown, label: string): Result<string, RuntimeError> => { const s = String(v || "").toLowerCase(); return /^0x[0-9a-f]{64}$/.test(s) ? ok(s) : txErr(`NUMBERED_REGISTRATION_${label}_INVALID`); };
+/** og codec `address`: ethers.getAddress, lowercased. */
+const numberedAddress = (v: unknown, label: string): Result<string, RuntimeError> => { const a = ethAddress(v); return a === null ? txErr(`NUMBERED_REGISTRATION_${label}_INVALID:${String(v)}`) : ok(a); };
+const boardStack = (j: unknown): Result<string, RuntimeError> => { const x = looseRecord(j); return mapErr(boardStackKey({ chainId: x["chainId"] as number, depositoryAddress: x["depositoryAddress"] as string, entityProviderAddress: x["entityProviderAddress"] as string }), (e): RuntimeError => ({ _tag: "runtime_tx", code: e.code })); };
+/** og assertNumberedRegistrationRequest. */
+const numberedRegistrationRequestValid = (rt: Runtime, request: Loose): Result<void, RuntimeError> => {
+  if (request["version"] !== 1) return txErr("NUMBERED_REGISTRATION_INTENT_VERSION_INVALID");
+  return chain(numberedBytes32(request["intentId"], "INTENT_ID"), (intentId) => {
+    if (request["intentId"] !== intentId) return txErr("NUMBERED_REGISTRATION_INTENT_ID_NON_CANONICAL");
+    return chain(numberedBytes32(request["stackKey"], "STACK_KEY"), (stackKey) => {
+      if (request["stackKey"] !== stackKey) return txErr("NUMBERED_REGISTRATION_STACK_KEY_NON_CANONICAL");
+      return chain(numberedAddress(request["payerSignerId"], "PAYER"), () => chain(numberedAddress(request["entityProviderAddress"], "ENTITY_PROVIDER"), (): Result<void, RuntimeError> => {
+        let committed = false;
+        for (const r of rt.jReplicas.values()) { const k = jReplicaStackKey(r); if (!k.ok) return k; if (k.value === stackKey) { committed = true; break; } }
+        if (!committed) return txErr("NUMBERED_REGISTRATION_COMMITTED_STACK_MISSING");
+        const entities = Array.isArray(request["entities"]) ? (request["entities"] as readonly unknown[]) : [];
+        if (entities.length === 0) return txErr("NUMBERED_REGISTRATION_INTENT_EMPTY");
+        if (entities.length > MAX_NUMBERED_REGISTRATION_ENTITIES) return txErr(`NUMBERED_REGISTRATION_ENTITY_LIMIT_EXCEEDED:${entities.length}`);
+        for (const [index, raw] of entities.entries()) { const r = numberedEntityValid(request, looseRecord(raw), index); if (!r.ok) return r; }
+        return ok(undefined);
+      }));
+    });
+  });
+};
+const numberedEntityValid = (request: Loose, entity: Loose, index: number): Result<void, RuntimeError> => {
+  const name = entity["name"], config = looseRecord(entity["config"]), jurisdiction = config["jurisdiction"];
+  if (!name || (typeof name === "string" && name.length > 256)) return txErr(`NUMBERED_REGISTRATION_NAME_INVALID:${index}`);
+  if (!jurisdiction) return txErr(`NUMBERED_REGISTRATION_STACK_MISSING:${index}`);
+  return chain(boardStack(jurisdiction), (stack) => {
+    if (stack !== request["stackKey"]) return txErr(`NUMBERED_REGISTRATION_STACK_MISMATCH:${index}`);
+    return chain(numberedAddress(looseRecord(jurisdiction)["entityProviderAddress"], "CONFIG_ENTITY_PROVIDER"), (provider) => {
+      if (provider !== request["entityProviderAddress"]) return txErr(`NUMBERED_REGISTRATION_ENTITY_PROVIDER_MISMATCH:${index}`);
+      return chain(numberedBytes32(entity["boardHash"], "BOARD_HASH"), (expectedBoard) => {
+        const encoded = entity["encodedBoard"];
+        if (typeof encoded !== "string" || !/^0x(?:[0-9a-f]{2})+$/.test(encoded)) return txErr(`NUMBERED_REGISTRATION_ENCODED_BOARD_INVALID:${index}`);
+        const validators = Array.isArray(config["validators"]) ? (config["validators"] as readonly unknown[]).map(String) : [];
+        return chain(lazyBoardEncoding({ mode: "proposer-based", validators, shares: looseRecord(config["shares"]) as EntityRootConfig["shares"], threshold: config["threshold"] as bigint }), (board): Result<void, RuntimeError> => {
+          if (board.toLowerCase() !== encoded) return txErr(`NUMBERED_REGISTRATION_ENCODED_BOARD_MISMATCH:${index}`);
+          if (keccak256Hex(hexToBytes(encoded)) !== expectedBoard) return txErr(`NUMBERED_REGISTRATION_BOARD_HASH_MISMATCH:${index}`);
+          const seed = entity["entitySeed"], position = entity["position"];
+          if (entity["localSignerId"] !== null) {
+            const local = numberedAddress(entity["localSignerId"], "LOCAL_SIGNER");
+            if (!local.ok) return local;
+            if (!validators.some((v) => v.toLowerCase() === local.value)) return txErr(`NUMBERED_REGISTRATION_LOCAL_SIGNER_NOT_ON_BOARD:${index}`);
+            // og canonicalEntitySeed(seed) !== seed: only a lowercase 0x-prefixed 64-byte hex seed is its own canonical form.
+            if (typeof seed !== "string" || !/^0x[0-9a-f]{128}$/.test(seed)) return txErr(`NUMBERED_REGISTRATION_ENTITY_SEED_NON_CANONICAL:${index}`);
+          } else if (seed !== null) return txErr(`NUMBERED_REGISTRATION_PAYER_ONLY_SEED_FORBIDDEN:${index}`);
+          if (position) { const p = looseRecord(position); if (![p["x"], p["y"], p["z"]].every(Number.isFinite)) return txErr(`NUMBERED_REGISTRATION_POSITION_INVALID:${index}`); }
+          return ok(undefined);
+        });
+      });
+    });
+  });
+};
+/** og computeNumberedRegistrationRequestHash. */
+export const numberedRegistrationRequestHash = (request: unknown): Result<string, RuntimeError> => authHash({ domain: "xln.numbered-registration.intent.v1", request });
+/** og parseNumberedRegistrationIntentTransaction: the durable raw transaction is exactly the payer's registerNumberedEntitiesBatch call. */
+const numberedRegistrationTx = (pending: Loose): Result<EvmTx, RuntimeError> => {
+  const raw = pending["rawTransaction"], request = looseRecord(pending["request"]);
+  if (typeof raw !== "string" || !/^0x[0-9a-f]+$/i.test(raw) || raw.length > 524_290) return txErr("NUMBERED_REGISTRATION_RAW_TX_INVALID");
+  return chain(mapErr(parseEvmTx(raw), (reason): RuntimeError => ({ _tag: "runtime_tx", code: `NUMBERED_REGISTRATION_RAW_TX_INVALID:${reason}` })), (tx) => {
+    if (!tx.hash) return txErr("NUMBERED_REGISTRATION_TX_HASH_MISMATCH");
+    return chain(numberedBytes32(pending["transactionHash"], "TX_HASH"), (txHash) => {
+      if (tx.hash !== txHash) return txErr("NUMBERED_REGISTRATION_TX_HASH_MISMATCH");
+      if (tx.from !== null && !tx.from.ok) return txErr(`NUMBERED_REGISTRATION_RAW_TX_INVALID:${tx.from.error}`);
+      if (tx.from === null || tx.from.value !== request["payerSignerId"]) return txErr("NUMBERED_REGISTRATION_TX_SIGNER_MISMATCH");
+      // The request check proved this chain id a positive safe integer (its certified stack key).
+      const entities = request["entities"] as readonly unknown[], chainId = Number(looseRecord(looseRecord(looseRecord(entities[0])["config"])["jurisdiction"])["chainId"]);
+      if (tx.chainId !== BigInt(chainId) || tx.to !== request["entityProviderAddress"]) return txErr("NUMBERED_REGISTRATION_TX_DOMAIN_MISMATCH");
+      if (tx.value !== 0n || tx.data !== numberedRegistrationCalldata(entities.map((e) => String(looseRecord(e)["encodedBoard"])))) return txErr("NUMBERED_REGISTRATION_TX_CALLDATA_MISMATCH");
+      return tx.nonce !== pending["transactionNonce"] ? txErr("NUMBERED_REGISTRATION_TX_NONCE_MISMATCH") : ok(tx);
+    });
+  });
+};
+/** og applyNumberedRegistrationIntent: a validated pending intent is stored once; the same payload again is a no-op, a different one is refused. */
+const recordNumberedRegistrationIntent = (rt: Runtime, pending: RuntimeData): Result<Runtime, RuntimeError> => {
+  const request = looseRecord(pending["request"]);
+  return chain(numberedRegistrationRequestValid(rt, request), () => chain(numberedRegistrationRequestHash(request), (hash) => {
+    if (hash !== pending["requestHash"]) return txErr("NUMBERED_REGISTRATION_REQUEST_HASH_MISMATCH");
+    return chain(numberedRegistrationTx(pending), (): Result<Runtime, RuntimeError> => {
+      const intentId = String(request["intentId"]), existing = rt.numberedRegistrationIntents.get(intentId);
+      if (existing === undefined) return ok({ ...rt, numberedRegistrationIntents: mapSet(rt.numberedRegistrationIntents, intentId, pending) });
+      if (existing["requestHash"] !== pending["requestHash"]) return txErr("NUMBERED_REGISTRATION_INTENT_PAYLOAD_CONFLICT");
+      return existing["status"] === "pending" && existing["transactionHash"] !== pending["transactionHash"] ? txErr("NUMBERED_REGISTRATION_INTENT_TX_CONFLICT") : ok(rt);
+    });
+  }));
+};
+/** og applyNumberedRegistrationResolution: quarantine, or complete once every result has certified evidence and every local replica exists on the planned board. */
+const resolveNumberedRegistrationIntent = (rt: Runtime, resolution: RuntimeData): Result<Runtime, RuntimeError> =>
+  chain(numberedBytes32(resolution["intentId"], "INTENT_ID"), (intentId): Result<Runtime, RuntimeError> => {
+    const pending = rt.numberedRegistrationIntents.get(intentId);
+    if (pending === undefined || pending["status"] !== "pending") {
+      if (pending?.["status"] === "completed" && resolution["kind"] === "completed" && pending["requestHash"] === resolution["requestHash"]) return ok(rt);
+      return txErr("NUMBERED_REGISTRATION_PENDING_INTENT_MISSING");
+    }
+    if (pending["requestHash"] !== resolution["requestHash"] || pending["transactionHash"] !== resolution["transactionHash"]) return txErr("NUMBERED_REGISTRATION_RESOLUTION_IDENTITY_MISMATCH");
+    const request = looseRecord(pending["request"]), key = String(request["intentId"]);
+    if (resolution["kind"] === "quarantined") return ok({ ...rt, numberedRegistrationIntents: mapSet(rt.numberedRegistrationIntents, key, { ...pending, status: "quarantined", reason: resolution["reason"] as Binary }) });
+    const results = Array.isArray(resolution["results"]) ? (resolution["results"] as readonly unknown[]) : [], planned = request["entities"] as readonly unknown[];
+    if (results.length !== planned.length) return txErr("NUMBERED_REGISTRATION_RESULT_COUNT_MISMATCH");
+    for (const [index, raw] of results.entries()) {
+      const result = looseRecord(raw), plan = looseRecord(planned[index]), local = plan["localSignerId"], entityId = result["entityId"];
+      const evidenceKey = registrationEvidenceKey(request["stackKey"], entityId);
+      if (!evidenceKey.ok) return evidenceKey;
+      const evidence = rt.registrationEvidence.get(evidenceKey.value);
+      const replica = local !== null ? [...rt.entities.values()].find((r) => r.state.id.toLowerCase() === entityId && r.signerId.toLowerCase() === local) : undefined;
+      if (evidence === undefined) return txErr(`NUMBERED_REGISTRATION_COMPLETION_INCOMPLETE:${String(entityId)}`);
+      const evidenceHash = registrationEvidenceHash(evidence);
+      if (!evidenceHash.ok) return evidenceHash;
+      if (evidenceHash.value !== result["evidenceHash"] || (local !== null && replica === undefined)) return txErr(`NUMBERED_REGISTRATION_COMPLETION_INCOMPLETE:${String(entityId)}`);
+      if (replica !== undefined && configBoardHash(replica.state.quorum) !== plan["boardHash"]) return txErr(`NUMBERED_REGISTRATION_COMPLETION_BOARD_MISMATCH:${String(entityId)}`);
+    }
+    const { kind: _kind, ...completed } = resolution;
+    return ok({ ...rt, numberedRegistrationIntents: mapSet(rt.numberedRegistrationIntents, key, { status: "completed", ...completed }) });
+  });
+
 /** og applyRuntimeTx. */
 export const applyRuntimeTxStep = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<TxStep, RuntimeError> => chain(runtimeTxAuthorized(tx, ctx), (): Result<TxStep, RuntimeError> => {
   const state = (r: Result<Runtime, RuntimeError>): Result<TxStep, RuntimeError> => map(r, noJ);
@@ -11194,12 +12099,14 @@ export const applyRuntimeTxStep = (rt: Runtime, tx: RuntimeTx, ctx: Pick<Runtime
     case "observeJRange": return state(observeJRange(rt, tx.data));
     case "rewindJHistory": return state(rewindJHistory(rt, tx.data));
     case "recordAuthenticatedJAuthority": return state(recordAuthenticatedJAuthority(rt, tx.data));
+    case "recordNumberedRegistrationIntent": return state(recordNumberedRegistrationIntent(rt, tx.data));
+    case "resolveNumberedRegistrationIntent": return state(resolveNumberedRegistrationIntent(rt, tx.data));
     case "retryJSubmit": return retryJSubmit(rt, tx.data);
     case "recordJSubmitResult": return state(recordJSubmitResult(rt, tx.data));
     case "retryEntityProviderAction": return retryEntityProviderAction(rt, tx.data);
     case "recordEntityProviderActionSubmitResult": return state(recordEpActionResult(rt, tx.data));
     case "recordGovernanceJSubmitResult": return state(recordGovernanceResult(rt, tx.data));
-    default: return err({ _tag: "runtime_tx_unsupported", code: tx.type });
+    default: { const exhaustive: never = tx; return txErr(`RUNTIME_TX_UNKNOWN: ${(exhaustive as { readonly type?: string }).type ?? "unknown"}`); }
   }
 });
 /** og applyRuntimeTx, the Runtime state half (the J outputs of a retry are in applyRuntimeTxStep). */
@@ -11342,7 +12249,7 @@ const jReplicaSnapshot = (r: JReplica): Binary => binaryOf({
 const durableInfrastructure = (rt: Runtime): { readonly [key: string]: Binary } | undefined => {
   const rows: [string, unknown, number][] = [
     ["runtimeAdapterCommandFrontiers", rt.adapterFrontiers, rt.adapterFrontiers.size], ["pendingCommittedJOutbox", rt.pendingCommittedJOutbox, rt.pendingCommittedJOutbox.length],
-    ["pendingJurisdictionImports", rt.pendingJImports, rt.pendingJImports.size], ["certifiedRegistrationEvidence", rt.registrationEvidence, rt.registrationEvidence.size],
+    ["pendingJurisdictionImports", rt.pendingJImports, rt.pendingJImports.size], ["numberedRegistrationIntents", rt.numberedRegistrationIntents, rt.numberedRegistrationIntents.size], ["certifiedRegistrationEvidence", rt.registrationEvidence, rt.registrationEvidence.size],
     ["entityEncryptionSeeds", rt.encryptionSeeds, rt.encryptionSeeds.size],
   ];
   const kept = rows.filter(([, , size]) => size > 0);
