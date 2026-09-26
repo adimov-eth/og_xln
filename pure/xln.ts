@@ -3386,7 +3386,6 @@ export const stableJson = (v: unknown): string => JSON.stringify(jsonNode(v) ?? 
 // Ratio r (of 65535) is claimed by revealing, for each hex digit of r, a preimage that many hash steps below the
 // committed 15-step root. Hashing forward is free and backward is impossible, so a reveal proves at most its ratio.
 // The full ratio is claimed by the full secret alone.
-const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const LADDER_NIBBLE_MAX = 15;
 export type Reveals = readonly [string, string, string, string];
 type Nibble = 0 | 1 | 2 | 3;
@@ -3434,7 +3433,7 @@ export const decodeHashLadderBinary = (binary?: string): Result<DecodedLadder, C
   if (!value.startsWith("0x") || value.length % 2 !== 0) return crossErr("HASHLADDER_BINARY_INVALID_HEX");
   const size = (value.length - 2) / 2;
   if (size === 32) {
-    if (!HEX32.test(value)) return crossErr("HASHLADDER_FULL_BINARY_INVALID");
+    if (!WORD.test(value)) return crossErr("HASHLADDER_FULL_BINARY_INVALID");
     return ok({ fillRatio: MAX_FILL, fullSecret: value });
   }
   if (size !== 130) return crossErr(`HASHLADDER_BINARY_INVALID_LENGTH:${size}`);
@@ -3442,7 +3441,7 @@ export const decodeHashLadderBinary = (binary?: string): Result<DecodedLadder, C
   const partial = Number.isInteger(fillRatio) && fillRatio > 0 && fillRatio < MAX_FILL;
   if (!partial) return crossErr(`HASHLADDER_PARTIAL_BINARY_RATIO_INVALID:${fillRatio}`);
   const reveals = fourOf((i) => `0x${value.slice(6 + i * 64, 70 + i * 64)}`);
-  if (!reveals.every((r) => HEX32.test(r))) return crossErr("HASHLADDER_PARTIAL_BINARY_REVEALS_INVALID");
+  if (!reveals.every((r) => WORD.test(r))) return crossErr("HASHLADDER_PARTIAL_BINARY_REVEALS_INVALID");
   return ok({ fillRatio, reveals });
 };
 const opensCommitment = (c: HashLadderCommitment, d: DecodedLadder): boolean => {
@@ -3454,7 +3453,7 @@ const opensCommitment = (c: HashLadderCommitment, d: DecodedLadder): boolean => 
   }
 };
 const fullSecretOpens = (c: HashLadderCommitment, secret: string | undefined): boolean =>
-  secret !== undefined && HEX32.test(secret) && ladderHash(secret).toLowerCase() === c.fullHash.toLowerCase();
+  secret !== undefined && WORD.test(secret) && ladderHash(secret).toLowerCase() === c.fullHash.toLowerCase();
 const revealsOpen = (c: HashLadderCommitment, ratio: number, reveals: Reveals | undefined): boolean => {
   if (reveals === undefined || reveals.length !== 4) return false;
   const digits = ladderDigits(ratio);
@@ -3472,6 +3471,8 @@ export const CROSS_STATUSES = [
   "settled", "cancelled", "expired",
 ] as const;
 export type CrossStatus = (typeof CROSS_STATUSES)[number];
+export type CrossLegRole = "source" | "target";
+const CROSS_LEG_ROLES: readonly CrossLegRole[] = ["source", "target"];
 export type CrossLeg = Readonly<{
   jurisdiction: string; entityId: string; counterpartyEntityId: string; tokenId: number; amount: bigint;
 }>;
@@ -3494,7 +3495,7 @@ export type CrossTimePolicy = Readonly<{
   runtimeExpiresAtMs: number; finalityPolicy: "independent_beneficiary_windows_pull_sum_finality";
 }>;
 export type CrossPullBinding = Readonly<{
-  orderId: string; routeHash: string; leg: "source" | "target"; status?: CrossStatus;
+  orderId: string; routeHash: string; leg: CrossLegRole; status?: CrossStatus;
 }>;
 type CrossRecord = Readonly<{ fillRatio: number; revealedAt: number }>;
 type CrossPendingReveal = Readonly<{ fillRatio: number; fullSecret: string; reveals: Reveals }>;
@@ -3811,7 +3812,7 @@ export const crossRouteErrorText = (route: CrossRoute, reason: string): string =
 // ---- identities derived from the route hash ----
 const hashOrDerive = (r: CrossRoute): Result<string, CrossError> => (r.routeHash ? ok(r.routeHash) : crossRouteHash(r));
 /** og deriveCrossJurisdictionPullId. */
-export const crossPullId = (r: CrossRoute, leg: "source" | "target"): Result<string, CrossError> =>
+export const crossPullId = (r: CrossRoute, leg: CrossLegRole): Result<string, CrossError> =>
   map(hashOrDerive(r), (h) => keccak256Hex(utf8(`xln:cross-j:pull-id:v1:${h}:${leg}`)));
 /** og deriveCrossJurisdictionPrivateSeed: the ladder seed is private to the runtime seed and bound to the route. */
 export const crossPrivateSeed = (runtimeSeed: string | undefined, r: CrossRoute): Result<string, CrossError> => {
@@ -3934,7 +3935,7 @@ export const cloneCrossBinding = (b: CrossPullBinding): Result<CrossPullBinding,
   return ok({ orderId, routeHash, leg: b.leg, ...opt("status", b.status) });
 };
 /** og buildCrossJurisdictionPullBinding: the opening binding of one leg to the canonical route. */
-export const crossPullBinding = (route: CrossRoute, leg: "source" | "target"): Result<CrossPullBinding, CrossError> =>
+export const crossPullBinding = (route: CrossRoute, leg: CrossLegRole): Result<CrossPullBinding, CrossError> =>
   chain(canonicalCrossRoute(route), (c) =>
     chain(hashOrDerive(c), (routeHash) => cloneCrossBinding({ orderId: c.orderId, routeHash, leg, status: c.status })));
 /** og hashCrossJurisdictionCloseBinary: keccak of the ladder reveal bytes. */
@@ -4135,192 +4136,350 @@ export const crossPullReveal = (fillRatio: number, privateSeed: string): Result<
   return ok(revealHashLadder(buildHashLadderProof(seed), fillRatio));
 };
 // ---- pull registry settlement: og account/pull-registry-settlement.ts ----
-export type SignedProofBodyPull = { readonly amount: bigint; readonly claimedRatio: number; readonly targetRole: boolean; readonly fullHash: string; readonly partialRoot: string };
-export type HashLadderRegistryRecord = { readonly fillRatio: number; readonly revealedAt: number };
-/**
- * The DeltaTransformer batch `(payment[], swap[], pull[])` decoded as ethers' AbiCoder does: offsets and counts are
- * safe-integer indices, a count needs a word of data per item, element reads past the end overrun; uint16 masks, bools are nonzero.
- * A bad payment/swap count ethers keeps as an unread error value; a bad pull section rejects because its pulls are read.
- */
+// After a dispute finalizes, a cross-J leg is paid by the pull the DeltaTransformer finds in the signed proof body,
+// at the ratio that pull claimed, raised by a registry reveal made inside the beneficiary's own response window.
+export type SignedProofBodyPull = Readonly<{
+  amount: bigint; claimedRatio: number; targetRole: boolean; fullHash: string; partialRoot: string;
+}>;
+export type HashLadderRegistryRecord = Readonly<{ fillRatio: number; revealedAt: number }>;
+const BATCH_INVALID = crossErr("CROSS_J_FINAL_DELTA_BATCH_INVALID");
+const MAX_SAFE_WORD = BigInt(Number.MAX_SAFE_INTEGER);
+/** An ABI offset or count: past the end of the data, too large to be a JS index, or a usable index. */
+type AbiIndex = Tagged<"overrun"> | Tagged<"unsafe"> | Tagged<"at", { value: number }>;
+const wordWithin = (b: Uint8Array, at: number): bigint | undefined =>
+  (at + 32 > b.length ? undefined : BigInt(bytesToHex(b.subarray(at, at + 32))));
+const indexAt = (b: Uint8Array, at: number): AbiIndex => {
+  const w = wordWithin(b, at);
+  if (w === undefined) return { _tag: "overrun" };
+  return w > MAX_SAFE_WORD ? { _tag: "unsafe" } : { _tag: "at", value: Number(w) };
+};
+/** One array of the batch tuple. ethers keeps an unsafe count as an unread error value, so that section is `unread`. */
+type BatchSection = Tagged<"unread"> | Tagged<"rows", { items: Uint8Array; count: number }>;
+const batchSection = (tuple: Uint8Array, slot: number, rowWords: number): Result<BatchSection, CrossError> => {
+  const offset = indexAt(tuple, slot * 32);
+  if (offset._tag !== "at") return BATCH_INVALID;
+  const body = tuple.subarray(offset.value);
+  const count = indexAt(body, 0);
+  switch (count._tag) {
+    case "overrun": return BATCH_INVALID;
+    case "unsafe": return ok({ _tag: "unread" });
+    case "at": {
+      const end = 32 + count.value * rowWords * 32;
+      if (count.value * 32 > body.length || end > body.length) return BATCH_INVALID;
+      return ok({ _tag: "rows", items: body.subarray(32, end), count: count.value });
+    }
+  }
+};
+/** (payment[], swap[], pull[]) with rows of 5, 5 and 7 words. */
+const BATCH_SECTIONS = [[0, 5], [1, 5], [2, 7]] as const;
+const PULL_ROW_WORDS = 7;
+/** A pull row: word 1 is the sign, 2 the magnitude, 3 the uint16 ratio, 4–5 the ladder hashes, 6 the role. */
+const pullRow = (items: Uint8Array, i: number): Result<SignedProofBodyPull, CrossError> => {
+  const base = i * PULL_ROW_WORDS * 32;
+  const word = (k: number): bigint => wordWithin(items, base + k * 32) ?? 0n;
+  const hash = (k: number): string => bytesToHex(items.subarray(base + k * 32, base + k * 32 + 32)).toLowerCase();
+  const negative = word(1) !== 0n;
+  const magnitude = word(2);
+  if (negative && magnitude === 0n) return crossErr("ABI_MONEY_NEGATIVE_ZERO");
+  return ok({
+    amount: negative ? -magnitude : magnitude, claimedRatio: Number(word(3) & 0xffffn),
+    fullHash: hash(4), partialRoot: hash(5), targetRole: word(6) !== 0n,
+  });
+};
+/** The DeltaTransformer batch decoded as ethers' AbiCoder does; only the pulls are read. */
 const decodeBatchPulls = (hex: string): Result<readonly SignedProofBodyPull[], CrossError> => {
-  const bad = crossErr("CROSS_J_FINAL_DELTA_BATCH_INVALID");
   const data = /^0x([0-9a-fA-F]{2})*$/.test(hex) ? parseHex(hex) : null;
-  if (data === null) return bad;
-  const word = (b: Uint8Array, at: number): bigint | undefined => (at + 32 > b.length ? undefined : BigInt(bytesToHex(b.subarray(at, at + 32))));
-  type Index = { readonly overrun: true } | { readonly overrun: false; readonly value?: number };
-  const index = (b: Uint8Array, at: number): Index => { const w = word(b, at); return w === undefined ? { overrun: true } : { overrun: false, ...(w <= BigInt(Number.MAX_SAFE_INTEGER) ? { value: Number(w) } : {}) }; };
-  const top = index(data, 0);
-  if (top.overrun || top.value === undefined) return bad;
+  if (data === null) return BATCH_INVALID;
+  const top = indexAt(data, 0);
+  if (top._tag !== "at") return BATCH_INVALID;
   const tuple = data.subarray(top.value);
-  const arrays: Array<{ readonly items?: Uint8Array; readonly count?: number }> = [];
-  for (const [slot, size] of [[0, 5], [1, 5], [2, 7]] as const) {
-    const off = index(tuple, slot * 32);
-    if (off.overrun || off.value === undefined) return bad;
-    const arr = tuple.subarray(off.value), count = index(arr, 0);
-    if (count.overrun) return bad;
-    if (count.value === undefined) { arrays.push({}); continue; }
-    if (count.value * 32 > arr.length || 32 + count.value * size * 32 > arr.length) return bad;
-    arrays.push({ items: arr.subarray(32, 32 + count.value * size * 32), count: count.value });
-  }
-  const pulls = arrays[2];
-  if (pulls?.items === undefined || pulls.count === undefined) return bad;
-  const items = pulls.items, out: SignedProofBodyPull[] = [];
-  for (let i = 0; i < pulls.count; i++) {
-    const at = i * 7 * 32, w = (k: number): bigint => word(items, at + k * 32) ?? 0n, h = (k: number): string => bytesToHex(items.subarray(at + k * 32, at + k * 32 + 32));
-    const negative = w(1) !== 0n, magnitude = w(2);
-    if (negative && magnitude === 0n) return crossErr("ABI_MONEY_NEGATIVE_ZERO");
-    out.push({ amount: negative ? -magnitude : magnitude, claimedRatio: Number(w(3) & 0xffffn), fullHash: h(4).toLowerCase(), partialRoot: h(5).toLowerCase(), targetRole: w(6) !== 0n });
-  }
-  return ok(out);
+  const sections = traverse(BATCH_SECTIONS, ([slot, rowWords]) => batchSection(tuple, slot, rowWords));
+  return chain(sections, ([, , pulls]) => {
+    if (pulls?._tag !== "rows") return BATCH_INVALID;
+    return traverse(Array.from({ length: pulls.count }, (_, i) => i), (i) => pullRow(pulls.items, i));
+  });
 };
 /** ethers isAddress over a hex address: 0x optional; a mixed-case spelling must be its EIP-55 checksum. */
 const isAddressText = (a: string): boolean => {
   if (!/^(0x)?[0-9a-fA-F]{40}$/.test(a)) return false;
   const body = a.startsWith("0x") ? a.slice(2) : a;
-  return !(/[a-f]/.test(body) && /[A-F]/.test(body)) || checksum(`0x${body}`) === `0x${body}`;
+  const mixedCase = /[a-f]/.test(body) && /[A-F]/.test(body);
+  return !mixedCase || checksum(`0x${body}`) === `0x${body}`;
 };
-const signedProofBodyPulls = (proofbody: Pick<ProofBody, "transformers">, transformerAddress: string): Result<readonly SignedProofBodyPull[], CrossError> => {
+const signedProofBodyPulls = (
+  proofbody: Pick<ProofBody, "transformers">, transformerAddress: string,
+): Result<readonly SignedProofBodyPull[], CrossError> => {
   if (!isAddressText(transformerAddress)) return crossErr("CROSS_J_FINAL_DELTA_TRANSFORMER_ADDRESS_INVALID");
-  const canonical = transformerAddress.toLowerCase(), clauses = proofbody.transformers.filter((t) => String(t.transformerAddress).toLowerCase() === canonical);
-  return clauses.length === 0 ? crossErr("CROSS_J_FINAL_DELTA_TRANSFORMER_MISSING") : map(traverse(clauses, (t) => decodeBatchPulls(t.encodedBatch)), (rows) => rows.flat());
+  const canonical = transformerAddress.toLowerCase();
+  const clauses = proofbody.transformers.filter((t) => String(t.transformerAddress).toLowerCase() === canonical);
+  if (clauses.length === 0) return crossErr("CROSS_J_FINAL_DELTA_TRANSFORMER_MISSING");
+  return map(traverse(clauses, (t) => decodeBatchPulls(t.encodedBatch)), (rows) => rows.flat());
 };
-/** og findExactSignedProofBodyPull: the one signed pull with this role, hash material and signed amount; two is ambiguous. */
-export const findSignedProofBodyPull = (proofbody: Pick<ProofBody, "transformers">, expected: CrossPullLeg, targetRole: boolean, transformerAddress: string): Result<SignedProofBodyPull | undefined, CrossError> =>
+/** og findExactSignedProofBodyPull: the one signed pull with this role, ladder and signed amount; two is ambiguous. */
+export const findSignedProofBodyPull = (
+  proofbody: Pick<ProofBody, "transformers">, expected: CrossPullLeg, targetRole: boolean, transformerAddress: string,
+): Result<SignedProofBodyPull | undefined, CrossError> =>
   chain(signedProofBodyPulls(proofbody, transformerAddress), (pulls) => {
-    const hits = pulls.filter((p) => p.targetRole === targetRole && p.fullHash === expected.fullHash.toLowerCase() && p.partialRoot === expected.partialRoot.toLowerCase() && p.amount === expected.signedAmount);
+    const isExpected = (p: SignedProofBodyPull): boolean =>
+      p.targetRole === targetRole && p.amount === expected.signedAmount
+      && p.fullHash === expected.fullHash.toLowerCase() && p.partialRoot === expected.partialRoot.toLowerCase();
+    const hits = pulls.filter(isExpected);
     return hits.length > 1 ? crossErr("CROSS_J_FINAL_PULL_AMBIGUOUS") : ok(hits[0]);
   });
-const safeUintOf = (v: unknown, max: number): number | undefined => { const n = Number(v); return Number.isSafeInteger(n) && n >= 0 && n <= max ? n : undefined; };
-/** og resolveFinalizedCrossJurisdictionRouteLeg: the leg whose unordered pair is this Account and whose stack is this Account's stack. */
-export const finalizedRouteLeg = (x: { readonly route: Pick<CrossRoute, "orderId" | "source" | "target">; readonly self: string; readonly counterparty: string; readonly localStack?: string | undefined }): Result<"source" | "target" | undefined, CrossError> => {
-  const self = x.self.toLowerCase(), peer = x.counterparty.toLowerCase();
-  const pair = (l: CrossLeg): boolean => { const e = l.entityId.toLowerCase(), c = l.counterpartyEntityId.toLowerCase(); return (e === self && c === peer) || (e === peer && c === self); };
-  const candidates = (["source", "target"] as const).filter((role) => pair(x.route[role]));
+const safeUintOf = (v: unknown, max: number): number | undefined => {
+  const n = Number(v);
+  return Number.isSafeInteger(n) && n >= 0 && n <= max ? n : undefined;
+};
+type FinalizedLegQuery = Readonly<{
+  route: Pick<CrossRoute, "orderId" | "source" | "target">; self: string; counterparty: string;
+  localStack?: string | undefined;
+}>;
+/** og resolveFinalizedCrossJurisdictionRouteLeg: the leg between this Account's entities, on its stack. */
+export const finalizedRouteLeg = (x: FinalizedLegQuery): Result<CrossLegRole | undefined, CrossError> => {
+  const self = x.self.toLowerCase();
+  const peer = x.counterparty.toLowerCase();
+  const joinsThisAccount = (l: CrossLeg): boolean => {
+    const e = l.entityId.toLowerCase();
+    const c = l.counterpartyEntityId.toLowerCase();
+    return (e === self && c === peer) || (e === peer && c === self);
+  };
+  const candidates = CROSS_LEG_ROLES.filter((role) => joinsThisAccount(x.route[role]));
   if (candidates.length === 0) return ok(undefined);
   if (!x.localStack) return crossErr("CROSS_J_FINALITY_JURISDICTION_MISSING");
-  const stack = x.localStack.toLowerCase(), exact = candidates.filter((role) => x.route[role].jurisdiction.toLowerCase() === stack);
-  return exact.length === 1 && exact[0] !== undefined ? ok(exact[0]) : crossErr(exact.length === 0 ? "CROSS_J_FINALITY_LEG_MISSING" : "CROSS_J_FINALITY_LEG_AMBIGUOUS");
+  const stack = x.localStack.toLowerCase();
+  const onThisStack = candidates.filter((role) => x.route[role].jurisdiction.toLowerCase() === stack);
+  switch (onThisStack.length) {
+    case 0: return crossErr("CROSS_J_FINALITY_LEG_MISSING");
+    case 1: return ok(onThisStack[0]);
+    default: return crossErr("CROSS_J_FINALITY_LEG_AMBIGUOUS");
+  }
 };
-/**
- * og resolveFinalizedPullFillRatio (DeltaTransformer.applyPull): the signed claimedRatio, raised by a registry record revealed
- * within the beneficiary's own window of the active dispute (timeout must be start + left + right).
- */
-export const finalizedPullFillRatio = (x: {
-  readonly active?: { readonly disputeStartTimestamp?: unknown; readonly disputeTimeout?: unknown } | undefined; readonly proofbody: Pick<ProofBody, "transformers" | "leftResponseSeconds" | "rightResponseSeconds">;
-  readonly transformerAddress: string; readonly expectedPull: CrossPullLeg; readonly targetRole: boolean; readonly record?: HashLadderRegistryRecord | undefined;
-}): Result<number, CrossError> => chain(findSignedProofBodyPull(x.proofbody, x.expectedPull, x.targetRole, x.transformerAddress), (pull): Result<number, CrossError> => {
-  if (pull === undefined) return crossErr("CROSS_J_FINAL_PULL_MISSING");
-  const left = safeUintOf(x.proofbody.leftResponseSeconds, 0xffff_ffff), right = safeUintOf(x.proofbody.rightResponseSeconds, 0xffff_ffff);
-  const start = safeUintOf(x.active?.disputeStartTimestamp, Number.MAX_SAFE_INTEGER), timeout = safeUintOf(x.active?.disputeTimeout, Number.MAX_SAFE_INTEGER);
-  if (left === undefined || right === undefined || start === undefined || timeout === undefined) return crossErr("CROSS_J_FINAL_WINDOW_INVALID");
+type DisputeClock = Readonly<{ disputeStartTimestamp?: unknown; disputeTimeout?: unknown }>;
+type ProofWindows = Pick<ProofBody, "leftResponseSeconds" | "rightResponseSeconds">;
+type DisputeWindows = Readonly<{ start: number; left: number; right: number }>;
+/** The active dispute's start and each side's window; its timeout must be start + left + right. */
+const disputeWindows = (
+  active: DisputeClock | undefined, proofbody: ProofWindows,
+): Result<DisputeWindows, CrossError> => {
+  const left = safeUintOf(proofbody.leftResponseSeconds, MAX_UINT32);
+  const right = safeUintOf(proofbody.rightResponseSeconds, MAX_UINT32);
+  const start = safeUintOf(active?.disputeStartTimestamp, Number.MAX_SAFE_INTEGER);
+  const timeout = safeUintOf(active?.disputeTimeout, Number.MAX_SAFE_INTEGER);
+  if (left === undefined || right === undefined || start === undefined || timeout === undefined) {
+    return crossErr("CROSS_J_FINAL_WINDOW_INVALID");
+  }
   if (timeout !== start + left + right) return crossErr("CROSS_J_FINAL_CLOCK_MISMATCH");
-  const window = pull.amount > 0n ? left : right;
-  if (x.record === undefined) return ok(pull.claimedRatio);
-  const ratio = safeUintOf(x.record.fillRatio, MAX_FILL), revealedAt = safeUintOf(x.record.revealedAt, Number.MAX_SAFE_INTEGER);
+  return ok({ start, left, right });
+};
+/** The signed ratio, raised by a higher registry reveal inside the beneficiary's window (left for a positive pull). */
+const raisedByRecord = (
+  pull: SignedProofBodyPull, w: DisputeWindows, record: HashLadderRegistryRecord | undefined,
+): Result<number, CrossError> => {
+  if (record === undefined) return ok(pull.claimedRatio);
+  const ratio = safeUintOf(record.fillRatio, MAX_FILL);
+  const revealedAt = safeUintOf(record.revealedAt, Number.MAX_SAFE_INTEGER);
   if (ratio === undefined || revealedAt === undefined) return crossErr("CROSS_J_REGISTRY_RECORD_INVALID");
-  return ok(revealedAt >= start && revealedAt <= start + window && ratio > pull.claimedRatio ? ratio : pull.claimedRatio);
-});
+  const window = pull.amount > 0n ? w.left : w.right;
+  const inWindow = revealedAt >= w.start && revealedAt <= w.start + window;
+  return ok(inWindow && ratio > pull.claimedRatio ? ratio : pull.claimedRatio);
+};
+/** og resolveFinalizedPullFillRatio (DeltaTransformer.applyPull). */
+export const finalizedPullFillRatio = (x: Readonly<{
+  active?: DisputeClock | undefined; proofbody: Pick<ProofBody, "transformers"> & ProofWindows;
+  transformerAddress: string; expectedPull: CrossPullLeg; targetRole: boolean;
+  record?: HashLadderRegistryRecord | undefined;
+}>): Result<number, CrossError> => {
+  const found = findSignedProofBodyPull(x.proofbody, x.expectedPull, x.targetRole, x.transformerAddress);
+  return chain(found, (pull): Result<number, CrossError> => {
+    if (pull === undefined) return crossErr("CROSS_J_FINAL_PULL_MISSING");
+    return chain(disputeWindows(x.active, x.proofbody), (w) => raisedByRecord(pull, w, x.record));
+  });
+};
 
 
-export type Delta = { readonly tokenId: TokenId; readonly collateral: bigint; readonly ondelta: bigint; readonly offdelta: bigint; readonly leftCreditLimit: bigint; readonly rightCreditLimit: bigint };
-export type AccountState = { readonly id: AccountId; readonly deltas: ReadonlyMap<TokenId, Delta> };
-export type AccountError = Tagged<"insufficient_capacity", { available: bigint; requested: bigint }> | Tagged<"negative_collateral" | "negative_credit_limit" | "negative_transfer" | "credit_limit_too_large" | "payment_too_large" | "non_positive_payment">;
+// ---- account deltas ----
+// One Delta per token. `ondelta` moves only on-chain, `offdelta` off-chain; their sum is how far the balance has
+// moved right of the collateral split. Each side can pay up to its share plus the credit the other side extends.
+export type Delta = Readonly<{
+  tokenId: TokenId; collateral: bigint; ondelta: bigint; offdelta: bigint;
+  leftCreditLimit: bigint; rightCreditLimit: bigint;
+}>;
+export type AccountState = Readonly<{ id: AccountId; deltas: ReadonlyMap<TokenId, Delta> }>;
+export type AccountError =
+  | Tagged<"insufficient_capacity", { available: bigint; requested: bigint }>
+  | Tagged<"negative_collateral" | "negative_credit_limit" | "negative_transfer">
+  | Tagged<"credit_limit_too_large" | "payment_too_large" | "non_positive_payment">;
 /** og direct-payment.ts:30, lock.ts:49: either sender moves up to the full uint256 magnitude of SignedAmount. */
 export const MAX_PAYMENT_AMOUNT = (1n << 256n) - 1n;
-export const INT512_MIN = -(1n << 511n), INT512_MAX = (1n << 511n) - 1n;
+export const INT512_MIN = -(1n << 511n);
+export const INT512_MAX = (1n << 511n) - 1n;
 export const MAX_CREDIT_LIMIT = (1n << 256n) - 1n;
 const floor0 = (n: bigint): bigint => (n > 0n ? n : 0n);
-export const zeroDelta = (tokenId: TokenId): Delta => ({ tokenId, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n });
+export const zeroDelta = (tokenId: TokenId): Delta => ({
+  tokenId, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n,
+});
 export const genesisAccount = (id: AccountId): AccountState => ({ id, deltas: new Map() });
 export const getDelta = (s: AccountState, tk: TokenId): Delta => s.deltas.get(tk) ?? zeroDelta(tk);
 export const setDelta = (s: AccountState, d: Delta): AccountState => ({ ...s, deltas: mapSet(s.deltas, d.tokenId, d) });
-export const updateDelta = <E>(s: AccountState, tk: TokenId, f: (d: Delta) => Result<Delta, E>): Result<AccountState, E> => map(f(getDelta(s, tk)), (d) => setDelta(s, d));
+export const updateDelta = <E>(
+  s: AccountState, tk: TokenId, f: (d: Delta) => Result<Delta, E>,
+): Result<AccountState, E> => map(f(getDelta(s, tk)), (d) => setDelta(s, d));
 export const totalDelta = (d: Delta): bigint => d.ondelta + d.offdelta;
 export const leftCanPay = (d: Delta): bigint => floor0(totalDelta(d) + d.leftCreditLimit);
 export const rightCanPay = (d: Delta): bigint => floor0(d.collateral + d.rightCreditLimit - totalDelta(d));
-export const outCapacity = (d: Delta, payerIsLeft: boolean, held: bigint): bigint => floor0(at(leftCanPay, rightCanPay, payerIsLeft)(d) - held);
-/** A negative diff is a hold of its magnitude. A reserve into collateral is not checked against outgoing capacity. */
+export const outCapacity = (d: Delta, payerIsLeft: boolean, held: bigint): bigint =>
+  floor0(at(leftCanPay, rightCanPay, payerIsLeft)(d) - held);
+type SideAmounts = Readonly<{ left: bigint; right: bigint }>;
+/** The holds a settlement diff takes: a negative diff holds its magnitude against that side's room. */
 export const chargeSettlement = (
   d: Delta,
-  diff: { readonly leftDiff: bigint; readonly rightDiff: bigint; readonly collateralDiff: bigint },
-  held: { readonly left: bigint; readonly right: bigint },
-): Result<{ readonly left: bigint; readonly right: bigint }, AccountError> => {
+  diff: Readonly<{ leftDiff: bigint; rightDiff: bigint; collateralDiff: bigint }>,
+  held: SideAmounts,
+): Result<SideAmounts, AccountError> => {
   const left = diff.leftDiff < 0n ? -diff.leftDiff : 0n;
   const right = diff.rightDiff < 0n ? -diff.rightDiff : 0n;
   const leftRoom = outCapacity(d, true, held.left);
   const rightRoom = outCapacity(d, false, held.right);
-  if (!(diff.leftDiff < 0n && diff.collateralDiff > 0n) && left > leftRoom) return err({ _tag: "insufficient_capacity", available: leftRoom, requested: left });
-  if (!(diff.rightDiff < 0n && diff.collateralDiff > 0n) && right > rightRoom) return err({ _tag: "insufficient_capacity", available: rightRoom, requested: right });
+  // A reserve moving into collateral is funded on-chain, so it is not checked against outgoing room.
+  const leftFunds = diff.leftDiff < 0n && diff.collateralDiff > 0n;
+  const rightFunds = diff.rightDiff < 0n && diff.collateralDiff > 0n;
+  const short = (available: bigint, requested: bigint): Result<never, AccountError> =>
+    err({ _tag: "insufficient_capacity", available, requested });
+  if (!leftFunds && left > leftRoom) return short(leftRoom, left);
+  if (!rightFunds && right > rightRoom) return short(rightRoom, right);
   return ok({ left, right });
 };
 /** Left pays negative, right pays positive. Zero stays zero. A negative amount is refused. */
 export const offdeltaChange = (payerIsLeft: boolean, amount: bigint): Result<bigint, AccountError> =>
-  amount < 0n ? err({ _tag: "negative_transfer" }) : ok(payerIsLeft ? -amount : amount);
+  (amount < 0n ? err({ _tag: "negative_transfer" }) : ok(payerIsLeft ? -amount : amount));
 /** Unchecked move: releases of prior holds (htlc resolve, swap give). */
 export const shift = (d: Delta, by: bigint): Delta => ({ ...d, offdelta: d.offdelta + by });
 /** Checked move: `offdeltaChange` picks the sign; holds reduce room. */
 export const move = (d: Delta, by: bigint, held: bigint): Result<Delta, AccountError> => {
   if (by === 0n) return ok(d);
-  const payerIsLeft = by < 0n, amount = payerIsLeft ? -by : by, available = outCapacity(d, payerIsLeft, held);
+  const payerIsLeft = by < 0n;
+  const amount = payerIsLeft ? -by : by;
+  const available = outCapacity(d, payerIsLeft, held);
   if (amount > MAX_PAYMENT_AMOUNT) return err({ _tag: "payment_too_large" });
   return amount > available ? err({ _tag: "insufficient_capacity", available, requested: amount }) : ok(shift(d, by));
 };
 export const settle = (d: Delta, collateral: bigint, ondelta: bigint): Delta => ({ ...d, collateral, ondelta });
-export const setCreditLimit = (d: Delta, limit: bigint, byLeft: boolean): Result<Delta, AccountError> =>
-  limit < 0n ? err({ _tag: "negative_credit_limit" }) : limit > MAX_CREDIT_LIMIT ? err({ _tag: "credit_limit_too_large" }) : ok(other(byLeft) ? { ...d, leftCreditLimit: limit } : { ...d, rightCreditLimit: limit });
-export const addCollateral = (d: Delta, amount: bigint): Result<Delta, AccountError> => (amount < 0n ? err({ _tag: "negative_collateral" }) : ok(settle(d, d.collateral + amount, d.ondelta)));
-export const applyCollateralFixture = (s: AccountState, tk: TokenId, amount: bigint): Result<AccountState, AccountError> => updateDelta(s, tk, (d) => addCollateral(d, amount));
-const signableDelta = (d: Delta): Pick<Delta, "tokenId" | "offdelta" | "leftCreditLimit" | "rightCreditLimit"> => ({ tokenId: d.tokenId, offdelta: d.offdelta, leftCreditLimit: d.leftCreditLimit, rightCreditLimit: d.rightCreditLimit });
-export const signableAccount = (s: AccountState): { readonly id: AccountId; readonly deltas: ReadonlyMap<TokenId, ReturnType<typeof signableDelta>> } => ({ id: s.id, deltas: new Map([...s.deltas].map(([k, d]) => [k, signableDelta(d)])) });
+/** A side sets the credit it extends, which is the limit on the other side. */
+export const setCreditLimit = (d: Delta, limit: bigint, byLeft: boolean): Result<Delta, AccountError> => {
+  switch (true) {
+    case limit < 0n: return err({ _tag: "negative_credit_limit" });
+    case limit > MAX_CREDIT_LIMIT: return err({ _tag: "credit_limit_too_large" });
+    case other(byLeft): return ok({ ...d, leftCreditLimit: limit });
+    default: return ok({ ...d, rightCreditLimit: limit });
+  }
+};
+export const addCollateral = (d: Delta, amount: bigint): Result<Delta, AccountError> =>
+  (amount < 0n ? err({ _tag: "negative_collateral" }) : ok(settle(d, d.collateral + amount, d.ondelta)));
+export const applyCollateralFixture = (
+  s: AccountState, tk: TokenId, amount: bigint,
+): Result<AccountState, AccountError> =>
+  updateDelta(s, tk, (d) => addCollateral(d, amount));
+type SignableDelta = Pick<Delta, "tokenId" | "offdelta" | "leftCreditLimit" | "rightCreditLimit">;
+const signableDelta = (d: Delta): SignableDelta => ({
+  tokenId: d.tokenId, offdelta: d.offdelta, leftCreditLimit: d.leftCreditLimit, rightCreditLimit: d.rightCreditLimit,
+});
+type SignableAccount = Readonly<{ id: AccountId; deltas: ReadonlyMap<TokenId, SignableDelta> }>;
+export const signableAccount = (s: AccountState): SignableAccount =>
+  ({ id: s.id, deltas: new Map([...s.deltas].map(([k, d]) => [k, signableDelta(d)])) });
 export const hashAccountState = (s: AccountState): Hash => keccakUtf8(canon(signableAccount(s)));
 
 
-export type AccountTerms = { readonly domain: Domain; readonly watchSeed: string; readonly disputeConfig: DisputeConfig };
+// ---- account terms and envelopes ----
+// Terms are what both sides agreed when the Account opened: the Depository domain, the watchtower seed and the
+// dispute windows. Every message between the sides carries an envelope that must repeat them.
+export type AccountTerms = Readonly<{ domain: Domain; watchSeed: string; disputeConfig: DisputeConfig }>;
 export type TermsError = Tagged<"bad_domain" | "bad_watch_seed" | "bad_dispute_config">;
-const MAX_UINT32 = 0xffff_ffff, MAX_DISPUTE_SECONDS = 365 * 24 * 60 * 60;
+const MAX_UINT32 = 0xffff_ffff;
+const MAX_DISPUTE_SECONDS = 365 * 24 * 60 * 60;
 export const disputeConfigOf = (config: unknown): Result<DisputeConfig, TermsError> => {
   if (typeof config !== "object" || config === null) return err({ _tag: "bad_dispute_config" });
   const { leftResponseSeconds: left, rightResponseSeconds: right } = config as { readonly [k: string]: unknown };
-  const window = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0 && n <= MAX_UINT32;
-  return window(left) && window(right) && left + right <= MAX_DISPUTE_SECONDS ? ok({ leftResponseSeconds: left, rightResponseSeconds: right }) : err({ _tag: "bad_dispute_config" });
+  const isWindow = (n: unknown): n is number =>
+    typeof n === "number" && Number.isSafeInteger(n) && n >= 0 && n <= MAX_UINT32;
+  if (!isWindow(left) || !isWindow(right)) return err({ _tag: "bad_dispute_config" });
+  if (left + right > MAX_DISPUTE_SECONDS) return err({ _tag: "bad_dispute_config" });
+  return ok({ leftResponseSeconds: left, rightResponseSeconds: right });
 };
 export const isWatchSeed = (seed: unknown): seed is string => typeof seed === "string" && WORD.test(seed);
-export const accountTerms = (terms: AccountTerms): Result<AccountTerms, TermsError> =>
-  chain(mapErr(domainOf(terms.domain), (): TermsError => ({ _tag: "bad_domain" })), (domain) => !isWatchSeed(terms.watchSeed) ? err({ _tag: "bad_watch_seed" })
-    : map(disputeConfigOf(terms.disputeConfig), (disputeConfig) => ({ domain, watchSeed: terms.watchSeed.toLowerCase(), disputeConfig })));
+export const accountTerms = (terms: AccountTerms): Result<AccountTerms, TermsError> => {
+  const domain = mapErr(domainOf(terms.domain), (): TermsError => ({ _tag: "bad_domain" }));
+  return chain(domain, (domain): Result<AccountTerms, TermsError> => {
+    if (!isWatchSeed(terms.watchSeed)) return err({ _tag: "bad_watch_seed" });
+    const watchSeed = terms.watchSeed.toLowerCase();
+    return map(disputeConfigOf(terms.disputeConfig), (disputeConfig) => ({ domain, watchSeed, disputeConfig }));
+  });
+};
 export type Delivery = Tagged<"local"> | Tagged<"received", { from: EntityId }>;
-export type AccountEnvelope = { readonly fromEntityId: EntityId; readonly toEntityId: EntityId; readonly domain: Domain; readonly disputeConfig: DisputeConfig; readonly watchSeed?: string | undefined };
-export type EnvelopeError = Tagged<"domain_invalid" | "dispute_config_invalid" | "dispute_config_mismatch" | "party_mismatch" | "domain_mismatch" | "watch_seed_invalid" | "watch_seed_mismatch">;
-export const envelopeOf = (terms: AccountTerms, party: Party): AccountEnvelope => ({ fromEntityId: party.self, toEntityId: party.peer, domain: terms.domain, disputeConfig: terms.disputeConfig, watchSeed: terms.watchSeed });
+export type AccountEnvelope = Readonly<{
+  fromEntityId: EntityId; toEntityId: EntityId; domain: Domain; disputeConfig: DisputeConfig;
+  watchSeed?: string | undefined;
+}>;
+export type EnvelopeError = Tagged<
+  | "domain_invalid" | "dispute_config_invalid" | "dispute_config_mismatch" | "party_mismatch"
+  | "domain_mismatch" | "watch_seed_invalid" | "watch_seed_mismatch"
+>;
+export const envelopeOf = (terms: AccountTerms, party: Party): AccountEnvelope => ({
+  fromEntityId: party.self, toEntityId: party.peer,
+  domain: terms.domain, disputeConfig: terms.disputeConfig, watchSeed: terms.watchSeed,
+});
 export const namesEntity = (v: unknown, entity: EntityId): boolean => typeof v === "string" && sameHex(v, entity);
 type Check = Result<void, EnvelopeError>;
 const PARTY_MISMATCH: Check = err({ _tag: "party_mismatch" });
+/** A local envelope comes from us; a received one from the sender, to us, and not from us. */
 export const deliveredBy = (e: AccountEnvelope, self: EntityId, delivery: Delivery): Check => match(delivery, {
   local: (): Check => (namesEntity(e.fromEntityId, self) ? ok(undefined) : PARTY_MISMATCH),
-  received: ({ from }): Check => (namesEntity(e.fromEntityId, from) && !namesEntity(e.fromEntityId, self) && namesEntity(e.toEntityId, self) ? ok(undefined) : PARTY_MISMATCH),
+  received: ({ from }): Check => {
+    const fromSender = namesEntity(e.fromEntityId, from) && !namesEntity(e.fromEntityId, self);
+    return fromSender && namesEntity(e.toEntityId, self) ? ok(undefined) : PARTY_MISMATCH;
+  },
 });
-export const localOnly = (delivery: Delivery): Check => match(delivery, { local: (): Check => ok(undefined), received: (): Check => PARTY_MISMATCH });
-export const checkEnvelope = (id: AccountId, terms: AccountTerms, e: AccountEnvelope): Result<EntityId, EnvelopeError> => {
-  const d = e.domain as unknown;
-  if (typeof d !== "object" || d === null || !Number.isSafeInteger((d as { chainId?: unknown }).chainId) || typeof (d as { depositoryAddress?: unknown }).depositoryAddress !== "string") return err({ _tag: "domain_invalid" });
+export const localOnly = (delivery: Delivery): Check =>
+  match(delivery, { local: (): Check => ok(undefined), received: (): Check => PARTY_MISMATCH });
+const domainShaped = (d: unknown): boolean => {
+  if (typeof d !== "object" || d === null) return false;
+  const r = d as Record<string, unknown>;
+  return Number.isSafeInteger(r["chainId"]) && typeof r["depositoryAddress"] === "string";
+};
+/** The envelope repeats our terms and runs between the Account's two entities; yields the sender. */
+export const checkEnvelope = (
+  id: AccountId, terms: AccountTerms, e: AccountEnvelope,
+): Result<EntityId, EnvelopeError> => {
+  if (!domainShaped(e.domain)) return err({ _tag: "domain_invalid" });
   const config = disputeConfigOf(e.disputeConfig);
   if (!config.ok) return err({ _tag: "dispute_config_invalid" });
   const held = terms.disputeConfig;
-  if (config.value.leftResponseSeconds !== held.leftResponseSeconds || config.value.rightResponseSeconds !== held.rightResponseSeconds) return err({ _tag: "dispute_config_mismatch" });
-  const leftToRight = namesEntity(e.fromEntityId, id.left) && namesEntity(e.toEntityId, id.right), rightToLeft = namesEntity(e.fromEntityId, id.right) && namesEntity(e.toEntityId, id.left);
+  const sameWindows = config.value.leftResponseSeconds === held.leftResponseSeconds
+    && config.value.rightResponseSeconds === held.rightResponseSeconds;
+  if (!sameWindows) return err({ _tag: "dispute_config_mismatch" });
+  const leftToRight = namesEntity(e.fromEntityId, id.left) && namesEntity(e.toEntityId, id.right);
+  const rightToLeft = namesEntity(e.fromEntityId, id.right) && namesEntity(e.toEntityId, id.left);
   if (!leftToRight && !rightToLeft) return err({ _tag: "party_mismatch" });
-  if (e.domain.chainId !== terms.domain.chainId || !sameHex(e.domain.depositoryAddress, terms.domain.depositoryAddress)) return err({ _tag: "domain_mismatch" });
-  if (e.watchSeed !== undefined) { if (!isWatchSeed(e.watchSeed)) return err({ _tag: "watch_seed_invalid" }); if (!sameHex(e.watchSeed, terms.watchSeed)) return err({ _tag: "watch_seed_mismatch" }); }
+  const sameDomain = e.domain.chainId === terms.domain.chainId
+    && sameHex(e.domain.depositoryAddress, terms.domain.depositoryAddress);
+  if (!sameDomain) return err({ _tag: "domain_mismatch" });
+  if (e.watchSeed !== undefined && !isWatchSeed(e.watchSeed)) return err({ _tag: "watch_seed_invalid" });
+  if (e.watchSeed !== undefined && !sameHex(e.watchSeed, terms.watchSeed)) return err({ _tag: "watch_seed_mismatch" });
   return ok(leftToRight ? id.left : id.right);
 };
 
 
-export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" | "claim_entity" | "claim_conflict" | "claim_proof">;
-/** og SettlementHankoNonceRejection: `account` = the derived minimum safe nonce, `workspace` = the nonce pinned at first signature. */
-export type SettlementNonceMismatch = { readonly supplied: number; readonly required: number; readonly basis: "account" | "workspace" };
+// ---- the account body: its refusals, its context and what it tells the parent Entity ----
+export type ClaimError = Tagged<
+  "claim_height" | "claim_events" | "claim_block" | "claim_entity" | "claim_conflict" | "claim_proof"
+>;
+/** og SettlementHankoNonceRejection: `account` is the derived minimum safe nonce, `workspace` the first-signature pin. */
+export type SettlementNonceMismatch = Readonly<{ supplied: number; required: number; basis: "account" | "workspace" }>;
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
-  | Tagged<"settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_envelope" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
+  | Tagged<"settlement_frozen" | "settled_pair" | "settled_nonce">
+  | Tagged<"lock_id" | "htlc_envelope" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range">
+  | Tagged<"duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty">
+  | Tagged<"index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
   | Tagged<"settlement", { reason: string; nonce?: SettlementNonceMismatch | undefined }>
   | Tagged<"swap", { reason: string }>
@@ -4328,69 +4487,98 @@ export type BodyError =
   | Tagged<"lending", { reason: string }>
   | Tagged<"payment_route", { reason: string }>
   | CrossError;
-/** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
 /**
- * `registeredBoardHash`: og resolveSettlementBoardAuthority's passed board -- the receiver's counterpartyCertifiedBoard. Absent, `boardAuthority`
- * (og's fallback over the source Entity's local replicas) resolves it; with neither, the Hankos are verified without a pinned board.
+ * The replica's settlement authority, which og passes through AccountConsensusContext: its Hanko verifier and the
+ * dispute-proof nonce floor (the max of nextProofNonce, current+1 and counterparty+1).
+ * `registeredBoardHash` is og resolveSettlementBoardAuthority's passed board (the counterpartyCertifiedBoard).
+ * Without it `boardAuthority` (og's fallback over the source Entity's local replicas) resolves the board; with
+ * neither, the Hankos are verified without a pinned board.
  */
-export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number; readonly deltaTransformer?: DeltaTransformerRef | undefined; readonly registeredBoardHash?: string | undefined; readonly boardAuthority?: BoardAuthority | undefined };
+export type SettlementCtx = Readonly<{
+  verify: Verify; proofNonceFloor: number; deltaTransformer?: DeltaTransformerRef | undefined;
+  registeredBoardHash?: string | undefined; boardAuthority?: BoardAuthority | undefined;
+}>;
 /**
- * og resolveSettlementBoardAuthority with no certified board passed (entity/account/account-consensus-context.ts), bound to the Runtime's local
- * replicas: the source Entity's certified board, undefined for a lazy board or no local replica, or og's thrown text (which og's settlement
- * handler turns into the tx's refusal).
+ * og resolveSettlementBoardAuthority with no certified board passed (entity/account/account-consensus-context.ts),
+ * bound to the Runtime's local replicas: the source Entity's certified board, undefined for a lazy board or no
+ * local replica, or og's thrown text (which og's settlement handler turns into the tx's refusal).
  */
 export type BoardAuthority = (sourceEntityId: string) => Result<string | undefined, string>;
-export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
+export type FoldCtx = Readonly<{
+  byLeft: boolean; nowMs: bigint; jHeight: bigint; accountHeight: bigint; settlement?: SettlementCtx | undefined;
+}>;
 /**
- * Account outputs to the parent Entity (og apply-result outcomes and AccountOutput candidate effects), perspective-free:
- * the consumer adds its own side (og fills entityId/accountId from proofHeader, and only the gateway forwards a trusted payment).
+ * Account outputs to the parent Entity (og apply-result outcomes and AccountOutput candidate effects), free of
+ * perspective: the consumer adds its own side (og fills entityId/accountId from proofHeader, and only the gateway
+ * forwards a trusted payment).
  */
 export type Effect =
   | Tagged<"forward_secret", { hashlock: string; secret: string }>
   | Tagged<"htlc_error", { lockId: string; hashlock: string; tokenId: number; amount: bigint; reason?: string }>
   | Tagged<"swap_cancel_requested", { offerId: string }>
   | Tagged<"swap_cancelled", { offerId: string; makerId: string }>
-  /** og same-j-swap-output.ts swapOfferUpsert: the committed same-j offer as the transition left it, with the Account's left/right entities. */
+  /** og same-j-swap-output.ts swapOfferUpsert: the committed same-j offer, with the Account's left/right entities. */
   | Tagged<"swap_offer_upsert", { offer: SwapOffer; left: string; right: string }>
-  | Tagged<"request_collateral_committed", { tokenId: number; requestedAmount: bigint; prepaidFee: bigint; requestedAt: number }>
-  /** og j-events/claim.ts: the bilateral finalization of a j_event_claim, with the first settled token's row as it now stands. */
-  | Tagged<"account_settled_finalized_bilateral", { tokenId: number; jHeight: number; collateral: bigint; ondelta: bigint }>
-  | Tagged<"direct_payment_forward", { tokenId: number; amount: bigint; route: readonly string[]; description?: string; trustedGatewayEntityId: string }>;
+  | Tagged<"request_collateral_committed", {
+    tokenId: number; requestedAmount: bigint; prepaidFee: bigint; requestedAt: number;
+  }>
+  /** og j-events/claim.ts: a j_event_claim finalized bilaterally, with the first settled token's row as it now stands. */
+  | Tagged<"account_settled_finalized_bilateral", {
+    tokenId: number; jHeight: number; collateral: bigint; ondelta: bigint;
+  }>
+  | Tagged<"direct_payment_forward", {
+    tokenId: number; amount: bigint; route: readonly string[]; description?: string; trustedGatewayEntityId: string;
+  }>;
 const MAX_ROWS = 128;
-export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly envelopeHash?: string | undefined };
-/** og protocol/htlc/multi-recipient.ts OpaqueHtlcCiphertext: exactly {version, ciphertext}, canonical padded base64 of ephemeralKey(32) || AES-GCM body || tag(16). */
-export type HtlcEnvelope = { readonly version: "xln:htlc-opaque:aes-gcm"; readonly ciphertext: string };
+
+
+// ---- HTLC locks and their opaque envelopes ----
+export type HtlcLock = Readonly<{
+  lockId: string; hashlock: string; timelock: bigint; revealBeforeHeight: bigint; amount: bigint; tokenId: TokenId;
+  senderIsLeft: boolean; createdHeight: bigint; createdTimestamp: bigint; envelopeHash?: string | undefined;
+}>;
+/**
+ * og protocol/htlc/multi-recipient.ts OpaqueHtlcCiphertext: exactly {version, ciphertext}, canonical padded base64
+ * of ephemeralKey(32) || AES-GCM body || tag(16).
+ */
+export type HtlcEnvelope = Readonly<{ version: "xln:htlc-opaque:aes-gcm"; ciphertext: string }>;
 const HTLC_ENVELOPE_VERSION = "xln:htlc-opaque:aes-gcm";
 const MAX_HTLC_BINARY_LAYER_BYTES = Math.floor(((100_000_000 - 1_000_000) * 3) / 4);
 const MAX_HTLC_PACKED_BYTES = 32 + MAX_HTLC_BINARY_LAYER_BYTES + 16;
+// Base64 packs three bytes into four 6-bit sextets; a short final group is padded with `=`.
 const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const chunksOf = <X>(xs: readonly X[], size: number): readonly (readonly X[])[] =>
+  Array.from({ length: Math.ceil(xs.length / size) }, (_, i) => xs.slice(i * size, (i + 1) * size));
+const sextetsToBytes = (sextets: readonly number[]): readonly number[] => {
+  const n = sextets.reduce((acc, s, i) => acc | (s << (18 - 6 * i)), 0);
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff].slice(0, sextets.length - 1);
+};
+const bytesToSextets = (bytes: readonly number[]): string => {
+  const n = ((bytes[0] ?? 0) << 16) | ((bytes[1] ?? 0) << 8) | (bytes[2] ?? 0);
+  const chars = [18, 12, 6, 0].map((shift) => B64[(n >> shift) & 63] ?? "");
+  return chars.slice(0, bytes.length + 1).join("").padEnd(4, "=");
+};
 /** og serialization/base64.ts decodeBase64Bytes: padded RFC 4648 only; any non-canonical spelling is refused. */
 export const decodeBase64 = (text: string): Uint8Array | null => {
-  if (text.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(text)) return null;
-  const out: number[] = [];
-  let acc = 0, bits = 0;
-  for (const ch of text.replace(/=+$/, "")) {
-    acc = ((acc << 6) | B64.indexOf(ch)) & 0xffff; bits += 6;
-    if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 0xff); }
-  }
-  const bytes = Uint8Array.from(out);
+  if (text.length % 4 !== 0 || !CANONICAL_BASE64.test(text)) return null;
+  const sextets = [...text.replace(/=+$/, "")].map((ch) => B64.indexOf(ch));
+  const bytes = Uint8Array.from(chunksOf(sextets, 4).flatMap(sextetsToBytes));
   return encodeBase64(bytes) === text ? bytes : null;
 };
-export const encodeBase64 = (bytes: Uint8Array): string => {
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 3) {
-    const a = bytes[i] ?? 0, b = bytes[i + 1], c = bytes[i + 2], n = (a << 16) | ((b ?? 0) << 8) | (c ?? 0);
-    s += (B64[(n >> 18) & 63] ?? "") + (B64[(n >> 12) & 63] ?? "") + (b === undefined ? "=" : B64[(n >> 6) & 63] ?? "") + (c === undefined ? "=" : B64[n & 63] ?? "");
-  }
-  return s;
-};
-/** og assertOpaqueHtlcCiphertext + hashOpaqueHtlcCiphertext: the committed envelopeHash is sha256 of the decoded packed bytes. */
+export const encodeBase64 = (bytes: Uint8Array): string => chunksOf([...bytes], 3).map(bytesToSextets).join("");
+/** og assertOpaqueHtlcCiphertext + hashOpaqueHtlcCiphertext: the envelopeHash is sha256 of the packed bytes. */
 export const htlcEnvelopeHash = (v: unknown): string | null => {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
-  const rec = v as Record<string, unknown>, keys = Object.keys(rec), ct = rec["ciphertext"];
-  if (keys.length !== 2 || !keys.includes("ciphertext") || !keys.includes("version") || rec["version"] !== HTLC_ENVELOPE_VERSION || typeof ct !== "string" || ct.length === 0 || ct.length > Math.ceil(MAX_HTLC_PACKED_BYTES / 3) * 4) return null;
+  const rec = v as Record<string, unknown>;
+  const keys = Object.keys(rec);
+  const ct = rec["ciphertext"];
+  const exactKeys = keys.length === 2 && keys.includes("ciphertext") && keys.includes("version");
+  if (!exactKeys || rec["version"] !== HTLC_ENVELOPE_VERSION) return null;
+  if (typeof ct !== "string" || ct.length === 0 || ct.length > Math.ceil(MAX_HTLC_PACKED_BYTES / 3) * 4) return null;
   const packed = decodeBase64(ct);
-  return packed === null || packed.length < 48 || packed.length > MAX_HTLC_PACKED_BYTES ? null : bytesToHex(sha256(packed));
+  if (packed === null || packed.length < 48 || packed.length > MAX_HTLC_PACKED_BYTES) return null;
+  return bytesToHex(sha256(packed));
 };
 // ---- og HTLC onion: protocol/htlc/{multi-recipient,utils}.ts, codec/{binary,onion,envelope}.ts, pathfinding/{htlc-quote,fees}.ts, payments/delivery.ts ----
 export type OnionError = Tagged<"onion", { code: string }>;
@@ -5549,7 +5737,7 @@ const pullAdmission = (a: AccountBody, x: TxOf<"cross_pull_lock">): Result<void,
   if (pulls.has(x.pullId)) return err({ _tag: "duplicate" });
   if (pulls.size >= MAX_ACCOUNT_SWAP_OFFERS) return crossReject("CROSS_J_PULL_LIMIT");
   if (x.crossJurisdiction && [...pulls.values()].filter((p) => p.crossJurisdiction).length >= MAX_ACCOUNT_CROSS_J_SWAP_OFFERS) return crossReject("CROSS_J_PULL_CROSS_LIMIT");
-  if (!HEX32.test(x.fullHash) || !HEX32.test(x.partialRoot)) return crossReject("CROSS_J_PULL_HASH_INVALID");
+  if (!WORD.test(x.fullHash) || !WORD.test(x.partialRoot)) return crossReject("CROSS_J_PULL_HASH_INVALID");
   const orderId = String(x.crossJurisdiction?.orderId || "").trim(), fh = x.fullHash.toLowerCase(), pr = x.partialRoot.toLowerCase();
   for (const p of pulls.values()) {
     const other = String(p.crossJurisdiction?.orderId || "").trim();
@@ -8752,7 +8940,7 @@ export const knownDisputeSecrets = (s: CommittedAccountState, paybook: Paybook |
   for (const raw of plan.paymentHashlocks) {
     const hashlock = raw.toLowerCase(), route = paybook.entries.get(hashlock);
     if (route === undefined || route.hashlock.toLowerCase() !== hashlock) continue;
-    if (!route.secret || !HEX32.test(route.secret)) continue;
+    if (!route.secret || !WORD.test(route.secret)) continue;
     if (route.inboundEntity !== counterparty && route.outboundEntity !== counterparty) continue;
     if (keccak256Hex(abiEncode([A.b32(route.secret)])).toLowerCase() !== hashlock || seen.has(route.secret)) continue;
     seen.add(route.secret);
