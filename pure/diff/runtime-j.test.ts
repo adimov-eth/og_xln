@@ -9,6 +9,7 @@ import { buildJSubmitAttemptId, registerPendingCommittedJOutbox, splitJOutboxFor
 import { assertProposeAccountsNowTxAuthorized } from "../../core/runtime/mempool/propose-accounts-now.ts";
 import { buildEntityProviderActionAttemptId } from "../../core/runtime/registration/entity-provider-action-submit-state.ts";
 import { classifyRuntimeJBatchFailure } from "../../core/protocol/errors/failure-taxonomy.ts";
+import { canonicalDisputeFinalizationEvidenceHash, canonicalJurisdictionEventsHash } from "../../core/jurisdiction/machine/event-observation.ts";
 import {
   applyRuntime, applyRuntimeTx, classifyJBatchFailure, createEntity, createRuntime, epActionAttemptId, initJBatch, jSubmitAttemptId, jurisdictionImportRequestHash, registerPendingJOutbox, replicaKey, runtimeComponentDigests, runtimeView, splitJOutbox, stableJson,
   type Binary, type EntityId, type EntityReplica, type EntityTx, type ImportConfig, type JInput, type Runtime, type RuntimeTx,
@@ -433,5 +434,94 @@ describe("runtime-j: durable J outbox split and pending register (og j-submit-st
     for (const code of codes) for (const message of [undefined, "", "nonce too low", "rpc down"]) {
       expect(stableJson(classifyJBatchFailure(code, message))).toBe(stableJson(classifyRuntimeJBatchFailure(code, message)));
     }
+  });
+});
+
+// ---- og runtime/tx/tx-handlers.ts observeJRange / rewindJHistory over jurisdiction/machine/local-history ----
+describe("runtime-j: validator J history (og tx-handlers.ts observeJRangeRuntimeTx / rewindJHistoryRuntimeTx, local-history)", () => {
+  const E = ALICE.toLowerCase(), A = aliceAddr.toLowerCase(), EP = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
+  const REF = `stack:${TERMS.domain.chainId}:${TERMS.domain.depositoryAddress.toLowerCase()}`;
+  const proofBody = (): Record<string, unknown> => ({
+    watchSeed: pick([hex(32), hex(32), ""]), leftResponseSeconds: pick([10, 10n, 10, -1]), rightResponseSeconds: 20,
+    offdeltas: [pick([{ high: 0n, low: 5n }, [-1n, 3n], { high: 0n, low: 1n }, { high: 0n }])], tokenIds: [pick([1n, 2n, 1n, -1n])],
+    transformers: pick([[], [], [{ transformerAddress: addr(), encodedBatch: "0x", allowances: [{ deltaIndex: 0n, rightAllowance: 1n, leftAllowance: 2n }] }], [{ transformerAddress: "" }]]),
+  });
+  const event = (h: number, chain: readonly string[]): Record<string, unknown> => {
+    const meta = { blockNumber: pick([h, h, String(h)]), blockHash: chain[h], transactionHash: hex(32), logIndex: ri(4), ...(rng() < 0.2 ? { eventIndex: ri(2) } : {}) };
+    const roll = rng();
+    if (roll < 0.2) return { type: "ReserveUpdated", data: { entity: E, tokenId: pick([1, "2", 3n]), newBalance: pick(["100", 5n, "BigInt(7)"]) }, ...meta };
+    if (roll < 0.35) return { type: "HankoBatchProcessed", data: { entityId: hex(32), batchHash: hex(32), nonce: pick([1, 2, 2, 0]) }, ...meta };
+    if (roll < 0.5) return { type: "AccountSettled", data: { leftEntity: E, rightEntity: hex(32), tokenId: 1, leftReserve: "1", rightReserve: 2n, collateral: "3", ondelta: "-4", nonce: 1 }, ...meta };
+    if (roll < 0.65) return { type: "DisputeStarted", data: {
+      sender: E, counterentity: hex(32), nonce: "1", proposerIsLeft: true, proofbodyHash: hex(32), watchSeed: hex(32), starterInitialArguments: "0x", starterCounterArguments: "0x12", starterCounterProofCommitment: hex(32),
+      initialProofbody: proofBody(), disputeTimeout: pick([1030, 1030, 1031]), disputeStartTimestamp: 1000, leftResponseSeconds: 10, rightResponseSeconds: 20, ...(rng() < 0.5 ? { batchNonce: 3 } : {}),
+    }, ...meta };
+    if (roll < 0.75) return { type: "ExternalWalletDelta", data: { entityId: E, owner: addr(), tokenAddress: addr(), ...(rng() < 0.8 ? { balanceDelta: "5" } : {}) }, ...meta };
+    if (roll < 0.85) return { type: "SecretRevealed", data: { hashlock: hex(32), revealer: addr().toUpperCase().replace("0X", "0x"), secret: hex(32) }, ...meta };
+    if (roll < 0.92) return { type: "EntityProviderActionExecuted", data: { entityId: hex(32), actionNonce: pick(["1", "0"]), actionHash: hex(32), actionKind: pick([0, 1, 2]) }, ...meta };
+    return pick([{ type: "Unknown", data: {} }, { type: "ReserveUpdated", data: { entity: 5, tokenId: 1, newBalance: "1" } }]);
+  };
+  const evidence = (): Record<string, unknown> => ({ sender: E, counterentity: hex(32), initialNonce: 1n, finalNonce: 2, initialProofbodyHash: hex(32), finalProofbodyHash: hex(32), proposerIsLeft: true, leftArguments: "0x", rightArguments: "0x", startedByLeft: false, sig: "0x12" });
+  const ogHash = (f: () => string): string => { try { return f(); } catch { return hex(32); } };
+  const block = (h: number, chain: readonly string[], fork: readonly string[]): Record<string, unknown> => {
+    const events = Array.from({ length: ri(3) }, () => event(h, chain)), proofs = rng() < 0.15 ? [evidence(), ...(rng() < 0.3 ? [evidence()] : [])] : [];
+    return {
+      jurisdictionRef: pick([REF, REF, REF, REF, REF, REF, REF.toUpperCase(), "stack:1:0x00"]), jHeight: h, jBlockHash: rng() < 0.9 ? chain[h] : fork[h], events,
+      eventsHash: rng() < 0.92 ? ogHash(() => canonicalJurisdictionEventsHash(treeClone(events) as never)) : hex(32),
+      ...(proofs.length > 0 ? { disputeFinalizationEvidence: proofs, disputeFinalizationEvidenceHash: rng() < 0.9 ? ogHash(() => canonicalDisputeFinalizationEvidenceHash(treeClone(proofs) as never)) : hex(32) } : {}),
+    };
+  };
+  const view = (h: unknown): string => {
+    const x = h as { eventBlocks: Map<number, unknown>; blockHashes: Map<number, string> } | undefined;
+    return stableJson(x === undefined ? null : { ...x, eventBlocks: [...x.eventBlocks], blockHashes: [...x.blockHashes] });
+  };
+
+  test("MATCH (randomized): watcher pages, reorgs, certified-anchor advances and rewinds -- same decisions and the same local J history", async () => {
+    let observed = 0, rewound = 0, refused = 0;
+    for (let run = 0; run < 100; run++) {
+      const p = newPair(), deployment = pick([0, 0, 5]), base = deployment > 1 ? deployment - 1 : 0, top = base + 12;
+      const chain = Array.from({ length: top + 1 }, () => hex(32)), fork = Array.from({ length: top + 1 }, () => hex(32));
+      const ogState: Record<string, unknown> = { entityId: E, config: { jurisdiction: { name: "Local", chainId: TERMS.domain.chainId, depositoryAddress: TERMS.domain.depositoryAddress, entityProviderAddress: EP, entityProviderDeploymentBlock: deployment } }, lastFinalizedJHeight: base };
+      p.env.state.eReplicas.set(`${E}:${A}`, { entityId: E, signerId: A, state: ogState });
+      const base0 = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), signerId: aliceAddr,
+        jurisdictionConfig: { name: "Local", entityProviderAddress: EP, entityProviderDeploymentBlock: deployment }, committed: { lastFinalizedJHeight: base } }));
+      const key = replicaKey(ALICE, aliceAddr);
+      p.rt = { ...p.rt, entities: new Map([[key, base0 as EntityReplica]]) };
+      let anchor = base;
+      for (let step = 0; step < 14; step++) {
+        const roll = rng();
+        let tx: Record<string, unknown>;
+        if (roll < 0.12 && anchor < top - 1) {
+          // A committed Entity frame certifies a newer J head (og jHistoryFinality + lastFinalizedJHeight).
+          anchor = anchor + 1 + ri(Math.min(3, top - anchor - 1));
+          const finality = { finalizedThroughHeight: anchor, tipBlockHash: chain[anchor], jurisdictionRef: REF, eventHistoryRoot: hex(32) };
+          ogState["lastFinalizedJHeight"] = anchor; ogState["jHistoryFinality"] = finality;
+          const r = p.rt.entities.get(key) as EntityReplica;
+          p.rt = { ...p.rt, entities: new Map([[key, { ...r, state: { ...r.state, committed: { ...r.state.committed, lastFinalizedJHeight: anchor, jHistoryFinality: finality } } } as EntityReplica]]) };
+          continue;
+        }
+        if (roll < 0.8) {
+          const scanned = Math.max(1, Math.min(top, anchor - 2 + ri(8))), from = Math.max(1, scanned - 4);
+          const heights = Array.from({ length: scanned - from + 1 }, (_, i) => from + i).filter(() => rng() < 0.4);
+          tx = { type: "observeJRange", data: {
+            entityId: pick([E, E, E, E, E, E, E.toUpperCase().replace("0X", "0x"), hex(32)]), signerId: pick([A, A, A, A, A, A, bobAddr.toLowerCase()]), jurisdictionRef: pick([REF, REF, REF, REF, REF, REF.toUpperCase(), "", "stack:1:0x00"]),
+            scannedThroughHeight: scanned, tipBlockHash: rng() < 0.9 ? chain[scanned] : fork[scanned],
+            ...(rng() < 0.5 ? { headers: heights.filter(() => rng() < 0.5).map((h) => ({ jHeight: h, jBlockHash: rng() < 0.93 ? chain[h] : fork[h] })) } : {}),
+            blocks: heights.map((h) => block(h, chain, fork)),
+          } };
+        } else {
+          tx = { type: "rewindJHistory", data: { entityId: E, signerId: A, jurisdictionRef: pick([REF, REF, "stack:1:0x00"]), conflictingHeight: Math.max(1, anchor - 1 + ri(4)), conflictingBlockHash: hex(32) } };
+        }
+        const og = await runOg(p.env, treeClone(tx));
+        const rw = applyRuntimeTx(p.rt, tx as unknown as RuntimeTx, { replay: true });
+        expect(rwCode(rw)).toBe(og);
+        if (rw.ok) p.rt = rw.value;
+        if (og === null) { if (tx["type"] === "observeJRange") observed++; else rewound++; } else refused++;
+        expect(view(p.rt.replicaLocal.get(key)?.jHistory)).toBe(view((p.env.state.eReplicas.get(`${E}:${A}`) as { jHistory?: unknown }).jHistory));
+      }
+    }
+    expect(observed).toBeGreaterThan(60);
+    expect(rewound).toBeGreaterThan(10);
+    expect(refused).toBeGreaterThan(60);
   });
 });
