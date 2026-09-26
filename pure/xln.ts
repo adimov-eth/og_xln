@@ -2138,6 +2138,8 @@ export type Effect =
   /** og same-j-swap-output.ts swapOfferUpsert: the committed same-j offer as the transition left it, with the Account's left/right entities. */
   | Tagged<"swap_offer_upsert", { offer: SwapOffer; left: string; right: string }>
   | Tagged<"request_collateral_committed", { tokenId: number; requestedAmount: bigint; prepaidFee: bigint; requestedAt: number }>
+  /** og j-events/claim.ts: the bilateral finalization of a j_event_claim, with the first settled token's row as it now stands. */
+  | Tagged<"account_settled_finalized_bilateral", { tokenId: number; jHeight: number; collateral: bigint; ondelta: bigint }>
   | Tagged<"direct_payment_forward", { tokenId: number; amount: bigint; route: readonly string[]; description?: string; trustedGatewayEntityId: string }>;
 const MAX_ROWS = 128;
 export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly envelopeHash?: string | undefined };
@@ -2625,11 +2627,11 @@ export const AccountKinds = {
   lending_fund: kind("bilateral", false, false), lending_borrow_request: kind("bilateral", false, false), lending_repay: kind("bilateral", false, false), lending_credit: kind("bilateral", false, false),
   lending_close_request: kind("bilateral", false, false), lending_close_payout: kind("bilateral", false, false),
   cross_pull_lock: kind("bilateral", false, false), cross_pull_close: kind("bilateral", false, false),
-  j_event_claim: kind("bilateral", false, false),
+  j_event_claim: kind("bilateral", false, false, ["account_settled_finalized_bilateral"]),
 } as const satisfies Kinds<AccountTx["type"], KindRow>;
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
 export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret" | "htlc_error"> : K extends "swap_cancel_request" ? Of<Effect, "swap_cancel_requested">
-  : K extends "swap_offer" ? Of<Effect, "swap_offer_upsert"> : K extends "swap_resolve" ? Of<Effect, "swap_cancelled" | "swap_offer_upsert"> : K extends "request_collateral" ? Of<Effect, "request_collateral_committed"> : K extends "payment" ? Of<Effect, "direct_payment_forward"> : never;
+  : K extends "swap_offer" ? Of<Effect, "swap_offer_upsert"> : K extends "swap_resolve" ? Of<Effect, "swap_cancelled" | "swap_offer_upsert"> : K extends "request_collateral" ? Of<Effect, "request_collateral_committed"> : K extends "j_event_claim" ? Of<Effect, "account_settled_finalized_bilateral"> : K extends "payment" ? Of<Effect, "direct_payment_forward"> : never;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
 export const genesisAccountBody = (account: AccountState, terms: AccountTerms): AccountBody => ({ account, terms, locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), finalizedJHeight: 0n, jNonce: 0 });
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
@@ -2730,9 +2732,15 @@ const claimStep = (c: ClaimCursor, own: ClaimRow): Result<ClaimStep, ClaimError>
   if (peerHeld === undefined) return ok({ claimRows: ownHeld !== undefined ? c.claimRows : [...held, own], finalizedJHeight: c.finalizedJHeight, finalizes: false });
   return ok({ claimRows: pruneThrough(held, own.jHeight), finalizedJHeight: own.jHeight, finalizes: true });
 };
-const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (own) => chain(claimStep(a, own), (s) => {
-  if (!s.finalizes) return ok(step(s.claimRows === a.claimRows ? a : { ...a, claimRows: s.claimRows }));
-  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events), (b) => step({ ...b, claimRows: s.claimRows, finalizedJHeight: s.finalizedJHeight })));
+type SettledFinal = Of<Effect, "account_settled_finalized_bilateral">;
+const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep<SettledFinal> => chain(claimRowOf(tx, ctx.byLeft), (own) => chain(claimStep(a, own), (s): BodyStep<SettledFinal> => {
+  if (!s.finalizes) return ok(step<AccountBody, SettledFinal>(s.claimRows === a.claimRows ? a : { ...a, claimRows: s.claimRows }));
+  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events), (b) => {
+    // og claim.ts: the first AccountSettled token (else 1) and its row after finality.
+    const tokenIdNum = Number(events.find((e) => e.type === "AccountSettled")?.data.tokenId ?? 1), row = [...b.account.deltas].find(([k]) => Number(k) === tokenIdNum)?.[1];
+    return step<AccountBody, SettledFinal>({ ...b, claimRows: s.claimRows, finalizedJHeight: s.finalizedJHeight },
+      [{ _tag: "account_settled_finalized_bilateral", tokenId: tokenIdNum, jHeight: Number(tx.jHeight), collateral: row?.collateral ?? 0n, ondelta: row?.ondelta ?? 0n }]);
+  }));
 }));
 const settleErr = (reason: string): Result<never, BodyError> => err({ _tag: "settlement", reason });
 const settlementToken = (t: unknown): t is number => typeof t === "number" && Number.isSafeInteger(t) && t >= 0 && t <= 65_535;
@@ -4738,7 +4746,7 @@ export type HankoWitness = { readonly hanko: Hanko; readonly type: "accountFrame
  * og attachCommitProofsAndOutputs effects of one committed Entity frame: the witnesses of its secondary hashes (Runtime stamps `createdAt`), and
  * the frame's jOutputs with their quorum Hankos attached, present only on the emitter replica (og `if (isEmitter) jOutbox.push(...)`).
  */
-export type CommitEffects = { readonly height: number; readonly witnesses: readonly (readonly [string, Omit<HankoWitness, "createdAt">])[]; readonly jOutputs: readonly JInput[] };
+export type CommitEffects = { readonly height: number; readonly witnesses: readonly (readonly [string, Omit<HankoWitness, "createdAt">])[]; readonly jOutputs: readonly JInput[]; readonly runtimeEvents: readonly EntityRuntimeEvent[] };
 type EntityApply<R extends EntityReplica = EntityReplica> = Apply<R, EntityOutput> & { readonly committed?: CommitEffects | undefined };
 export const encodeEntityTx = (tx: EntityTx): string => `${tx.type}|${canon(tx.data)}`;
 export const encodeEntityState = (s: EntityState): string => canon({
@@ -5302,7 +5310,7 @@ const withChild = (replicas: Replicas, target: EntityId, f: (child: AccountRepli
  * Account outputs the Entity consumes: the gateway forward, HTLC failures and preimages (htlcFollowups, from the committed frames), og's
  * collateral-request runtime event, and the swap cancel outcomes og hands to the hub book (an Entity without an order book ignores them).
  */
-const ENTITY_CONSUMED_EFFECTS: ReadonlySet<Effect["_tag"]> = new Set(["direct_payment_forward", "htlc_error", "forward_secret", "request_collateral_committed", "swap_cancel_requested", "swap_cancelled", "swap_offer_upsert"]);
+const ENTITY_CONSUMED_EFFECTS: ReadonlySet<Effect["_tag"]> = new Set(["direct_payment_forward", "htlc_error", "forward_secret", "request_collateral_committed", "account_settled_finalized_bilateral", "swap_cancel_requested", "swap_cancelled", "swap_offer_upsert"]);
 /** og committed-input.ts applySameJurisdictionSwapOutput: the committed frames' swap outputs, keyed by this Account, for the frame's book phase. */
 const swapEventsOf = (accountId: EntityId, effects: readonly Effect[]): SwapEvents | undefined => {
   const created = effects.flatMap((e) => (e._tag === "swap_offer_upsert" ? [swapOfferEvent(accountId, e)] : []));
@@ -5310,14 +5318,16 @@ const swapEventsOf = (accountId: EntityId, effects: readonly Effect[]): SwapEven
   const cancelRequests = effects.flatMap((e) => (e._tag === "swap_cancel_requested" ? [{ offerId: e.offerId, accountId }] : []));
   return created.length + cancelled.length + cancelRequests.length === 0 ? undefined : { created, cancelled, cancelRequests };
 };
+/** og Account candidateEffects `runtimeEvent`, from this Entity's side of the Account: applyCollateralRequest (tx/mutation.ts) and handleJEventClaim (j-events/claim.ts). */
+export const accountRuntimeEvents = (entityId: string, accountId: string, e: Effect): readonly EntityRuntimeEvent[] =>
+  e._tag === "request_collateral_committed" ? [{ eventName: "request_collateral_committed", data: { entityId, accountId, tokenId: e.tokenId, requestedAmount: e.requestedAmount.toString(), prepaidFee: e.prepaidFee.toString(), requestedAt: e.requestedAt } }]
+    : e._tag === "account_settled_finalized_bilateral" ? [{ eventName: "account_settled_finalized_bilateral", data: { entityId, accountId, tokenId: e.tokenId, jHeight: e.jHeight, collateral: e.collateral.toString(), ondelta: e.ondelta.toString() } }] : [];
 /** An applied Account input before its committed-frame followups: the Entity draft and the Account's consumed effects, in commit order. */
 type Routed = { readonly draft: Draft; readonly effects: readonly Effect[] };
 const routedRaw = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Routed, EntityError> => chain(applied, (a) =>
   chain(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: (e) => (ENTITY_CONSUMED_EFFECTS.has(e.effect._tag) ? ok([]) : err({ _tag: "not_l0" })), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
     (messages) => {
-      // og applyCollateralRequest (account/tx/mutation.ts): the committed request's runtime event, from this Entity's side of the Account
-      const runtimeEvents = a.outputs.flatMap((o): EntityRuntimeEvent[] => (o.kind === "effect" && o.effect._tag === "request_collateral_committed" ? [{ eventName: "request_collateral_committed", data: {
-        entityId: state.id, accountId: target, tokenId: o.effect.tokenId, requestedAmount: o.effect.requestedAmount.toString(), prepaidFee: o.effect.prepaidFee.toString(), requestedAt: o.effect.requestedAt } }] : []));
+      const runtimeEvents = a.outputs.flatMap((o) => (o.kind === "effect" ? accountRuntimeEvents(state.id, target, o.effect) : []));
       const base: Draft = { ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((data): EntityOutput => ({ to: target, tx: { type: "accountInput", data } })), ...(runtimeEvents.length === 0 ? {} : { runtimeEvents }) };
       return ok({ draft: base, effects: a.outputs.flatMap((o) => (o.kind === "effect" ? [o.effect] : [])) });
     }));
@@ -9410,7 +9420,7 @@ const commitEffects = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHas
     return hanko === undefined || type === "entityFrame" || type === "entityOutput" ? [] : [[h.hash, { hanko, type: type as HankoWitness["type"], entityHeight: height }]];
   });
   const relay = r.frame.leader.relayCertificate, emitter = relay !== undefined && relay.preparedFrameHash === frameHash ? relay.nextLeaderId : r.frame.leader.proposerSignerId;
-  return map(attachJHankos(draft.jOutputs ?? [], new Map(witnesses), height), (jOutputs) => ({ height, witnesses, jOutputs: lower(emitter) === lower(r.signerId) ? jOutputs : [] }));
+  return map(attachJHankos(draft.jOutputs ?? [], new Map(witnesses), height), (jOutputs) => ({ height, witnesses, jOutputs: lower(emitter) === lower(r.signerId) ? jOutputs : [], runtimeEvents: draft.runtimeEvents ?? [] }));
 };
 const publishFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean, draft: Draft): Result<EntityApply<OpenEntity>, EntityError> => {
   const others = broadcast ? [...membersOf(draft.state.quorum).keys()].filter((v) => signerId(v) !== signerId(r.signerId)) : [];
@@ -12144,7 +12154,8 @@ export const applyRuntimeTx = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx,
  * One applied Runtime frame: `outbox` is positional (merged input order, then each input's outputs); `jOutbox` is og's frame jOutbox (every pending
  * committed J submit attempt, then the maintenance J txs); `queuedRetries` are og queuedJSubmitRetries, the local retry RuntimeTxs for the next frame.
  */
-export type RuntimeStep = { readonly runtime: Runtime; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly queuedRetries: readonly RuntimeTx[]; readonly rejected: readonly RuntimeError[]; readonly advanced: boolean };
+/** `events`: og env.emit(eventName, data) of every committed frame's runtimeEvent candidate effects, on every committing replica, in commit order (publishEntityCandidateEffects). */
+export type RuntimeStep = { readonly runtime: Runtime; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly queuedRetries: readonly RuntimeTx[]; readonly rejected: readonly RuntimeError[]; readonly advanced: boolean; readonly events: readonly EntityRuntimeEvent[] };
 /**
  * og createRuntimeInputReducer: validate shape/limits, apply every RuntimeTx in order (any failure refuses the whole frame), merge the entity inputs,
  * discard inputs whose replica is unknown (og drop policy for unroutable ingress), apply the rest, and advance the Runtime height only when the frame
@@ -12192,7 +12203,7 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
     return chain(splitJOutbox(frameJ), (split) => map(registerPendingJOutbox(afterTxs.pendingCommittedJOutbox, split.durable), (pendingCommittedJOutbox): RuntimeStep => {
       const runtime: Runtime = { ...afterTxs, entities: store, replicaLocal, pendingCommittedJOutbox, height: advanced ? afterTxs.height + 1n : afterTxs.height };
       const appliedInput: RuntimeInput = { runtimeTxs: input.runtimeTxs, entityInputs: applied, ...(jOutbox.length > 0 ? { jInputs: jOutbox } : {}) };
-      return { runtime, applied: appliedInput, outbox, jOutbox: [...pendingCommittedJOutbox, ...split.maintenance], queuedRetries: split.retries, rejected: outs.flatMap((o) => o.rejected), advanced };
+      return { runtime, applied: appliedInput, outbox, jOutbox: [...pendingCommittedJOutbox, ...split.maintenance], queuedRetries: split.retries, rejected: outs.flatMap((o) => o.rejected), advanced, events: outs.flatMap((o) => o.effects?.[1].runtimeEvents ?? []) };
     }));
   }));
 });

@@ -33,6 +33,7 @@ import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "
 import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
 import { EMPTY_J_HISTORY_ROOT as OG_EMPTY_ROOT, foldJHistoryRoot as ogFoldRoot, canonicalJEventRangeHash, buildJEventRangeDigest } from "../../core/jurisdiction/machine/history-consensus/index.ts";
 import { applyJEvent as ogApplyJEvent } from "../../core/entity/tx/j-events.ts";
+import { applyEntityTx as ogApplyEntityTx } from "../../core/entity/tx/apply.ts";
 import { anvilKey, signDigestHex } from "../xln_run.ts";
 import { getBoardHandoverFrameConfig } from "../../core/entity/consensus/authority/board-handover.ts";
 import { handleBoardHandoverEntityTx } from "../../core/entity/tx/handlers/board-handover.ts";
@@ -474,6 +475,10 @@ describe("entity-j: Entity-level j_event (og entity/tx/j-events.ts applyJEvent)"
         expect([defect, f.ok, f.ok ? "" : (f.error as any).reason]).toEqual([defect, ogR.ok, ogR.ok ? "" : ogR.code]);
         if (!ogR.ok || !f.ok) { expect(f.ok ? "" : (f.error as any).reason).toBe(ogR.ok ? "" : ogR.code); continue; }
         const d = f.value.draft, out = ogR.value, next = out.newState, c = d.state.committed;
+        // og handleJEventEntityTx (tx/apply.ts): JEventReceived per event (or one liveness event) ahead of applyJEvent's own runtime events (runtime-final.md RF-6)
+        const ogFull = await ogRun(() => ogApplyEntityTx({ quietRuntimeLogs: true, state: { timestamp: t, height: 0, eReplicas: new Map(), jReplicas: new Map() } } as any, { ...ogState(state, replicas, t), ...structuredClone(carry) }, { type: "j_event", data } as any, { mutableFrameState: true } as any));
+        if (!ogFull.ok) throw new Error(ogFull.code);
+        if (ogFull.ok) expect(stableJson(d.runtimeEvents ?? [])).toBe(stableJson(ogFull.value.candidateEffects.filter((e: any) => e.kind === "runtimeEvent").map((e: any) => ({ eventName: e.eventName, data: e.data }))));
         expect((d.events ?? []).map((e) => e.message)).toEqual(messages(next).slice(before));
         for (const m of messages(next)) for (const k of ["RESERVE", "DEBT:", "DEBT PAID", "DEBT FORGIVEN", "OBSERVED", "jBatch finalized", "quarantined", "snapshot | Block", "delta | Block"]) if (m.includes(k)) seen.set(k, (seen.get(k) ?? 0) + 1);
         expect(c["reserves"]).toEqual(next.reserves);
