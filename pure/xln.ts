@@ -5063,6 +5063,57 @@ export const ogProofBody = (b: ProofBody): Binary => ({
 const disputeIssues = (child: AccountReplica, now: number): readonly string[] => { const readyAfter = child._tag === "preparing" ? child.prepare?.readyAfter ?? 0 : 0; return readyAfter > now ? [`cooldown:${readyAfter - now}ms`] : []; };
 type StartIntent = DisputePrepare["startIntent"];
 /**
+ * Whether ethers v6 `AbiCoder.defaultAbiCoder().decode(["bytes[]"], bytes)` returns rather than throws: strict (padded) reads, the array-count
+ * bound, the 1024x inflation ratio, and ethers' swallowing of a non-overrun fault (an index above MAX_SAFE_INTEGER) inside a dynamic member.
+ */
+const decodesAsBytesArray = (buf: Uint8Array): boolean => {
+  type Reader = { readonly base: number; off: number };
+  const limit = 1024 * buf.length;
+  let read = 0;
+  const dataLength = (r: Reader): number => Math.max(0, buf.length - r.base);
+  const readBytes = (r: Reader, length: number): number | "overrun" => {
+    const aligned = Math.ceil(length / 32) * 32;
+    if (r.off + aligned > dataLength(r)) return "overrun";
+    read += length;
+    if (read > limit) return "overrun";
+    const at = r.base + r.off;
+    r.off += aligned;
+    return at;
+  };
+  const readIndex = (r: Reader): number | "overrun" | "numeric" => {
+    const at = readBytes(r, 32);
+    if (at === "overrun") return at;
+    const v = wordAt(buf, at);
+    return v > BigInt(Number.MAX_SAFE_INTEGER) ? "numeric" : Number(v);
+  };
+  const sub = (r: Reader, offset: number): Reader => ({ base: r.base + r.off + offset, off: 0 });
+  const top: Reader = { base: 0, off: 0 }, topBase = sub(top, 0);
+  const arrayOffset = readIndex(top);
+  if (typeof arrayOffset !== "number") return false;
+  const arr = sub(topBase, arrayOffset);
+  const count = readIndex(arr);
+  if (count === "overrun") return false;
+  if (count === "numeric") return true;
+  if (count * 32 > dataLength(arr)) return false;
+  const arrBase = sub(arr, 0);
+  for (let i = 0; i < count; i++) {
+    const offset = readIndex(arr);
+    if (offset === "overrun") return false;
+    if (offset === "numeric") return true;
+    const elem = sub(arrBase, offset), length = readIndex(elem);
+    if (length === "overrun") return false;
+    if (length !== "numeric" && readBytes(elem, length) === "overrun") return false;
+  }
+  return true;
+};
+/** og sanitizeOptionalDisputeArgument (its warnings are debug logs only): malformed, oversized or non-`bytes[]` evidence becomes empty evidence. */
+export const sanitizeDisputeArgument = (value: unknown): string => {
+  if (value === "0x") return value;
+  if (typeof value !== "string" || !/^0x(?:[0-9a-fA-F]{2})*$/.test(value)) return "0x";
+  if ((value.length - 2) / 2 > 64 * 1024) return "0x";
+  return decodesAsBytesArray(hexToBytes(value)) ? value : "0x";
+};
+/**
  * og handleDisputeStart: admission (jBatchState seeded, account status, readiness, an already queued start), evidence (og loadStartProof /
  * resolveStartNonce / verifyStartHanko through the rewrite's startOf), then the DisputeStart row in the draft batch and the Account disputed with
  * og's unobserved activeDispute. A missing or unusable witness is og's status message; og's throws are fatal.
@@ -5081,7 +5132,6 @@ const startDispute = (d: Draft, peer: EntityId, intent: StartIntent & { readonly
   const issues = disputeIssues(child, Number(ctx.timestamp));
   if (issues.length > 0) return ok(say(admitted, `⏳ disputeStart blocked until evidence is stable for ${tag}: ${issues.join("; ")}`));
   if (queuedDisputeStart(jb, peer)) return ok(say(admitted, `ℹ️ disputeStart already queued for ${tag} (awaiting batch lifecycle)`));
-  if (intent.starterInitialArguments !== undefined && intent.starterInitialArguments !== "0x") return invariant("DISPUTE_START_ARGUMENT_OVERRIDE_NOT_PORTED");
   const w = child.dispute.counterparty, jNonce = child.state.jNonce, signed = w?.proofNonce ?? 0;
   const start = startOf(child.state, child.dispute, peer, ctx.verify);
   if (!start.ok) {
@@ -5099,10 +5149,12 @@ const startDispute = (d: Draft, peer: EntityId, intent: StartIntent & { readonly
   if (rows.length >= J_BATCH_LIMITS.maxDisputeStarts) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeStarts ${rows.length + 1}/${J_BATCH_LIMITS.maxDisputeStarts}`);
   if (total + 1 > J_BATCH_LIMITS.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeStart would exceed total ops ${total + 1}/${J_BATCH_LIMITS.maxTotalOps}`);
   const initialProofbody = ogProofBody(s.initialProofbody), nonce = Number(s.nonce);
+  // og buildStarterArguments: a non-empty override replaces the starter side's built arguments ("0x" without locks/swaps), then is sanitized
+  const starterInitialArguments = sanitizeDisputeArgument(intent.starterInitialArguments ? intent.starterInitialArguments : "0x");
   const row: Binary = { counterentity: peer, nonce, proposerIsLeft: s.proposerIsLeft, proofbodyHash: s.proofbodyHash, initialProofbody, watchSeed: String(s.initialProofbody.watchSeed), sig: s.sig,
-    starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD };
+    starterInitialArguments, starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD };
   const queued: QueuedDispute = { startedByLeft: sameHex(d.state.id, child.state.account.id.left), initialProofbodyHash: s.proofbodyHash, initialNonce: nonce, initialProposerIsLeft: s.proposerIsLeft, disputeTimeout: 0, jNonce,
-    starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD, observedOnChain: false, finalizeQueued: false };
+    starterInitialArguments, starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD, observedOnChain: false, finalizeQueued: false };
   const jBatchState = { ...jb, batch: { ...jb.batch, disputeStarts: [...rows, row] } } as unknown as Binary;
   const disputed: Draft = { ...admitted, ...putChild({ ...admitted.state, committed: { ...admitted.state.committed, jBatchState } }, admitted.accountReplicas, peer, startPrepared(child, s, queued)) };
   return ok(say(disputed, `⚔️ Dispute started vs ${tag} ${intent.description ? `(${intent.description})` : ""} - account frozen, use jBroadcast to commit`));

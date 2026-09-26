@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { ethers } from "ethers";
 import {
-  createEntity, derivedDeadlines, disputeFinalizedEffects, disputeStartedEffects, dueWakeJobs, entityRootOf, executeCrontab, foldTxs, initCrontab, prioritizeWake, scheduleHook, withCrontab, crontabOf, wireEntityTx, genesisHost, localProof, committedView, ZERO_WORD,
+  createEntity, derivedDeadlines, sanitizeDisputeArgument, disputeFinalizedEffects, disputeStartedEffects, dueWakeJobs, entityRootOf, executeCrontab, foldTxs, initCrontab, prioritizeWake, scheduleHook, withCrontab, crontabOf, wireEntityTx, genesisHost, localProof, committedView, ZERO_WORD,
   type AccountReplica, type ActiveDispute, type Binary, type Crontab, type EntityError, type EntityId, type EntityState, type EntityTx, type PaybookEntry, type ScheduledHook, type ScheduledWakeJob,
 } from "../xln.ts";
 import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, genesisAB, hankoVerify, unwrap } from "../xln_run.ts";
@@ -21,7 +21,7 @@ import { computeCanonicalEntityConsensusStateHash, computeEntityAccountValueHash
 import { PersistentEntityCollectionMap } from "../../core/entity/state/persistent-collection-map.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import { EntityAccountCandidateMap, PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
-import { hasJBatchWork, initJBatch as ogInitJBatch, isBatchEmpty, prependRecoveryBatch } from "../../core/jurisdiction/machine/batch/index.ts";
+import { hasJBatchWork, sanitizeOptionalDisputeArgument, initJBatch as ogInitJBatch, isBatchEmpty, prependRecoveryBatch } from "../../core/jurisdiction/machine/batch/index.ts";
 import {
   scrubCounterDisputesForActiveStart, scrubCounterDisputesForCounterparty, scrubDisputeFinalizationsForCounterparty, scrubDisputeStartsForCounterparty, scrubSourceHashLadderRegistrationsForCounterparty,
 } from "../../core/entity/tx/dispute-finalize-guards.ts";
@@ -379,5 +379,55 @@ describe("scheduler-disputes: Runtime/Entity event channel (og EntityCandidateEf
       await handleOpenAccountEntityTx(og, wireEntityTx(tx) as never, ctx, effects, true);
       expect(rw.runtimeEvents).toEqual(effects.map((e) => ({ eventName: e.eventName, data: e.data })));
     }
+  });
+});
+
+describe("scheduler-disputes: disputeStart starter-argument override (og dispute/start-evidence.ts buildStarterArguments)", () => {
+  test("MATCH: 600 random overrides (valid bytes[], truncated / re-pointed / oversized-count / huge-index / inflated encodings, bad hex, over 64 KiB) -- og sanitizeOptionalDisputeArgument", () => {
+    const abi = ethers.AbiCoder.defaultAbiCoder();
+    const randHex = (n: number): string => `0x${Array.from({ length: n }, () => ri(256).toString(16).padStart(2, "0")).join("")}`;
+    const valid = (): string => abi.encode(["bytes[]"], [Array.from({ length: ri(4) }, () => randHex(ri(70)))]);
+    const setWord = (hex: string, index: number, value: bigint): string => {
+      const body = hex.slice(2), at = index * 64;
+      return at + 64 > body.length ? hex : `0x${body.slice(0, at)}${value.toString(16).padStart(64, "0").slice(-64)}${body.slice(at + 64)}`;
+    };
+    const inflated = (): string => { // every element points at one shared long bytes body
+      const count = 1 + ri(40), len = 32 * (1 + ri(80)), head = [32n, BigInt(count), ...Array.from({ length: count }, () => BigInt(count * 32))];
+      return `0x${head.map((w) => w.toString(16).padStart(64, "0")).join("")}${len.toString(16).padStart(64, "0")}${"ab".repeat(len)}`;
+    };
+    const huge = [2n ** 53n, 2n ** 64n, 2n ** 256n - 1n, BigInt(Number.MAX_SAFE_INTEGER)];
+    const gen = (): unknown => {
+      switch (ri(12)) {
+        case 0: return pick(["0x", "", "0x0", "0xzz", "12", 7, undefined, null, "0X00"]);
+        case 1: return valid();
+        case 2: { const v = valid(); return v.slice(0, 2 + 2 * ri((v.length - 2) / 2)); }
+        case 3: { const v = valid(); return setWord(v, ri((v.length - 2) / 64), BigInt(ri(400))); }
+        case 4: { const v = valid(); return setWord(v, ri(Math.max(1, (v.length - 2) / 64)), pick(huge)); }
+        case 5: return setWord(valid(), 1, BigInt(ri(10000)));
+        case 6: return randHex(ri(200));
+        case 7: return abi.encode(["bytes[]"], [[randHex(64 * 1024 - 100 + ri(200))]]);
+        case 8: return inflated();
+        case 9: return valid().toUpperCase().replace("0X", "0x");
+        case 10: return `${valid()}${randHex(ri(40)).slice(2)}`;
+        default: return abi.encode(["bytes[]"], [Array.from({ length: ri(3) }, () => randHex(ri(3) * 32))]);
+      }
+    };
+    const outcomes = new Set<string>();
+    for (let i = 0; i < 600; i++) {
+      const v = gen(), mine = sanitizeDisputeArgument(v), og = sanitizeOptionalDisputeArgument(v, "disputeStart.starterArguments.initial").value;
+      expect(mine).toBe(og);
+      outcomes.add(mine === "0x" ? (v === "0x" ? "empty" : "dropped") : "kept");
+    }
+    expect([...outcomes].sort()).toEqual(["dropped", "empty", "kept"]);
+    // elements sharing one long body (under the 64 KiB cap og's 1024x inflation ratio cannot trip) and ethers' swallowed index overflow
+    // inside the array: a count or element pointer above MAX_SAFE_INTEGER still decodes, so og keeps the override
+    const w = (n: bigint): string => n.toString(16).padStart(64, "0");
+    for (const kept of [`0x${w(32n)}${w(2n ** 64n)}`, `0x${w(32n)}${w(1n)}${w(2n ** 60n)}`, `0x${w(32n)}${w(1n)}${w(32n)}${w(2n ** 70n)}`]) {
+      expect(sanitizeOptionalDisputeArgument(kept, "x").value).toBe(kept);
+      expect(sanitizeDisputeArgument(kept)).toBe(kept);
+    }
+    expect(sanitizeDisputeArgument(`0x${w(2n ** 64n)}${w(0n)}`)).toBe("0x");
+    const ratio = `0x${[32n, 60n, ...Array.from({ length: 60 }, () => 60n * 32n)].map((w) => w.toString(16).padStart(64, "0")).join("")}${(4000).toString(16).padStart(64, "0")}${"cd".repeat(4000)}`;
+    expect(sanitizeDisputeArgument(ratio)).toBe(sanitizeOptionalDisputeArgument(ratio, "x").value);
   });
 });
