@@ -261,3 +261,30 @@ surface or fuse stages 2 and 3.
   immutable SHA, read-only scope, independently verified finding. Never let audit replace execution.
 - Never launch Codex Security scans unless the owner explicitly asks for a Codex Security scan by
   name. Requests to audit, review, inspect security, or check Solidity mean ordinary manual review.
+
+## AST-GREP
+
+- For any code search that depends on syntax or code structure, default to ast-grep:
+  `ast-grep --lang <language> -p '<pattern>'`. Use text grep only for plain text.
+- If `ast-grep` is not on PATH, run it as `uvx --from ast-grep-cli ast-grep`.
+- The `ast-grep` MCP server (`.mcp.json`) provides `dump_syntax_tree`, `test_match_code_rule`,
+  `find_code` and `find_code_by_rule`.
+- Project skills: `.claude/skills/ast-grep` (writing rules) and `.claude/skills/ast-grep-outline`
+  (cheap structural map of files before reading source), vendored from
+  https://github.com/ast-grep/claude-skill.
+- Full reference for rule syntax: https://ast-grep.github.io/llms-full.txt. Load it when a rule
+  does not behave as expected instead of guessing.
+- Relational rules (`inside`, `has`) need `stopBy: end` to search the whole direction.
+
+## Rule Development Process
+
+1. Break down the user's query into smaller parts.
+2. Identify sub rules that can be used to match the code.
+3. Combine the sub rules into a single rule using relational rules or composite rules.
+4. if rule does not match example code, revise the rule by removing some sub rules and debugging unmatching parts.
+5. Use ast-grep mcp tool to dump AST or dump pattern query
+6. Use ast-grep mcp tool to test the rule against the example code snippet.
+
+This iterative process allows the AI to "think" more like a human developer, refining its approach
+until the rule is correct. Detailed prompt for this agentic rule development process:
+https://github.com/ast-grep/ast-grep-mcp/blob/main/ast-grep.mdc
