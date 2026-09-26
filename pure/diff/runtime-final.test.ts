@@ -27,13 +27,16 @@ import { assertFrameJPrefix as ogAssertFrameJPrefix, buildCertifiedJPrefixTx as 
 import { getJEventRangeValidationError as ogRangeValidationError, pruneFinalizedValidatorJHistory as ogPruneJHistory } from "../../core/jurisdiction/machine/local-history/index.ts";
 import { createEntityFrameHashFromStateRoot as ogEntityFrameHash } from "../../core/entity/consensus/frame.ts";
 import { mergeEntityInputs as ogMergeEntityInputs } from "../../core/entity/consensus/input/merge.ts";
+import { selectCrossJOpeningAccountProposalTxs as ogOpeningSelection } from "../../core/entity/transition/cross-j-proposer-materialization.ts";
+import { collectReadyLocalAccountWorkTargets as ogReadyAccountWork } from "../../core/runtime/admit/entity-input-output.ts";
+import { isProposalDeferrableEntityInput as ogDeferrable } from "../../core/entity/consensus/input/consensus.ts";
 import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "../../core/jurisdiction/machine/events/event-normalization.ts";
 import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
 import { verifyAccountSignature as ogVerifyAccountSignature, registerSignerKey } from "../../core/account/crypto.ts";
 import { FailureDispositionError } from "../../core/protocol/errors/failure-taxonomy.ts";
 import { entityRequiresJPrefixCertificate, buildLocalJPrefixAttestation, buildCertifiedJPrefixTx, mergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation, assertFrameJPrefix, jPrefixAttestationHash, jPrefixVerify, jEventRangeLocalHistoryError,
   type JPrefixAttestation, type JPrefixCrypto, type JPrefixFailure, type JPrefixRound, type JPrefixView, type ValidatorJHistory, type ValidatorJBlock, type EntityState,
-  hashEntityFrame, wireEntityTx, mergeEntityInputs, canon, type EntityFrame, type EntityOutput } from "../xln.ts";
+  hashEntityFrame, wireEntityTx, mergeEntityInputs, canon, crossOpeningSelection, readyAccountWorkTargets, type EntityFrame, type EntityOutput } from "../xln.ts";
 import { anvilKey, signDigestHex, carolAddr } from "../xln_run.ts";
 
 let seed = 71;
@@ -677,5 +680,99 @@ describe("runtime-final: Entity-input lanes (og input/merge.ts mergeEntityInputs
       if (rw.ok && ogOut !== undefined) expect([n, rw.value.map(sumRw)]).toEqual([n, ogOut.map(sumOg)]);
     }
     for (const k of ["merged", "kept", "SCHEDULED_WAKE_CONFLICTING_INPUTS", "ENTITY_LEADER_VOTE_EQUIVOCATION"]) expect([k, (seen.get(k) ?? 0) > 5]).toEqual([k, true]);
+  });
+});
+
+// ---- og entity/transition/cross-j-proposer-materialization.ts selectCrossJOpeningAccountProposalTxs: one exact sibling opening cohort ----
+describe("runtime-final: cross-j opening cohort (og selectCrossJOpeningAccountProposalTxs)", () => {
+  test("MATCH (randomized): 800 Accounts with cross pull locks, cross swap offers and sibling replicas (pending cohorts, missing replicas and Accounts, bad roles) -- og's cohort, wait or halt", () => {
+    seed = 57;
+    const ids = Array.from({ length: 5 }, (_, i) => `0x${String(i + 1).repeat(64)}`), signers = ids.map((_, i) => `0x${String.fromCharCode(97 + i).repeat(40)}`);
+    const seen = new Map<string, number>();
+    for (let n = 0; n < 800; n++) {
+      const orderIds = ["ord-a", "ord-b", "Ord-C", "ord-d"].slice(0, 1 + ri(4));
+      const routes = new Map(orderIds.map((orderId) => {
+        const roles = [...ids].sort(() => rng() - 0.5).slice(0, 4), signer = (i: number): string => (rng() < 0.03 ? "" : signers[ids.indexOf(roles[i] as string)] as string);
+        return [orderId, { orderId, source: { entityId: roles[0], counterpartyEntityId: roles[1] }, target: { entityId: roles[2], counterpartyEntityId: roles[3] },
+          sourceSignerId: signer(0), sourceHubSignerId: signer(1), targetHubSignerId: signer(2), targetSignerId: signer(3) }] as const;
+      }));
+      // one tx in both shapes: the rewrite's flat Account tx and og's {type, data}
+      const tx = (): { readonly rw: Record<string, unknown>; readonly og: Record<string, unknown> } => {
+        const k = ri(10), orderId = pick(orderIds), route = routes.get(orderId), id = rng() < 0.01 ? "  " : pick([orderId, orderId.toUpperCase()]);
+        if (k < 5) { const data = { pullId: `p${ri(9)}`, tokenId: "1", amount: 1n, fullHash: "0x", partialRoot: "0x", crossJurisdiction: { orderId: id, routeHash: "0x", leg: "source" }, crossJurisdictionRoute: route }; return { rw: { type: "cross_pull_lock", ...data }, og: { type: "cross_pull_lock", data } }; }
+        if (k < 8) { const data = { offerId: orderId, crossJurisdiction: { ...route, orderId: id } }; return { rw: { type: "swap_offer", ...data }, og: { type: "swap_offer", data } }; }
+        return { rw: { type: "add_delta", tokenId: "1" }, og: { type: "add_delta", data: { tokenId: 1 } } };
+      };
+      const txs = (max: number) => Array.from({ length: ri(max) }, tx);
+      const local = pick(ids), peer = pick(ids.filter((x) => x !== local)), mempool = txs(6);
+      const rwReplicas: unknown[] = [], ogReplicas = new Map<string, unknown>();
+      for (const [i, e] of ids.entries()) {
+        if (rng() < 0.15) continue;
+        const signer = rng() < 0.1 ? signers[(i + 1) % signers.length] : signers[i];
+        const rwAccounts = new Map<string, unknown>(), ogAccounts = new Map<string, unknown>();
+        for (const other of ids) {
+          if (other === e || rng() < 0.2) continue;
+          const pending = rng() < 0.35 ? txs(5) : undefined, queued = txs(6);
+          rwAccounts.set(other, pending === undefined ? { _tag: "open", mempool: queued.map((x) => x.rw) } : { _tag: "proposed", mempool: queued.map((x) => x.rw), candidate: { frame: { txs: pending.map((x) => x.rw) } } });
+          ogAccounts.set(other, { mempool: queued.map((x) => x.og), ...(pending === undefined ? {} : { pendingFrame: { accountTxs: pending.map((x) => x.og) } }) });
+        }
+        rwReplicas.push({ state: { id: e }, signerId: signer, accountReplicas: rwAccounts });
+        ogReplicas.set(`${e}:${signer}`, { entityId: e, signerId: signer, state: { entityId: e, accounts: ogAccounts } });
+      }
+      const [first, second] = [local, peer].sort();
+      let og: string;
+      try {
+        const got = ogOpeningSelection({ state: { eReplicas: ogReplicas } } as never, { entityId: local } as never, { mempool: mempool.map((x) => x.og), proofHeader: { fromEntity: first, toEntity: second } } as never);
+        og = got === undefined ? "ordinary" : got === null ? "wait" : `cohort:${(got as unknown[]).map((x) => mempool.findIndex((m) => m.og === x)).join(",")}`;
+      } catch (e) { og = `halt:${String((e as Error).message).split(":")[0]}`; }
+      const siblings = (entity: string, signer: string) => rwReplicas.find((r) => (r as { state: { id: string } }).state.id.toLowerCase() === entity && String((r as { signerId: string }).signerId).toLowerCase() === signer) as never;
+      const rwResult = crossOpeningSelection({ id: local } as never, peer as never, mempool.map((x) => x.rw) as never, siblings);
+      const rw = !rwResult.ok ? `halt:${String((rwResult.error as { reason?: string }).reason).split(":")[0]}` : rwResult.value === undefined ? "ordinary" : rwResult.value === null ? "wait"
+        : `cohort:${rwResult.value.map((x) => mempool.findIndex((m) => m.rw === x)).join(",")}`;
+      expect([n, rw]).toEqual([n, og]);
+      const bucket = og.startsWith("cohort") ? "cohort" : og;
+      seen.set(bucket, (seen.get(bucket) ?? 0) + 1);
+    }
+    for (const k of ["ordinary", "wait", "cohort"]) expect([k, (seen.get(k) ?? 0) > 40]).toEqual([k, true]);
+    expect([...seen.keys()].filter((k) => k.startsWith("halt:")).length).toBeGreaterThan(2);
+  });
+});
+
+// ---- og runtime/admit/entity-input-output.ts collectReadyLocalAccountWorkTargets: who gets the same-frame Account-work poke ----
+describe("runtime-final: local Account work (og entity-input-output.ts collectReadyLocalAccountWorkTargets)", () => {
+  test("MATCH (randomized): 300 Runtimes of 1-6 replicas (boards, failed-over leaders, frames in flight, queued or pending Accounts) -- og's targets and order", () => {
+    seed = 83;
+    const people = [aliceAddr, bobAddr, carolAddr].map((a) => a.toLowerCase());
+    let nonEmpty = 0;
+    for (let n = 0; n < 300; n++) {
+      const rw: unknown[] = [], og: unknown[] = [];
+      for (let k = 0; k < 1 + ri(6); k++) {
+        const id = pick([ALICE, BOB, CAROL]), members = people.slice(0, 1 + ri(3)), shares = members.map(() => BigInt(1 + ri(3)));
+        const base = unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 1n, members: new Map(members.map((m, i) => [m as Address, { shares: shares[i] as bigint }])) }));
+        const signer = pick(members), active = rng() < 0.3 ? pick(members) : undefined, phase = pick(["open", "open", "open", "proposed", "locked"]);
+        const rwAccounts = new Map<string, unknown>(), ogAccounts = new Map<string, unknown>();
+        for (const peer of [ALICE, BOB, CAROL].filter((p) => p !== id)) {
+          if (rng() < 0.3) continue;
+          const queued = rng() < 0.5 ? 1 + ri(2) : 0, pending = rng() < 0.3;
+          const txs = Array.from({ length: queued }, () => ({ type: "add_delta", tokenId: "1" }));
+          rwAccounts.set(peer, { _tag: pending ? "proposed" : "open", mempool: txs });
+          ogAccounts.set(peer.toLowerCase(), { status: "active", mempool: txs.map(() => ({ type: "add_delta", data: { tokenId: 1 } })), state: { locks: new Map() }, ...(pending ? { pendingFrame: { height: 1 } } : {}) });
+        }
+        const leaderState = active === undefined ? undefined : { activeValidatorId: active, view: 1, changedAtHeight: 0 };
+        rw.push({ ...base, _tag: phase, signerId: signer, state: { ...base.state, ...(leaderState === undefined ? {} : { leaderState }) }, accountReplicas: rwAccounts });
+        og.push({ entityId: id, signerId: signer, ...(phase === "proposed" ? { proposal: {} } : phase === "locked" ? { lockedFrame: {} } : {}),
+          state: { entityId: id, config: { mode: "proposer-based", threshold: 1n, validators: members, shares: Object.fromEntries(members.map((m, i) => [m, shares[i]])) }, ...(leaderState === undefined ? {} : { leaderState }),
+            accounts: { workKeys: () => ogAccounts.keys(), get: (key: string) => ogAccounts.get(key) } } });
+      }
+      const want = ogReadyAccountWork(og as never), got = readyAccountWorkTargets(rw as never);
+      expect([n, got]).toEqual([n, want]);
+      if (want.length > 0) nonEmpty += 1;
+    }
+    expect(nonEmpty).toBeGreaterThan(60);
+  });
+  test("MATCH: only a `txs` input defers its proposal to the frame's flush (og isProposalDeferrableEntityInput)", () => {
+    const shapes: [string, Record<string, unknown>][] = [["txs", { entityTxs: [] }], ["proposal", { proposedFrame: {} }], ["precommit", { hashPrecommits: new Map([["a", []]]) }],
+      ["jPrefixAttestations", { jPrefixAttestations: new Map() }], ["leaderTimeoutVote", { leaderTimeoutVote: {} }]];
+    expect(shapes.map(([kind, og]) => [kind, ogDeferrable(og as never)])).toEqual(shapes.map(([kind]) => [kind, kind === "txs"]));
   });
 });

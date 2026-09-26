@@ -178,9 +178,9 @@ import { readEntityFrameEvents } from "../../core/entity/frame-events.ts";
 import { ensureEntityCollectionCandidate, entityCollectionCommitment as ogCollectionCommitment } from "../../core/entity/state/persistent-collection-map.ts";
 import { assertRuntimeOutputAuthorization } from "../../core/entity/auth/authorization.ts";
 import { materializeCommittedEntityOutputs } from "../../core/entity/consensus/output/publication.ts";
-import { appendDefaultProposerCrossJMaterializations, selectCrossJCommitPhaseTxs } from "../../core/entity/transition/cross-j-proposer-materialization.ts";
+import { appendDefaultProposerCrossJMaterializations, selectCrossJCommitPhaseTxs, selectCrossJOpeningAccountProposalTxs } from "../../core/entity/transition/cross-j-proposer-materialization.ts";
 import {
-  accountId as rwAccountId, crossMaterialize, crossPrepare, crossRegister, entityCollectionCommitment, genesisReplica, holds, prepareCrossRoute, runtimeOutputAuthError,
+  accountId as rwAccountId, applyEntityInput, crossMaterialize, crossPrepare, crossRegister, entityCollectionCommitment, genesisReplica, holds, prepareCrossRoute, runtimeOutputAuthError,
   type AccountReplica, type CrossEntityView, type CrossRoute, type CrossSetup, type Domain, type EntityError, type EntityState, type Result, type TokenId,
 } from "../xln.ts";
 
@@ -415,44 +415,60 @@ describe("entity-lane: certified Entity -> Entity lane (og consensus/output/publ
     const ctx = { ...verifiers, runtimeSeed: RUNTIME_SEED, htlcInfra: (id: EntityId) => ({ profiles: [], encryptionPrivateKey: ENTITY_KEYS.get(id)?.priv }) } as typeof verifiers;
     const apply = (inputs: RoutedEntityInput[]) => { const s = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: inputs }, ctx)); expect(s.rejected).toEqual([]); return s; };
 
-    // 1. ALICE authorizes as the source user; the committed frame publishes one runtimeOutput to BOB's signer
-    const alice0 = replicaOf(rt, ALICE), a = apply([inputOf(ALICE, [{ type: "prepareCrossJurisdictionSwap", data: { route } } as EntityTx], BigInt(t0))]);
+    // 1. ALICE authorizes as the source user. The committed command targets BOB's replica of this Runtime, so og drains it in the same Runtime
+    //    frame (drainImmediateCrossJurisdictionOutputs): nothing leaves in the outbox, BOB stores the raw intent and wakes its default proposer.
+    const alice0 = replicaOf(rt, ALICE), bob0 = replicaOf(rt, BOB), a = apply([inputOf(ALICE, [{ type: "prepareCrossJurisdictionSwap", data: { route } } as EntityTx], BigInt(t0))]);
     const ta = Number(a.runtime.timestamp), ogA = ogSetup.handlePrepareCrossJurisdictionSwapEntityTx(ogEnvAt(ta), ogEntityState(alice0, ta), { type: "prepareCrossJurisdictionSwap", data: { route } } as never, MUT);
     expect(readEntityFrameEvents(ogA.newState).map((e: any) => e.message)).toEqual([`🌉 Cross-j swap lane-1 authorized by source user`]);
-    expect(stableJson(runtimeOutputsOf(a.outbox))).toBe(stableJson(materializeCommittedEntityOutputs(ogA.outputs as never, ALICE, aliceAddr.toLowerCase(), true)));
+    const commands = materializeCommittedEntityOutputs(ogA.outputs as never, ALICE, aliceAddr.toLowerCase(), true) as unknown as { entityId: string; signerId: string; entityTxs: EntityTx[] }[];
+    expect(commands.map((o) => [o.entityId.toLowerCase(), o.signerId.toLowerCase()])).toEqual([[BOB.toLowerCase(), bobAddr.toLowerCase()]]);
+    expect(runtimeOutputsOf(a.outbox)).toEqual([]);
     expect(stableJson(entriesOf(replicaOf(a.runtime, ALICE).state.crossJurisdictionAuthorizations))).toBe(stableJson(entriesOf(ogA.newState.crossJurisdictionAuthorizations)));
-    rt = a.runtime;
-
-    // 2. BOB takes the certified command: og authorizes the runtimeOutput, stores the raw intent and wakes its default proposer
-    const toBob = a.outbox.find((o) => runtimeOutputsOf([o]).length === 1)!, bob0 = replicaOf(rt, BOB), b = apply([routeOf(toBob)]);
-    const tb = Number(b.runtime.timestamp), outTx = (toBob as { input: { txs: EntityTx[] } }).input.txs[0] as Extract<EntityTx, { type: "runtimeOutput" }>, ogBob0 = ogEntityState(bob0, tb);
+    const outTx = commands[0]!.entityTxs[0] as Extract<EntityTx, { type: "runtimeOutput" }>, ogBob0 = ogEntityState(bob0, ta);
     expect(ogTry(() => assertRuntimeOutputAuthorization(outTx.data.sourceEntityId, outTx.data.sourceSignerId, outTx.data.targetEntityId, outTx.data.entityTxs as never, ogBob0)).ok).toBe(true);
     expect(runtimeOutputAuthError(bob0.state, outTx.data)).toBe(null);
-    const ogB = ogSetup.handlePrepareCrossJurisdictionSwapEntityTx(ogEnvAt(tb), ogBob0, outTx.data.entityTxs[0] as never, MUT);
-    expect(stableJson(entriesOf(replicaOf(b.runtime, BOB).state.crossJurisdictionSwaps))).toBe(stableJson(entriesOf(ogB.newState.crossJurisdictionSwaps)));
-    expect(stableJson(wakesOf(b.outbox))).toBe(stableJson(materializeCommittedEntityOutputs(ogB.outputs as never, BOB, bobAddr.toLowerCase(), true)));
-    rt = b.runtime;
+    const ogB = ogSetup.handlePrepareCrossJurisdictionSwapEntityTx(ogEnvAt(ta), ogBob0, outTx.data.entityTxs[0] as never, MUT);
+    expect(stableJson(entriesOf(replicaOf(a.runtime, BOB).state.crossJurisdictionSwaps))).toBe(stableJson(entriesOf(ogB.newState.crossJurisdictionSwaps)));
+    expect(stableJson(wakesOf(a.outbox))).toBe(stableJson(materializeCommittedEntityOutputs(ogB.outputs as never, BOB, bobAddr.toLowerCase(), true)));
+    rt = a.runtime;
 
-    // 3. The wake: og appends the proposer's materialization at admission; the frame emits both hubs' register commands
-    const bob1 = replicaOf(rt, BOB), c = apply([routeOf(b.outbox.find((o) => wakesOf([o]).length === 1)!)]), tc = Number(c.runtime.timestamp);
+    // 2. The wake, one Entity at a time (applyEntityInput): og appends the proposer's materialization at admission; the frame emits both hubs' register commands
+    const ectx = (id: EntityId) => ({ ...ctx, self: id, signerId: SIGNERS.get(id)!, htlc: { profiles: [], encryptionPrivateKey: ENTITY_KEYS.get(id)?.priv } }) as never;
+    const wake = a.outbox.find((o) => wakesOf([o]).length === 1)!, tc = t0 + 20_000, bob1 = replicaOf(rt, BOB);
+    const c = unwrap(applyEntityInput(bob1, { kind: "txs", timestamp: BigInt(tc), txs: [] }, ectx(BOB)));
     const ogBob1 = ogEntityState(bob1, tc), added = appendDefaultProposerCrossJMaterializations(ogEnvAt(tc), { entityId: BOB, signerId: bobAddr.toLowerCase(), state: ogBob1, mempool: [] } as never, []);
     expect(added.map((t) => t.type)).toEqual(["materializeCrossJurisdictionSwap"]);
     const ogC = ogSetup.handleMaterializeCrossJurisdictionSwapEntityTx(ogEnvAt(tc), ogBob1, added[0] as never, MUT);
-    expect(stableJson(runtimeOutputsOf(c.outbox))).toBe(stableJson(materializeCommittedEntityOutputs(ogC.outputs as never, BOB, bobAddr.toLowerCase(), true)));
-    expect(stableJson(entriesOf(replicaOf(c.runtime, BOB).state.crossJurisdictionSwaps))).toBe(stableJson(entriesOf(ogC.newState.crossJurisdictionSwaps)));
-    rt = c.runtime;
+    expect(stableJson(runtimeOutputsOf(c.outputs))).toBe(stableJson(materializeCommittedEntityOutputs(ogC.outputs as never, BOB, bobAddr.toLowerCase(), true)));
+    expect(stableJson(entriesOf(c.replica.state.crossJurisdictionSwaps))).toBe(stableJson(entriesOf(ogC.newState.crossJurisdictionSwaps)));
 
-    // 4. BOB's own register command: authorized as the source hub's self edge, registered, and its Account legs queued on the ALICE Account like og's
-    const self = c.outbox.find((o) => o.to === BOB && runtimeOutputsOf([o]).length === 1)!, bob2 = replicaOf(rt, BOB), d = apply([routeOf(self)]), td = Number(d.runtime.timestamp);
-    const reg = (self as { input: { txs: EntityTx[] } }).input.txs[0] as Extract<EntityTx, { type: "runtimeOutput" }>, ogBob2 = ogEntityState(bob2, td);
+    // 3. BOB's own register command: authorized as the source hub's self edge and registered. A registration is a cross-j setup phase, so og
+    //    proposes no Account frame in it (prepareEntityFrameWorkingSet crossJSetupPhase): the legs wait in the ALICE Account mempool like og's.
+    const self = c.outputs.find((o) => o.to === BOB && runtimeOutputsOf([o]).length === 1)!, td = tc + 10_000;
+    const reg = (self as { input: { txs: EntityTx[] } }).input.txs[0] as Extract<EntityTx, { type: "runtimeOutput" }>, ogBob2 = ogEntityState(c.replica, td);
     expect(ogTry(() => assertRuntimeOutputAuthorization(reg.data.sourceEntityId, reg.data.sourceSignerId, reg.data.targetEntityId, reg.data.entityTxs as never, ogBob2)).ok).toBe(true);
-    expect(runtimeOutputAuthError(bob2.state, reg.data)).toBe(null);
+    expect(runtimeOutputAuthError(c.replica.state, reg.data)).toBe(null);
+    const d = unwrap(applyEntityInput(c.replica, { kind: "txs", timestamp: BigInt(td), txs: [reg] }, ectx(BOB)));
     const ogD = ogSetup.handleRegisterCrossJurisdictionSwapEntityTx(ogEnvAt(td), ogBob2, reg.data.entityTxs[0] as never, MUT);
-    expect(stableJson(entriesOf(replicaOf(d.runtime, BOB).state.crossJurisdictionSwaps))).toBe(stableJson(entriesOf(ogD.newState.crossJurisdictionSwaps)));
-    const child = replicaOf(d.runtime, BOB).accountReplicas.get(ALICE)!;
-    const queued = [...("mempool" in child ? child.mempool : []), ...(child._tag === "proposed" ? child.candidate.frame.txs : [])].filter((t) => t.type === "cross_pull_lock" || t.type === "swap_offer");
+    expect(stableJson(entriesOf(d.replica.state.crossJurisdictionSwaps))).toBe(stableJson(entriesOf(ogD.newState.crossJurisdictionSwaps)));
+    const child = d.replica.accountReplicas.get(ALICE)!;
+    expect(child._tag).toBe("open");
+    const queued = ("mempool" in child ? child.mempool : []).filter((t) => t.type === "cross_pull_lock" || t.type === "swap_offer");
     expect((ogD.accountTxs ?? []).length).toBe(2);
     expect(stableJson(queued.map(ogAcctTx))).toBe(stableJson((ogD.accountTxs ?? []).map((t: any) => t.tx)));
+
+    // 4. Through the Runtime the registration commits, then og's Account work proposes the legs at H+1 in the same frame; the opening cohort needs
+    //    the sibling hub's replica, which this Runtime does not host: og selectCrossJOpeningAccountProposalTxs halts, and so does the frame.
+    const account = { mempool: (ogD.accountTxs ?? []).map((t: any) => t.tx), proofHeader: { fromEntity: BOB, toEntity: ALICE } };
+    const ogHalt = ogTry(() => selectCrossJOpeningAccountProposalTxs({ state: { eReplicas: new Map() } } as never, ogBob2 as never, account as never));
+    expect(ogHalt.ok).toBe(false);
+    let ogMessage = "";
+    try { selectCrossJOpeningAccountProposalTxs({ state: { eReplicas: new Map() } } as never, ogBob2 as never, account as never); } catch (e) { ogMessage = (e as Error).message; }
+    const refused = applyRuntime(rt, { runtimeTxs: [], entityInputs: [routeOf(wake)] }, ctx);
+    expect(refused.ok).toBe(false);
+    const code = refused.ok ? "" : String((refused.error as { code?: string }).code);
+    expect(code.startsWith("RUNTIME_CROSS_J_LOCAL_EVENT_NOT_COMMITTED:")).toBe(true);
+    expect(code.split("detail=")[1]!.split(":")[0]).toBe(ogMessage.split(":")[0]);
   });
 
   test("MATCH: assertRuntimeOutputAuthorization on 400 random runtimeOutput envelopes (source, signer, target, tx kinds, self edges, stored routes)", () => {

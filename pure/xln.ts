@@ -4858,7 +4858,14 @@ export type EntityContext = { readonly verify: Verify; readonly verifyMember: Me
   /** og EntityRuntimeContext.activeJurisdiction: the Runtime's active J name (never committed; the Htlc* event jurisdictionId fallback). */
   readonly activeJurisdiction?: string | undefined;
   /** og replica.jHistory: this validator's local J history (Runtime replica-local, never committed), pruned to the committed finality. */
-  readonly jHistory?: ValidatorJHistory | undefined };
+  readonly jHistory?: ValidatorJHistory | undefined;
+  /** og env.state.eReplicas for a cross-j opening cohort (selectCrossJOpeningAccountProposalTxs); absent outside a Runtime, where no sibling gating runs. */
+  readonly siblings?: SiblingReplicas | undefined;
+  /**
+   * og applyEntityInput options for a `txs` input: `defer` admits without proposing (the Runtime flushes each touched replica once per frame),
+   * `cross-j` is a trusted local cross-j command that must commit alone, `account-work` proposes only queued Account work.
+   */
+  readonly lane?: "defer" | "cross-j" | "account-work" | undefined };
 export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large"> | Tagged<"frame_tx", { readonly code: string }>;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
@@ -5457,7 +5464,9 @@ export const localTimeoutVote = (r: EntityReplica, timestamp: bigint, jHistory?:
 };
 
 /** `activeJurisdiction`: og EntityRuntimeContext.activeJurisdiction (the Runtime's first imported J), the Htlc* jurisdictionId fallback. */
-type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined; readonly boardHandover?: HandoverConfig | undefined };
+type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined; readonly boardHandover?: HandoverConfig | undefined; readonly siblings?: SiblingReplicas | undefined };
+/** og env.state.eReplicas as a cross-j opening reads it: the live sibling replica of this Runtime by (Entity, signer), both normalized. */
+export type SiblingReplicas = (entityId: string, signerId: string) => EntityReplica | undefined;
 type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 /** Who the tx is about: og routes accountInput by its envelope, the rest by an explicit counterparty. */
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
@@ -6856,18 +6865,122 @@ const answerFrame = (d: Draft, peer: EntityId, ctx: FoldContext): Result<Routed,
   }));
 };
 const entityJHeight = (state: EntityState): bigint => { const h = state.committed["lastFinalizedJHeight"]; return typeof h === "number" && Number.isSafeInteger(h) && h >= 0 ? BigInt(h) : 0n; };
-/** og proposePendingAccountFrames: every proposable Account in worklist order proposes one frame at the Entity clock; a refused proposal is not a frame. */
-const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext): { readonly draft: Draft; readonly frames: number } => {
+// ---- og entity/transition/cross-j-proposer-materialization.ts: one exact two-Account opening cohort per sibling pair ----
+const openingText = (v: unknown): string => String(v ?? "").trim().toLowerCase();
+/** og CROSS_J_OPENING_COHORT_MAX_ORDERS: one order per atomic opening cohort (both proofs stay under their byte limit). */
+const CROSS_J_OPENING_COHORT_MAX_ORDERS = 1;
+type OpeningLeg = { readonly orderId: string; readonly route: CrossRoute };
+/** og crossJOpeningLegs: each cross_pull_lock carrying its binding and route, one per order, sorted by order id. */
+const crossOpeningLegs = (txs: readonly AccountTx[]): Result<readonly OpeningLeg[], EntityError> => {
+  const byOrder = new Map<string, OpeningLeg>();
+  for (const tx of txs) {
+    if (tx.type !== "cross_pull_lock" || !tx.crossJurisdiction || !tx.crossJurisdictionRoute) continue;
+    const orderId = openingText(tx.crossJurisdiction.orderId);
+    if (!orderId) return invariant("CROSS_J_OPENING_ORDER_ID_REQUIRED");
+    byOrder.set(orderId, { orderId, route: tx.crossJurisdictionRoute });
+  }
+  return ok([...byOrder.values()].sort((a, b) => a.orderId.localeCompare(b.orderId)));
+};
+type SiblingAccount = { readonly entityId: string; readonly signerId: string; readonly accountId: string };
+/** og pairedCrossJSiblingAccount: the other jurisdiction's Account of this leg, by this Entity's role in the route. */
+const pairedSibling = (local: string, route: CrossRoute): Result<SiblingAccount, EntityError> => {
+  const me = openingText(local), t = openingText;
+  if (me === t(route.source.entityId)) return ok({ entityId: t(route.target.counterpartyEntityId), signerId: t(route.targetSignerId), accountId: t(route.target.entityId) });
+  if (me === t(route.source.counterpartyEntityId)) return ok({ entityId: t(route.target.entityId), signerId: t(route.targetHubSignerId), accountId: t(route.target.counterpartyEntityId) });
+  if (me === t(route.target.entityId)) return ok({ entityId: t(route.source.counterpartyEntityId), signerId: t(route.sourceHubSignerId), accountId: t(route.source.entityId) });
+  if (me === t(route.target.counterpartyEntityId)) return ok({ entityId: t(route.source.entityId), signerId: t(route.sourceSignerId), accountId: t(route.source.counterpartyEntityId) });
+  return invariant(`CROSS_J_OPENING_LOCAL_ROLE_INVALID:${route.orderId}:${me}`);
+};
+/** og crossJOpeningOrderId: a cross pull lock or a cross swap offer names its order. */
+const openingOrderOf = (tx: AccountTx): Result<string | undefined, EntityError> => {
+  const binding = tx.type === "cross_pull_lock" ? tx.crossJurisdiction : tx.type === "swap_offer" ? tx.crossJurisdiction : undefined;
+  if (!binding) return ok(undefined);
+  const orderId = openingText(binding.orderId);
+  return orderId ? ok(orderId) : invariant("CROSS_J_OPENING_ORDER_ID_REQUIRED");
+};
+const selectOpeningTxs = (txs: readonly AccountTx[], orderIds: ReadonlySet<string>): Result<readonly AccountTx[], EntityError> =>
+  map(traverse(txs, (tx) => map(openingOrderOf(tx), (o) => (o !== undefined && orderIds.has(o) ? [tx] : []))), (xs) => xs.flat());
+/**
+ * og selectCrossJOpeningAccountProposalTxs: `undefined` for an ordinary proposal, `null` while the reciprocal leg is not available, else exactly
+ * the cohort both siblings select (a frozen sibling cohort, or the first common order that fits both frames).
+ */
+export const crossOpeningSelection = (state: EntityState, peer: EntityId, mempool: readonly AccountTx[], siblings: SiblingReplicas): Result<readonly AccountTx[] | null | undefined, EntityError> =>
+  chain(crossOpeningLegs(mempool), (localLegs): Result<readonly AccountTx[] | null | undefined, EntityError> => {
+    if (localLegs.length === 0) return ok(undefined);
+    const counterparty = openingText(peer), groups = new Map<string, { readonly sibling: SiblingAccount; readonly orderIds: Set<string> }>();
+    for (const leg of localLegs) {
+      const sibling = pairedSibling(state.id, leg.route);
+      if (!sibling.ok) return sibling;
+      if (!sibling.value.entityId || !sibling.value.signerId || !sibling.value.accountId) return invariant(`CROSS_J_OPENING_SIBLING_BINDING_REQUIRED:${leg.orderId}`);
+      const key = `${sibling.value.entityId}:${sibling.value.signerId}:${sibling.value.accountId}`, group = groups.get(key) ?? { sibling: sibling.value, orderIds: new Set<string>() };
+      group.orderIds.add(leg.orderId);
+      groups.set(key, group);
+    }
+    for (const [key, { sibling, orderIds }] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
+      const replica = siblings(sibling.entityId, sibling.signerId);
+      if (replica === undefined) return invariant(`CROSS_J_OPENING_SIBLING_REPLICA_MISSING:${key}`);
+      const account = [...replica.accountReplicas].find(([id]) => openingText(id) === sibling.accountId)?.[1];
+      if (account === undefined) return invariant(`CROSS_J_OPENING_SIBLING_ACCOUNT_MISSING:${key}`);
+      // og: only a pending OPENING freezes the cohort; an unrelated pending frame never hides queued opening legs
+      const pendingTxs = account._tag === "proposed" ? account.candidate.frame.txs : [];
+      const pendingOpening = crossOpeningLegs(pendingTxs);
+      if (!pendingOpening.ok) return pendingOpening;
+      const siblingMempool = "mempool" in account ? account.mempool : [], siblingTxs = pendingOpening.value.length > 0 ? pendingTxs : siblingMempool;
+      const siblingLegs = crossOpeningLegs(siblingTxs);
+      if (!siblingLegs.ok) return siblingLegs;
+      const reciprocal = new Set<string>();
+      for (const leg of siblingLegs.value) {
+        const back = pairedSibling(replica.state.id, leg.route);
+        if (!back.ok) return back;
+        if (back.value.entityId === openingText(state.id) && back.value.accountId === counterparty) reciprocal.add(leg.orderId);
+      }
+      if (reciprocal.size === 0) continue;
+      const common = [...orderIds].filter((o) => reciprocal.has(o)).sort((a, b) => a.localeCompare(b));
+      if (common.length === 0) continue;
+      if (pendingOpening.value.length > 0) {
+        if (reciprocal.size !== common.length) continue;
+        const selected = selectOpeningTxs(mempool, new Set(common));
+        if (!selected.ok) return selected;
+        return selected.value.length > ACCOUNT_MEMPOOL_SIZE ? invariant(`CROSS_J_OPENING_RECIPROCAL_COHORT_TOO_LARGE:${selected.value.length}`) : ok(selected.value);
+      }
+      // og fitOpeningCohort: the first common order both Accounts can carry (one order per cohort)
+      const chosen = new Set<string>();
+      for (const orderId of common) {
+        if (chosen.size >= CROSS_J_OPENING_COHORT_MAX_ORDERS) break;
+        const mine = selectOpeningTxs(mempool, new Set([orderId])), theirs = selectOpeningTxs(siblingMempool, new Set([orderId]));
+        if (!mine.ok) return mine;
+        if (!theirs.ok) return theirs;
+        if (mine.value.length === 0 || theirs.value.length === 0) continue;
+        if (mine.value.length > ACCOUNT_MEMPOOL_SIZE || theirs.value.length > ACCOUNT_MEMPOOL_SIZE) break;
+        chosen.add(orderId);
+      }
+      if (chosen.size > 0) return selectOpeningTxs(mempool, chosen);
+    }
+    return ok(null);
+  });
+/** og entityTxContainsCrossJSetup / entityTxContainsAccountTransition over a tx and its nested command / runtimeOutput txs. */
+const nestedFrameTxs = (tx: EntityTx): readonly EntityTx[] => (tx.type === "entityCommand" ? tx.data.txs : tx.type === "runtimeOutput" && tx.data.protocol === "cross-j" ? tx.data.entityTxs : [tx]);
+const crossSetupTx = (tx: EntityTx): boolean => nestedFrameTxs(tx).some((n) => n.type === "materializeCrossJurisdictionSwap" || n.type === "materializeCrossJurisdictionClear" || n.type === "registerCrossJurisdictionSwap");
+const accountTransitionTx = (tx: EntityTx): boolean => nestedFrameTxs(tx).some((n) => n.type === "accountInput" || n.type === "crossJurisdictionFillNotice");
+/**
+ * og proposePendingAccountFrames: every proposable Account in worklist order proposes one frame at the Entity clock; a refused proposal is not a
+ * frame. A cross-j opening proposes exactly its sibling cohort (og selectCrossJOpeningAccountProposalTxs) and waits while the reciprocal is missing.
+ */
+const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext): Result<{ readonly draft: Draft; readonly frames: number }, EntityError> => {
   const self = d.state.id, clock: FrameClock = { timestamp: ctx.timestamp, jHeight: entityJHeight(d.state) };
   let draft = d, frames = 0;
   for (const peer of order) {
     const child = draft.accountReplicas.get(peer);
     if (!proposableChild(child)) continue;
-    const plan = planAccountProposal(child, self, clock, ctx.verify), party = partyOf(replicaId(child), self);
+    const cohort = ctx.siblings === undefined ? ok(undefined) : crossOpeningSelection(draft.state, peer, child.mempool, ctx.siblings);
+    if (!cohort.ok) return cohort;
+    if (cohort.value === null) continue;
+    const selected = cohort.value;
+    const plan = planAccountProposal(child, self, clock, ctx.verify, selected), party = partyOf(replicaId(child), self);
     if (!plan.ok || !party.ok) continue;
     const input: AccountInput = match(plan.value, {
-      frame: ({ preview }): AccountInput => ({ kind: "propose", frameHanko: pendingHanko(preview.frame.stateHash), ...opt("disputeHanko", pendingDispute(preview.dispute)), ...clock }),
-      idle: (): AccountInput => ({ kind: "propose", ...clock }),
+      frame: ({ preview }): AccountInput => ({ kind: "propose", frameHanko: pendingHanko(preview.frame.stateHash), ...opt("disputeHanko", pendingDispute(preview.dispute)), ...opt("selected", selected), ...clock }),
+      idle: (): AccountInput => ({ kind: "propose", ...opt("selected", selected), ...clock }),
     });
     const next = routed(draft.state, draft.accountReplicas, peer, propose(child, input as Propose, { verify: pendingVerify(ctx.verify, self), party: party.value }));
     if (!next.ok) continue;
@@ -6876,7 +6989,7 @@ const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext)
   }
   // og sends one final Account input per Account: an ACK already riding on that Account's new frame is not sent again.
   const carried = new Set(draft.outputs.flatMap((o) => ("tx" in o && o.tx.data.kind === "ack_frame" && o.tx.data.ack !== null ? [`${o.to}|${canon(o.tx.data.ack)}`] : [])));
-  return { draft: { ...draft, outputs: draft.outputs.filter((o) => !("tx" in o && o.tx.data.kind === "ack" && carried.has(`${o.to}|${canon(ackOf(o.tx.data))}`))) }, frames };
+  return ok({ draft: { ...draft, outputs: draft.outputs.filter((o) => !("tx" in o && o.tx.data.kind === "ack" && carried.has(`${o.to}|${canon(ackOf(o.tx.data))}`))) }, frames });
 };
 /** og buildQuorumHanko (single signer: encodeSingleSignerEntityHankos): canonical 0/1-recovery signatures by the named validators, signers then placeholders sorted by address. */
 export const quorumHanko = (state: EntityState, digest: string, sigs: ReadonlyMap<string, Signature>): Result<Hanko, EntityError> => {
@@ -9412,7 +9525,8 @@ const bookPhase = (d: Draft, timestamp: bigint): Result<Draft, EntityError> => {
     });
   });
 };
-export type FoldedTxs = { readonly draft: Draft; readonly included: readonly EntityTx[]; readonly evicted: readonly EntityTx[] };
+/** `accountFrames`: og accountsToProposeFramesCount (the Account frames this Entity frame proposed; none in a cross-j setup phase). */
+export type FoldedTxs = { readonly draft: Draft; readonly included: readonly EntityTx[]; readonly evicted: readonly EntityTx[]; readonly accountFrames?: number | undefined };
 /**
  * og buildEntityProposalEvictingRejected: a refused tx is evicted and the rest still fold. An openAccount refusal is a plain
  * Error in og (not a reject disposition), so it refuses the whole input, as does an og lending entity-tx refusal; so does a frame whose every tx was refused.
@@ -9426,6 +9540,9 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   if (!budgets.ok) return budgets;
   const misordered = wakeOrderIssue(txs);
   if (misordered !== undefined) return err(misordered);
+  // og prepareEntityFrameWorkingSet: a cross-j setup phase proposes no Account frame and never shares a frame with an Account transition
+  const setupPhase = txs.some(crossSetupTx);
+  if (setupPhase && txs.some(accountTransitionTx)) return invariant("CROSS_J_SETUP_ACCOUNT_TRANSITION_MIXED");
   // og getBoardHandoverFrameConfig over the normalized pre-frame state: the authority a [j_event, boardHandover] frame is certified under
   return chain(normalizeGovernance(state), (normalized) => chain(handoverFrameConfig(normalized, txs), (handover) => chain(selfAuthorityTransitionFrame(normalized, txs), (authorityOnly) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
     const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, handover === null ? ctx : { ...ctx, boardHandover: handover });
@@ -9443,7 +9560,8 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
       const followups = [...settled.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
       const order = [...new Set([...primed, ...(settled.touched ?? []), ...followups])];
       // og refreshChangedAccountCommitments: after the Account proposals, a changed certified frame re-arms its board Hanko refresh
-      return chain(rearmBoardRefreshes(replicas, { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) }, Number(ctx.timestamp)), (draft) => chain(profileHashToSign(state, replicas, draft, false), (withProfile) => ok({ ...folded, draft: withProfile })));
+      return chain(setupPhase ? ok({ draft: settled, frames: 0 }) : proposeAccounts(settled, order, ctx), (proposed) =>
+        chain(rearmBoardRefreshes(replicas, { ...proposed.draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) }, Number(ctx.timestamp)), (draft) => chain(profileHashToSign(state, replicas, draft, false), (withProfile) => ok({ ...folded, draft: withProfile, accountFrames: proposed.frames }))));
     });
   }))));
 };
@@ -9737,7 +9855,8 @@ const startProposal = (admitted: OpenEntity, runtimeTimestamp: bigint, ctx: Enti
         map(proposeSelected(selecting, authority, txs, runtimeTimestamp, ctx, certificate ?? undefined), (a) => ({ ...a, outputs: [...votes, ...a.outputs] })));
     }));
   }));
-const proposeSelected = (queued: OpenEntity, authority: OpenEntity, selected: readonly EntityTx[], runtimeTimestamp: bigint, ctx: EntityContext, jPrefixCertificate?: JPrefixCertificate): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+/** `keep`: og shouldKeepPreparedEntityFrame -- an account-work preview that proposes no Account frame is discarded (no Entity frame). */
+const proposeSelected = (queued: OpenEntity, authority: OpenEntity, selected: readonly EntityTx[], runtimeTimestamp: bigint, ctx: EntityContext, jPrefixCertificate?: JPrefixCertificate, keep?: (accountFrames: number) => boolean): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
   /** og resolveEntityProposalTimestamp: never behind the committed clock. */
   const timestamp = runtimeTimestamp > queued.state.timestamp ? runtimeTimestamp : queued.state.timestamp;
   // og getReplicaProposalLeader(authorityReplica): the view the proposer claims; buildProposalState: a handover frame installs its own leader
@@ -9755,7 +9874,8 @@ const proposeSelected = (queued: OpenEntity, authority: OpenEntity, selected: re
   // og materializeHtlcPreparedInfraContext: the proposer decrypts every inbound onion layer against the pre-frame state; validators replay the same bytes.
   const inbound = { state: queued.state, replicas: queued.accountReplicas, timestamp: Number(timestamp), publicKey: String(queued.state.committed["entityEncryptionPublicKey"] ?? ""), privateKey: ctx.htlc?.encryptionPrivateKey };
   return chain(htlcFrameTxs(txs) ? inboundHtlcEntries({ ...inbound, online: onlineObserver(ctx.htlc).online }, txs) : ok([]), (entries) =>
-  chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction) }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
+  chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("siblings", ctx.siblings) }), ({ draft, included, evicted, accountFrames }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
+    if (keep !== undefined && !keep(accountFrames ?? 0)) return ok(done<OpenEntity | ProposedEntity, EntityOutput>(queued));
     const pool = withoutTxs(queued.mempool, [...prepared.refused.keys(), ...evicted]);
     return chain(handoverLeaderState(queued.state, included), (handoverLeader) => chain(buildFrame(queued, leader, handoverLeader ?? ordinary, timestamp, included, draft, infra, jPrefixCertificate), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx, candidate.draft.state), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
       const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[self, own]]) };
@@ -9806,24 +9926,25 @@ const ensureLocalJPrefix = (r: OpenEntity, ctx: EntityContext, force: boolean): 
       })));
   }));
 };
-type JPrefixSelection<R> = { readonly replica: R; readonly certificate: JPrefixCertificate | null; readonly blocked: boolean; readonly frozen: boolean };
+type JPrefixSelection<R> = { readonly replica: R; readonly certificate: JPrefixCertificate | null; readonly blocked: boolean; readonly frozen: boolean; readonly range?: EntityTx | undefined };
 /**
  * og selectEntityProposal's J half (a proposal leader only): the round's certificate under the pending handover's board, a certified range above
  * the finalized height first in the mempool (replacing every other j_event), no selection without a required certificate, and the frozen-base roll.
  */
-const jPrefixSelection = <R extends EntityEnv>(r: R, authority: EntityEnv, ctx: EntityContext): Result<JPrefixSelection<R>, EntityError> => {
+/** `trusted`: og addCertifiedJRange for a trusted local cross-j command -- the certified range leads the command's frame and never enters the mempool. */
+const jPrefixSelection = <R extends EntityEnv>(r: R, authority: EntityEnv, ctx: EntityContext, trusted = false): Result<JPrefixSelection<R>, EntityError> => {
   const round = r.jPrefixRound;
   return chain(round === undefined ? ok(null) : jpE(buildJPrefixCertificate(jpView(authority), round.attestations)), (certificate) => {
-    const certified = (): Result<R, EntityError> => {
-      if (certificate === null || round === undefined) return ok(r);
+    const certified = (): Result<{ readonly replica: R; readonly range?: EntityTx | undefined }, EntityError> => {
+      if (certificate === null || round === undefined) return ok({ replica: r });
       const withCertificate: R = { ...r, jPrefixRound: { ...round, certificate } };
-      if (certificate.selected.scannedThroughHeight <= jpFinalized(jpView(r))) return ok(withCertificate);
+      if (certificate.selected.scannedThroughHeight <= jpFinalized(jpView(r))) return ok({ replica: withCertificate });
       return chain(jpE(buildCertifiedJPrefixTx(jpView(authority), ctx.jHistory, certificate, proposalLeader(authority).activeValidatorId, jpCrypto(r, ctx))), (range) =>
-        map(prioritizeWake([range, ...r.mempool.filter((tx) => tx.type !== "j_event")]), (mempool): R => ({ ...withCertificate, mempool })));
+        trusted ? ok({ replica: withCertificate, range }) : map(prioritizeWake([range, ...r.mempool.filter((tx) => tx.type !== "j_event")]), (mempool) => ({ replica: { ...withCertificate, mempool } as R, range })));
     };
-    return chain(certified(), (replica) => {
+    return chain(certified(), ({ replica, range }) => {
       const blocked = certificate === null && (entityRequiresJPrefixCertificate(authority.state) || hasPendingLocalJEvent(jpView(r), ctx.jHistory));
-      return map(jpE(isFrozenBaseJPrefixRollAuthorized(jpView(replica), replica.signerId, replica.jPrefixRound, ctx.jHistory, certificate)), (frozen) => ({ replica, certificate, blocked, frozen }));
+      return map(jpE(isFrozenBaseJPrefixRollAuthorized(jpView(replica), replica.signerId, replica.jPrefixRound, ctx.jHistory, certificate)), (frozen) => ({ replica, certificate, blocked, frozen, ...opt("range", range) }));
     });
   });
 };
@@ -9932,14 +10053,68 @@ const jPrefixLeaderWork = (r: EntityReplica, h: ValidatorJHistory | undefined): 
   if (c !== undefined && c.selected.scannedThroughHeight > jpFinalized(jpView(r))) return true;
   return unwrapOr(isFrozenBaseJPrefixRollAuthorized(jpView(r), r.signerId, r.jPrefixRound, h, c), () => false);
 };
-export const applyTxsOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> =>
-  chain(admitTxs(r, input, ctx), (queued) => startProposal(queued, input.timestamp, ctx));
+/**
+ * og applyEntityInput for a `txs` input, by lane: `defer` stops after admission (its mempool forward included), `cross-j` and `account-work` are
+ * og's trusted Runtime-local protocols, any other input admits and proposes.
+ */
+export const applyTxsOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+  if (ctx.lane === "cross-j") return trustedCrossCommand(r, input, ctx);
+  if (ctx.lane === "account-work") return accountWorkProposal(r, input.timestamp, ctx);
+  return chain(admitTxs(r, input, ctx), (queued) => (ctx.lane === "defer" ? map(forwarded(queued, input.timestamp), (out) => done<OpenEntity | ProposedEntity, EntityOutput>(queued, out)) : startProposal(queued, input.timestamp, ctx)));
+};
+/** og isCrossJurisdictionLocalRuntimeTx. */
+const crossLocalRuntimeTx = (tx: EntityTx): boolean => tx.type === "runtimeOutput" && tx.data.protocol === "cross-j";
+/** og shouldStartProposal's work test (the proposer holds no frame here). */
+const proposalWork = (r: OpenEntity, txs: readonly EntityTx[], frozen: boolean, ready: boolean): boolean => txs.length > 0 || frozen || (ready && (hasProposableAccount(r) || certifiedTransition(r)));
+/**
+ * og applyEntityInput with trustedLocalRuntimeProtocol 'cross-j': a single-signer proposer takes exactly the command's txs (plus its default
+ * materializations and a certified J range first), never through the mempool, and must commit them in this input.
+ */
+const trustedCrossCommand = (r: OpenEntity, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+  const id = r.state.id, notFinalized = (): Result<never, EntityError> => invariant(`CROSS_J_LOCAL_COMMAND_NOT_FINALIZED:${id}:txs=${input.txs.length}`);
+  if (!isSingleSigner(r.state.quorum)) return invariant(`CROSS_J_LOCAL_COMMAND_SINGLE_SIGNER_REQUIRED:${id}`);
+  if (!input.txs.every(crossLocalRuntimeTx)) return invariant("ENTITY_MEMPOOL_ADMISSION_REJECTED");
+  if (input.timestamp < 0n || input.timestamp > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "frame_timestamp_invalid", timestamp: input.timestamp });
+  return chain(crossMaterializations(r, input.txs, ctx, input.timestamp), (admitted) => chain(authorityReplica(r, [...r.mempool, ...input.txs]), (admission) => {
+    if (!isProposalLeader(admission)) return invariant(`CROSS_J_LOCAL_COMMAND_PROPOSER_REQUIRED:${id}:${r.signerId}`);
+    const trusted = appendMempool([], admitted);
+    const work = trusted.length > 0 || r.mempool.length > 0 || hasProposableAccount(r);
+    return chain(work ? ensureLocalJPrefix(r, ctx, false) : ok({ replica: r, outputs: [], signed: false }), ({ replica: queued, outputs: votes }) => chain(authorityReplica(queued, queued.mempool), (authority) =>
+      chain(jPrefixSelection(queued, authority, ctx, true), ({ replica: selecting, certificate, blocked, frozen, range }) => {
+        const required = range === undefined ? trusted : [range, ...trusted];
+        return chain(blocked ? ok<ProposableSelection>({ txs: [], currentAuthorityReady: false }) : selectProposable(selecting.state, required), (selection) => {
+          const txs = frozen ? [] : selection.txs;
+          if (txs.length !== required.length) return invariant(`CROSS_J_LOCAL_COMMAND_PARTIAL_FRAME_FORBIDDEN:${id}:selected=${txs.length}:required=${required.length}`);
+          if (!proposalWork(selecting, txs, frozen, selection.currentAuthorityReady)) return notFinalized();
+          return chain(assertProposalPrefix(selecting, txs, certificate, ctx), () => chain(proposeSelected(selecting, authority, txs, input.timestamp, ctx, certificate ?? undefined), (a) =>
+            a.replica.head.height > r.head.height ? ok({ ...a, outputs: [...votes, ...a.outputs] }) : notFinalized()));
+        });
+      })));
+  }));
+};
+/** og applyEntityInput with trustedLocalRuntimeProtocol 'account-work': no admission and no forward; the leader proposes only queued Account work. */
+const accountWorkProposal = (r: OpenEntity, timestamp: bigint, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> =>
+  chain(r.mempool.length > 0 || hasProposableAccount(r) ? ensureLocalJPrefix(r, ctx, false) : ok({ replica: r, outputs: [], signed: false }), ({ replica: queued, outputs: votes }) =>
+    chain(authorityReplica(queued, queued.mempool), (authority) => {
+      if (!isProposalLeader(authority)) return ok(done<OpenEntity | ProposedEntity, EntityOutput>(queued, votes));
+      return chain(jPrefixSelection(queued, authority, ctx), ({ replica: selecting, certificate, blocked, frozen }) =>
+        chain(blocked ? ok<ProposableSelection>({ txs: [], currentAuthorityReady: false }) : selectProposable(selecting.state, []), (selection) => {
+          const txs = frozen ? [] : selection.txs;
+          if (!proposalWork(selecting, txs, frozen, selection.currentAuthorityReady)) return ok(done<OpenEntity | ProposedEntity, EntityOutput>(selecting, votes));
+          return chain(assertProposalPrefix(selecting, txs, certificate, ctx), () =>
+            map(proposeSelected(selecting, authority, txs, timestamp, ctx, certificate ?? undefined, (frames) => txs.length > 0 || frozen || frames > 0), (a) => ({ ...a, outputs: [...votes, ...a.outputs] })));
+        }));
+    }));
 /** og runs handleHashPrecommits on every input: a held frame whose collected signatures already reach quorum installs now. */
 const heldQuorum = <R extends ProposedEntity | LockedEntity>(r: R, before: readonly EntityOutput[]): Result<EntityApply<OpenEntity | R>, EntityError> =>
   quorumPower(r.draft.state.quorum, r.signatures) < thresholdOf(r.draft.state.quorum) ? ok(done<OpenEntity | R, EntityOutput>(r, before))
     : chain(hashEntityFrame(r.frame), (frameHash) => map(installFrame(r, frameHash, r.signatures, true), (c): EntityApply<OpenEntity | R> => ({ ...c, outputs: [...before, ...c.outputs] })));
-const queueOnly = <R extends ProposedEntity | LockedEntity>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> =>
-  chain(admitTxs(r, input, ctx), (queued) => chain(forwarded(queued, input.timestamp), (out) => chain(heldQuorum(queued, out), (a) => heldSelection(a, ctx))));
+/** og applyEntityInput on a replica holding a frame, by lane (a deferred input stops after admission; a trusted cross-j command cannot commit). */
+const queueOnly = <R extends ProposedEntity | LockedEntity>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> => {
+  if (ctx.lane === "cross-j") return !isSingleSigner(r.state.quorum) ? invariant(`CROSS_J_LOCAL_COMMAND_SINGLE_SIGNER_REQUIRED:${r.state.id}`) : invariant(`CROSS_J_LOCAL_COMMAND_NOT_FINALIZED:${r.state.id}:txs=${input.txs.length}`);
+  if (ctx.lane === "account-work") return chain(heldQuorum(r, []), (a) => heldSelection(a, ctx));
+  return chain(admitTxs(r, input, ctx), (queued) => chain(forwarded(queued, input.timestamp), (out) => ctx.lane === "defer" ? ok(done<OpenEntity | R, EntityOutput>(queued, out)) : chain(heldQuorum(queued, out), (a) => heldSelection(a, ctx))));
+};
 /** og preauthenticateEntityProposal: canonical digests, parent, leader, recomputed hash, manifest head, the proposer's frame signature. */
 const DIGEST = /^0x[0-9a-f]{64}$/;
 const preauthenticate = (r: EntityEnv, frame: EntityFrame, signatures: Precommits, ctx: EntityContext): Result<EntityFrameHash, EntityError> => chain(hashEntityFrame(frame), (frameHash): Result<EntityFrameHash, EntityError> => {
@@ -9967,7 +10142,7 @@ const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHas
   if (frame.timestamp < r.state.timestamp) return err({ _tag: "frame_timestamp_regression", timestamp: frame.timestamp });
   // og assertHtlcPreparedInfraContext: validators check the committed origins against public facts, never recreating proposer entropy.
   return chain(frameInfraOf(frame), (infra) => chain(entityKeypair(r.state, ctx), () => chain(assertInboundEntries(r, frame, infra, ctx), () => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
-    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction) }), ({ draft, evicted }) => {
+    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("siblings", ctx.siblings) }), ({ draft, evicted }) => {
       if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
       return chain(handoverLeaderState(r.state, frame.txs), (handoverLeader) => chain(buildFrame(r, frame.leader, handoverLeader ?? committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra, frame.jPrefixCertificate), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
         local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame }))));
@@ -13541,6 +13716,132 @@ const replicaJHistory = (rt: Runtime, key: string, r: EntityReplica): ValidatorJ
   const h = rt.replicaLocal.get(key)?.jHistory;
   return unwrapOr(pruneFinalizedJHistory(h, Number(r.state.committed["lastFinalizedJHeight"] || 0)), () => h);
 };
+// ---- og runtime/mempool/entity-inputs.ts applyMergedEntityInputs + admit/entity-input-output.ts: the R -> E -> A cascade of one Runtime frame ----
+type BatchOut = { readonly key?: string | undefined; readonly rejected: readonly RuntimeError[]; readonly applied: readonly RoutedEntityInput[]; readonly committed: boolean; readonly progressed?: string | undefined; readonly effects?: readonly [string, CommitEffects] | undefined };
+/** og CrossJCommand: a local cross-j command (a certified runtimeOutput to a replica of this Runtime) or a local Account-work poke. */
+type CrossCommand =
+  | { readonly kind: "entity-txs"; readonly sourceEntityId: string; readonly sourceSignerId: string; readonly targetEntityId: string; readonly targetSignerId: string; readonly entityTxs: readonly EntityTx[] }
+  | { readonly kind: "account-work"; readonly sourceEntityId: string; readonly targetEntityId: string; readonly targetSignerId: string };
+const runtimeRef = (v: unknown): string => String(v ?? "").trim().toLowerCase();
+/** og collectReadyLocalAccountWorkTargets: each active validator with ready Account work and no frame in flight, once, sorted by (Entity, signer). */
+export const readyAccountWorkTargets = (replicas: Iterable<EntityReplica>): readonly { readonly entityId: string; readonly signerId: string }[] => {
+  const targets = new Map<string, { readonly entityId: string; readonly signerId: string }>();
+  for (const r of replicas) {
+    const entity = runtimeRef(r.state.id), signer = runtimeRef(r.signerId);
+    if (signer !== runtimeRef(leaderStateOf(r.state).activeValidatorId) || r._tag !== "open" || !hasProposableAccount(r)) continue;
+    targets.set(`${entity}\0${signer}`, { entityId: entity, signerId: signer });
+  }
+  return [...targets.values()].sort((a, b) => `${a.entityId}\0${a.signerId}`.localeCompare(`${b.entityId}\0${b.signerId}`));
+};
+/** og isCrossJCommandEnvelope: exactly one cross-j runtimeOutput, no consensus lane. */
+const crossCommandEnvelope = (o: EntityOutput): o is Extract<EntityOutput, { readonly input: EntityInput }> =>
+  "input" in o && o.input.kind === "txs" && o.input.txs.length === 1 && o.input.txs[0]?.type === "runtimeOutput" && o.input.txs[0].data.protocol === "cross-j";
+/**
+ * og applyMergedEntityInputs: each merged input is admitted and applied in order; a plain `txs` input only fills its replica's mempool (the touched
+ * replicas propose once at the end, in first-touch order, og createDeferredProposalBatch). After every applied input the committed cross-j commands
+ * to local replicas and the local Account work drain in this same frame (og drainImmediateCrossJurisdictionOutputs); every other output leaves in
+ * the outbox. `applied` records the merged inputs only (og drops the flush and local-event inputs from appliedEntityInputs).
+ */
+const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], timestamp: bigint, ctx: RuntimeCtx):
+  Result<{ readonly store: ReadonlyMap<string, EntityReplica>; readonly outs: readonly BatchOut[]; readonly outbox: readonly EntityOutput[] }, RuntimeError> => {
+  const store = new Map(rt.entities), outs: BatchOut[] = [], outbox: EntityOutput[] = [], queue: CrossCommand[] = [];
+  let localEvents = 0;
+  const find = (entity: string, signer: string): string | undefined => {
+    for (const [key, r] of store) if (runtimeRef(r.state.id) === runtimeRef(entity) && runtimeRef(r.signerId) === runtimeRef(signer)) return key;
+    return undefined;
+  };
+  const siblings: SiblingReplicas = (entity, signer) => { const key = find(entity, signer); return key === undefined ? undefined : store.get(key); };
+  type Staged = { readonly key: string; readonly outputs: readonly EntityOutput[]; readonly committed: boolean };
+  const stage = (routed: RoutedEntityInput, lane: EntityContext["lane"], record: boolean): Result<Staged, RuntimeError> => {
+    const key = replicaKey(routed.entityId, routed.signerId), r = store.get(key);
+    if (r === undefined) return err({ _tag: "no_such_entity", id: routed.entityId });
+    const stamped: RoutedEntityInput = routed.input.kind === "txs" || routed.input.kind === "jPrefixAttestations" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
+    const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, rt, routed.entityId), ...opt("activeJurisdiction", rt.activeJurisdiction), ...opt("jHistory", replicaJHistory({ ...rt, entities: store }, key, r)), siblings, ...opt("lane", lane) });
+    if (!applied.ok) return applied;
+    const effects = applied.value.committed, progressed = consensusProgressed(r, applied.value.replica, stamped.input, rt.replicaLocal.get(key)), committed = applied.value.replica.head.height > r.head.height;
+    store.set(key, applied.value.replica);
+    outs.push({ key, rejected: [], applied: record ? [stamped] : [], committed, progressed: progressed ? key : undefined, ...(effects === undefined ? {} : { effects: [key, effects] as const }) });
+    return ok({ key, outputs: applied.value.outputs, committed });
+  };
+  // og routeCommittedEntityOutputs: a cross-j command to a local replica becomes a local command (coalesced inside this one Entity frame only)
+  const route = (outputs: readonly EntityOutput[]): Result<void, RuntimeError> => {
+    const commands: CrossCommand[] = [], indexes = new Map<string, number>();
+    for (const o of outputs) {
+      if (!crossCommandEnvelope(o) || find(o.to, o.signerId) === undefined) { outbox.push(o); continue; }
+      const wrapper = o.input.kind === "txs" ? o.input.txs[0] : undefined;
+      if (wrapper === undefined || wrapper.type !== "runtimeOutput") return frameErr(`RUNTIME_CROSS_J_COMMAND_ENVELOPE_INVALID:entity=${o.to}`);
+      const d = wrapper.data, source = runtimeRef(d.sourceEntityId), sourceSigner = runtimeRef(d.sourceSignerId), target = runtimeRef(d.targetEntityId), targetSigner = runtimeRef(o.signerId);
+      if (!source || !sourceSigner || !target || !targetSigner || target !== runtimeRef(o.to)) return frameErr(`RUNTIME_CROSS_J_COMMAND_ROUTE_INVALID:source=${source || "missing"}:target=${target || "missing"}:envelope=${o.to}`);
+      if (d.entityTxs.length === 0) return frameErr(`RUNTIME_CROSS_J_COMMAND_TXS_MISSING:${target}`);
+      const key = `entity-txs\0${source}\0${sourceSigner}\0${target}\0${targetSigner}`, index = indexes.get(key);
+      if (index === undefined) { indexes.set(key, commands.length); commands.push({ kind: "entity-txs", sourceEntityId: source, sourceSignerId: sourceSigner, targetEntityId: target, targetSignerId: targetSigner, entityTxs: d.entityTxs }); continue; }
+      const existing = commands[index];
+      if (existing?.kind !== "entity-txs") return frameErr("RUNTIME_CROSS_J_COMMAND_KIND_COLLISION");
+      commands[index] = { ...existing, entityTxs: [...existing.entityTxs, ...d.entityTxs] };
+    }
+    queue.push(...commands);
+    return ok(undefined);
+  };
+  // og queueCommittedAccountWork + collectReadyLocalAccountWorkTargets: after a commit, every local active validator with ready Account work and no frame in flight
+  const accountWork = (committed: boolean, causedByAccountWork: boolean): void => {
+    if (!committed || causedByAccountWork) return;
+    for (const t of readyAccountWorkTargets(store.values())) {
+      if (queue.some((c) => c.kind === "account-work" && c.targetEntityId === t.entityId && c.targetSignerId === t.signerId)) continue;
+      queue.push({ kind: "account-work", sourceEntityId: t.entityId, targetEntityId: t.entityId, targetSignerId: t.signerId });
+    }
+  };
+  const collect = (staged: Staged, causedByAccountWork: boolean): Result<void, RuntimeError> => chain(route(staged.outputs), () => { accountWork(staged.committed, causedByAccountWork); return ok(undefined); });
+  // og drainImmediateCrossJurisdictionOutputs: each local command must commit; cycles and runaway cascades refuse the frame
+  const drain = (): Result<void, RuntimeError> => {
+    const fingerprints = new Set<string>();
+    let round = 0;
+    for (let command = queue.shift(); command !== undefined; command = queue.shift()) {
+      round += 1; localEvents += 1;
+      const replicas = store.size;
+      if (round > 64 + replicas || localEvents > 1_000 + 64 * replicas) return frameErr(`RUNTIME_CROSS_J_EVENT_CASCADE_LIMIT:rounds=${round}:events=${localEvents}`);
+      if (command.kind === "entity-txs") {
+        const fingerprint = canon(command);
+        if (fingerprints.has(fingerprint)) return frameErr(`RUNTIME_CROSS_J_EVENT_CYCLE:round=${round}:entity=${command.targetEntityId}`);
+        fingerprints.add(fingerprint);
+      }
+      const key = find(command.targetEntityId, command.targetSignerId), r = key === undefined ? undefined : store.get(key);
+      if (r === undefined) return frameErr(`RUNTIME_CROSS_J_LOCAL_REPLICA_NOT_FOUND:${command.targetEntityId}:${command.targetSignerId}`);
+      const txs: readonly EntityTx[] = command.kind === "account-work" ? [] : [{ type: "runtimeOutput", data: { protocol: "cross-j", sourceEntityId: command.sourceEntityId, sourceSignerId: command.sourceSignerId, targetEntityId: command.targetEntityId, entityTxs: command.entityTxs } }];
+      const staged = stage({ entityId: r.state.id, signerId: r.signerId, input: { kind: "txs", timestamp, txs } }, command.kind === "entity-txs" ? "cross-j" : "account-work", false);
+      if (!staged.ok) return frameErr(`RUNTIME_CROSS_J_LOCAL_EVENT_NOT_COMMITTED:entity=${command.targetEntityId}:round=${round}:outcome=rejected:detail=${runtimeErrorText(staged.error)}`);
+      const collected = collect(staged.value, command.kind === "account-work");
+      if (!collected.ok) return collected;
+    }
+    return ok(undefined);
+  };
+  const deferred = new Map<string, { readonly entityId: EntityId; readonly signerId: string }>();
+  for (const routed of merged) {
+    // og isProposalDeferrableEntityInput: an input with no consensus evidence
+    const deferrable = routed.input.kind === "txs", staged = stage(routed, deferrable ? "defer" : undefined, true);
+    if (!staged.ok) outs.push({ rejected: [staged.error], applied: [], committed: false });
+    else {
+      if (staged.value.committed) deferred.delete(staged.value.key);
+      else if (deferrable) deferred.set(staged.value.key, { entityId: routed.entityId, signerId: routed.signerId });
+      const collected = collect(staged.value, false);
+      if (!collected.ok) return collected;
+    }
+    const drainedNow = drain();
+    if (!drainedNow.ok) return drainedNow;
+  }
+  // og createDeferredProposalBatch.flush: each touched replica proposes once from its mempool
+  for (const { entityId, signerId: signer } of deferred.values()) {
+    const staged = stage({ entityId, signerId: signer, input: { kind: "txs", timestamp, txs: [] } }, undefined, false);
+    if (!staged.ok) outs.push({ rejected: [staged.error], applied: [], committed: false });
+    else {
+      const collected = collect(staged.value, false);
+      if (!collected.ok) return collected;
+    }
+    const drainedNow = drain();
+    if (!drainedNow.ok) return drainedNow;
+  }
+  return ok({ store, outs, outbox });
+};
+const runtimeErrorText = (e: RuntimeError | EntityError): string => ("code" in e && typeof e.code === "string" ? e.code : "reason" in e && typeof e.reason === "string" ? e.reason : e._tag);
 export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx): Result<RuntimeStep, RuntimeError> => chain(validateRuntimeInput(rt, input), (jOutbox) => {
   const forged = forgedIngress(input, ctx);
   if (forged !== undefined) return frameErr(forged);
@@ -13549,23 +13850,15 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
   type TxFold = { readonly runtime: Runtime; readonly jOutputs: readonly JInput[] };
   const txFold = foldResult(input.runtimeTxs, { runtime: { ...rt, timestamp }, jOutputs: [] } as TxFold, (at, tx) => map(applyRuntimeTxStep(at.runtime, tx, ctx), (s): TxFold => ({ runtime: s.runtime, jOutputs: [...at.jOutputs, ...s.jOutputs] })));
   return chain(txFold, ({ runtime: afterTxs, jOutputs: txJOutputs }) => chain(mergeEntityInputs(input.entityInputs, verifiedCommit(afterTxs.entities, ctx)), (merged) => {
-    type Out = { readonly outputs: readonly EntityOutput[]; readonly rejected: readonly RuntimeError[]; readonly applied: readonly RoutedEntityInput[]; readonly committed: boolean; readonly progressed?: string | undefined; readonly effects?: readonly [string, CommitEffects] | undefined };
-    const refused = (error: RuntimeError): StoreStep<string, EntityReplica, Out> => ({ writes: [], out: { outputs: [], rejected: [error], applied: [], committed: false }, stop: false });
-    const { store, outs } = foldStore(afterTxs.entities, merged, (read, routed): StoreStep<string, EntityReplica, Out> => {
-      const key = replicaKey(routed.entityId, routed.signerId), r = read(key);
-      if (r === undefined) return refused({ _tag: "no_such_entity", id: routed.entityId });
-      const stamped: RoutedEntityInput = routed.input.kind === "txs" || routed.input.kind === "jPrefixAttestations" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
-      const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, afterTxs, routed.entityId), ...opt("activeJurisdiction", afterTxs.activeJurisdiction), ...opt("jHistory", replicaJHistory(afterTxs, key, r)) });
-      if (!applied.ok) return refused(applied.error);
-      const effects = applied.value.committed, progressed = consensusProgressed(r, applied.value.replica, stamped.input, afterTxs.replicaLocal.get(key));
-      return { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [], applied: [stamped], committed: applied.value.replica.head.height > r.head.height, progressed: progressed ? key : undefined, ...(effects === undefined ? {} : { effects: [key, effects] as const }) }, stop: false };
-    });
-    const applied = outs.flatMap((o) => o.applied), outbox = outs.flatMap((o) => o.outputs);
+    const drained = entityInputBatch(afterTxs, merged, timestamp, ctx);
+    if (!drained.ok) return drained;
+    const { store, outs, outbox } = drained.value;
+    const applied = outs.flatMap((o) => o.applied);
     // og attachCommitProofsAndOutputs: each committed frame's witnesses (stamped with the Runtime clock), pruned to what stays reachable.
     let replicaLocal = afterTxs.replicaLocal;
     for (const key of outs.flatMap((o) => (o.progressed === undefined ? [] : [o.progressed]))) replicaLocal = mapSet(replicaLocal, key, { ...(replicaLocal.get(key) ?? {}), lastConsensusProgressAt: Number(timestamp) });
     // og pruneReplicaFinalizedJHistory at each commit: the validator-local J history drops what the Entity certified
-    for (const key of new Set(outs.flatMap((o) => (o.committed ? o.applied.map((i) => replicaKey(i.entityId, i.signerId)) : [])))) {
+    for (const key of new Set(outs.flatMap((o) => (o.committed && o.key !== undefined ? [o.key] : [])))) {
       const current = replicaLocal.get(key), replica = store.get(key);
       if (current?.jHistory !== undefined && replica !== undefined) replicaLocal = mapSet(replicaLocal, key, { ...current, jHistory: replicaJHistory({ ...afterTxs, replicaLocal }, key, replica) });
     }

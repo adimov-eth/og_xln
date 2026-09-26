@@ -417,13 +417,14 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
     const r = teaching([[A, 1n]], 1n);
     expect(unwrapErr(applyEntityInput(r, txs([open]), { ...ctx(A), self: BOB }))._tag).toBe("wrong_entity");
     const rt = spawn(createRuntime(), r);
-    // og mergeEntityInputs: two local lanes for one replica collapse into one input, so the duplicate refuses both; a lane from another origin stays apart.
+    // og mergeEntityInputs: two local lanes for one replica collapse into one input, so the duplicate refuses both; a lane from another origin stays
+    // apart, but (og createDeferredProposalBatch) both lanes only fill the mempool and the replica proposes once, so the duplicate refuses that frame too.
     const merged = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([open, open]) }, { entityId: ALICE, signerId: A, input: txs([open]) }] }, verifiers));
     expect(merged.rejected.map((e) => e._tag)).toEqual(["account_exists"]);
     expect(merged.runtime.entities.get(replicaKey(ALICE, A))?.state.accounts.has(BOB)).toBe(false);
     const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([open, open]) }, { entityId: ALICE, signerId: A, from: "0x" + "77".repeat(20), input: txs([open]) }] }, verifiers));
     expect(out.rejected.map((e) => e._tag)).toEqual(["account_exists"]);
-    expect(out.runtime.entities.get(replicaKey(ALICE, A))?.state.accounts.has(BOB)).toBe(true);
+    expect(out.runtime.entities.get(replicaKey(ALICE, A))?.state.accounts.has(BOB)).toBe(false);
   });
   test("signEntityFrame still signs the entity frame hash (manifest head)", () => {
     const p = unwrap(propose(teaching([[A, 1n], [B, 1n]], 2n), A)), frame = held(p.replica);
