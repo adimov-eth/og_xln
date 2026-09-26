@@ -8529,9 +8529,16 @@ const importBoundReplica = (rt: Runtime, tx: Extract<RuntimeTx, { type: "importR
   if (boardIndex < 0) return txErr("IMPORT_REPLICA_SIGNER_NOT_ON_BOARD");
   if (isProposer !== (boardIndex === 0)) return txErr("IMPORT_REPLICA_PROPOSER_FLAG_INVALID");
   if (!/^0x[0-9a-f]{64}$/i.test(entity)) return txErr("FINTECH_SAFETY_INVALID_ENTITY_ID");
-  if (isNumberedEntity(entity)) return txErr("NUMBERED_REPLICA_REGISTRATION_EVIDENCE_MISSING");
-  return chain(lazyBoardEntityId(config), (boardId): Result<Runtime, RuntimeError> => {
-    if (lower(boardId) !== entity) return txErr("IMPORT_REPLICA_LAZY_BOARD_ID_MISMATCH");
+  // og assertNumberedReplicaImportAuthority: a lazy id is its board hash; a numbered id needs receipt-proven registration evidence for this board.
+  const boardAuthority = isNumberedEntity(entity)
+    ? chain(mapErr(boardStackKey({ chainId: j.chainId, depositoryAddress: j.depositoryAddress, entityProviderAddress: j.entityProviderAddress }), (e): RuntimeError => ({ _tag: "runtime_tx", code: e.code })),
+      (stackKey) => chain(registrationEvidenceKey(stackKey, entity), (evidenceKey): Result<void, RuntimeError> => {
+        const evidence = rt.registrationEvidence.get(evidenceKey);
+        if (evidence === undefined) return txErr(`NUMBERED_REPLICA_REGISTRATION_EVIDENCE_MISSING:${entity}`);
+        return chain(lazyBoardEntityId(config), (boardHash) => (lower(String(evidence["boardHash"])) === lower(boardHash) ? ok(undefined) : txErr(`NUMBERED_REPLICA_REGISTRATION_BOARD_MISMATCH:${entity}`)));
+      }))
+    : chain(lazyBoardEntityId(config), (boardId): Result<void, RuntimeError> => (lower(boardId) === entity ? ok(undefined) : txErr("IMPORT_REPLICA_LAZY_BOARD_ID_MISMATCH")));
+  return chain(boardAuthority, (): Result<Runtime, RuntimeError> => {
     if (!/^0x[0-9a-f]{128}$/.test(entitySeed)) return txErr("IMPORT_REPLICA_ENTITY_SEED_INVALID");
     const publicKey = entityEncryptionPublicKey(entitySeed, entity);
     if (siblings.some((r) => r.state.committed["entityEncryptionPublicKey"] !== publicKey)) return txErr("IMPORT_REPLICA_ENTITY_ENCRYPTION_PUBLIC_KEY_MISMATCH");

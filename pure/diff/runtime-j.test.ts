@@ -604,4 +604,43 @@ describe("runtime-j: receipt-proven registration evidence (og registration-evide
     expect(refused).toBeGreaterThan(10);
     expect(repeated).toBeGreaterThan(3);
   });
+
+  test("MATCH (randomized): a numbered importReplica needs registration evidence for its exact board (og assertNumberedReplicaImportAuthority)", async () => {
+    let imported = 0, refused = 0;
+    for (let run = 0; run < 16; run++) {
+      const seed = `runtime-j-numbered-${run}`, env = createEmptyEnv(seed) as unknown as OgEnv & { runtimeId: string };
+      registerSignerKey(env as never, env.runtimeId, deriveSignerKeySync(seed, "1"));
+      const replica = { name: "Local", blockNumber: 7n, stateRoot: null, mempool: [], blockDelayMs: 300, lastBlockTimestamp: 0, position: { x: 0, y: 50, z: 0 }, chainId: CHAIN, contracts: { depository: DEP, entityProvider: EP }, watcherConfirmationDepth: 0, entityProviderDeploymentBlock: 1 };
+      env.state.jReplicas.set("Local", replica);
+      let rt: Runtime = createRuntime([treeClone(replica) as unknown as JReplica], env.runtimeId);
+      const config = { mode: "proposer-based", threshold: 1n, validators: [aliceAddr, bobAddr], shares: { [aliceAddr]: 1n, [bobAddr]: 1n }, jurisdiction: { name: "Local" } } as unknown as ImportConfig;
+      const bound = { ...config, jurisdiction: { name: "Local", chainId: CHAIN, depositoryAddress: DEP, entityProviderAddress: EP } };
+      const boardHash = hashBoard(encodeBoard(bound as never)).toLowerCase(), entityNumber = 2 + ri(3);
+      if (rng() < 0.8) {
+        const registered = rng() < 0.75 ? boardHash : hex(32), height = 5 + ri(5), blockHash = word(height);
+        const encoded = iface.encodeEventLog(iface.getEvent("EntityRegistered"), [word(entityNumber), BigInt(entityNumber), registered]);
+        const receipt = { transactionHash: word(900 + height), transactionIndex: 0, blockNumber: height, blockHash, type: 2, status: 1, cumulativeGasUsed: 21_000, logsBloom: `0x${"00".repeat(256)}`,
+          logs: [{ address: EP, topics: encoded.topics, data: encoded.data, blockNumber: height, blockHash, transactionHash: word(900 + height), transactionIndex: 0, logIndex: 0 }] };
+        const root = await computeCanonicalReceiptsRoot([receipt] as never), proof = (await createCanonicalReceiptProofs([receipt] as never, root)).get(0) as object;
+        const log = { address: EP, topics: encoded.topics.map((t) => t.toLowerCase()), data: encoded.data.toLowerCase(), blockNumber: height, blockHash, transactionHash: word(900 + height), transactionIndex: 0, logIndex: 0, index: 0, receiptProof: { ...proof, receiptLogIndex: 0 } };
+        const evidence = buildCertifiedRegistrationEvidence(env as never, replica as never, "EntityRegistered", log as never, { observedThroughHeight: height, observedTipBlockHash: blockHash, observedHeadHeight: height, confirmationDepth: 0 });
+        const tx = { type: "recordAuthenticatedJAuthority", data: evidence };
+        expect(await runOg(env, treeClone(tx))).toBeNull();
+        rt = unwrap(applyRuntimeTx(rt, tx as unknown as RuntimeTx, { replay: true }));
+      }
+      for (const signer of [aliceAddr, bobAddr]) {
+        const entityId = pick([word(entityNumber), word(entityNumber), word(entityNumber), word(entityNumber + 7)]);
+        const tx = { type: "importReplica", entityId, signerId: signer, data: { config, isProposer: signer === aliceAddr, entitySeed: SEED } } as unknown as RuntimeTx;
+        const og = await runOg(env, tx);
+        const rw = applyRuntimeTx(rt, tx, { replay: true });
+        expect(rwCode(rw)).toBe(og);
+        if (!rw.ok) { refused++; continue; }
+        rt = rw.value;
+        imported++;
+        expect(rt.entities.get(replicaKey(entityId as EntityId, signer))?.state.jurisdictionConfig?.entityProviderAddress.toLowerCase()).toBe(EP);
+      }
+    }
+    expect(imported).toBeGreaterThan(8);
+    expect(refused).toBeGreaterThan(8);
+  });
 });
