@@ -10,9 +10,14 @@ import { assertProposeAccountsNowTxAuthorized } from "../../core/runtime/mempool
 import { buildEntityProviderActionAttemptId } from "../../core/runtime/registration/entity-provider-action-submit-state.ts";
 import { classifyRuntimeJBatchFailure } from "../../core/protocol/errors/failure-taxonomy.ts";
 import { canonicalDisputeFinalizationEvidenceHash, canonicalJurisdictionEventsHash } from "../../core/jurisdiction/machine/event-observation.ts";
+import { buildCertifiedRegistrationEvidence, buildRegistrationEvidenceDigest } from "../../core/jurisdiction/machine/registration-evidence/index.ts";
+import { computeCanonicalReceiptsRoot, createCanonicalReceiptProofs } from "../../core/jurisdiction/machine/receipt-codec/index.ts";
+import { deriveSignerKeySync, registerSignerKey, signAccountFrame } from "../../core/account/crypto.ts";
+import { createEmptyEnv } from "../../core/runtime/composition.ts";
+import { EntityProvider__factory } from "../../jurisdictions/typechain-types/index.ts";
 import {
   applyRuntime, applyRuntimeTx, classifyJBatchFailure, createEntity, createRuntime, epActionAttemptId, initJBatch, jSubmitAttemptId, jurisdictionImportRequestHash, registerPendingJOutbox, replicaKey, runtimeComponentDigests, runtimeView, splitJOutbox, stableJson,
-  type Binary, type EntityId, type EntityReplica, type EntityTx, type ImportConfig, type JInput, type Runtime, type RuntimeTx,
+  type Binary, type EntityId, type EntityReplica, type EntityTx, type ImportConfig, type JInput, type JReplica, type Runtime, type RuntimeTx,
 } from "../xln.ts";
 import { ALICE, TERMS, aliceAddr, bobAddr, unwrap, verifiers } from "../xln_run.ts";
 
@@ -523,5 +528,80 @@ describe("runtime-j: validator J history (og tx-handlers.ts observeJRangeRuntime
     expect(observed).toBeGreaterThan(60);
     expect(rewound).toBeGreaterThan(10);
     expect(refused).toBeGreaterThan(60);
+  });
+});
+
+// ---- og tx-handlers.ts recordAuthenticatedJAuthority over jurisdiction/machine/registration-evidence + receipt-codec ----
+describe("runtime-j: receipt-proven registration evidence (og registration-evidence.ts recordAuthenticatedJAuthority)", () => {
+  const iface = EntityProvider__factory.createInterface();
+  const DEP = "0x5fbdb2315678afecb367f032d93f642f64180aa3", EP = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512", CHAIN = 31337;
+  const word = (n: number): string => `0x${n.toString(16).padStart(64, "0")}`;
+  const view = (m: ReadonlyMap<string, unknown> | undefined): string => stableJson([...(m ?? new Map())]);
+
+  test("MATCH (randomized): MPT receipt proofs, raw-log binding, witness signatures, repeats and claim conflicts -- same decisions and the same evidence store", async () => {
+    let stored = 0, repeated = 0, refused = 0;
+    for (let run = 0; run < 12; run++) {
+      const seed = `runtime-j-authority-${run}`, env = createEmptyEnv(seed) as unknown as OgEnv & { runtimeId: string; infrastructure: { certifiedRegistrationEvidence?: Map<string, unknown> } };
+      registerSignerKey(env as never, env.runtimeId, deriveSignerKeySync(seed, "1"));
+      const depth = pick([0, 2]);
+      const replica = { name: "Local", blockNumber: 7n, stateRoot: null, mempool: [], blockDelayMs: 300, lastBlockTimestamp: 0, position: { x: 0, y: 50, z: 0 }, chainId: CHAIN, contracts: { depository: DEP, entityProvider: EP }, watcherConfirmationDepth: depth };
+      env.state.jReplicas.set("Local", replica);
+      let rt: Runtime = createRuntime([treeClone(replica) as unknown as JReplica], env.runtimeId);
+      const submitted: Record<string, unknown>[] = [];
+      for (let step = 0; step < 6; step++) {
+        let evidence: Record<string, unknown> | undefined;
+        if (submitted.length > 0 && rng() < 0.2) { evidence = treeClone(pick(submitted)); repeated++; }
+        else {
+          const source = rng() < 0.8 ? "EntityRegistered" : "FoundationBootstrapped", height = 5 + ri(20), entityNumber = 2 + ri(3), blockHash = word(height * 7 + 1);
+          const encoded = source === "EntityRegistered" ? iface.encodeEventLog(iface.getEvent("EntityRegistered"), [word(entityNumber), BigInt(entityNumber), hex(32)])
+            : iface.encodeEventLog(iface.getEvent("FoundationBootstrapped"), [env.runtimeId, hex(32), 2n, 3n]);
+          const count = 1 + ri(20), target = ri(count), noise = ri(3);
+          const receipts = Array.from({ length: count }, (_, i) => {
+            const transactionHash = word(1000 + height * 64 + i);
+            const logs = i === target
+              ? [...Array.from({ length: noise }, () => ({ address: addr(), topics: [hex(32)], data: "0x" })), { address: EP, topics: encoded.topics, data: encoded.data }]
+              : Array.from({ length: ri(2) }, () => ({ address: addr(), topics: [hex(32)], data: "0x12" }));
+            return { transactionHash, transactionIndex: i, blockNumber: height, blockHash, type: pick([0, 2]), status: 1, cumulativeGasUsed: 21_000 * (i + 1), logsBloom: `0x${"00".repeat(256)}`,
+              logs: logs.map((l, k) => ({ ...l, blockNumber: height, blockHash, transactionHash, transactionIndex: i, logIndex: k })) };
+          });
+          const root = await computeCanonicalReceiptsRoot(receipts as never), proofs = await createCanonicalReceiptProofs(receipts as never, root);
+          const other = (target + 1 + ri(Math.max(1, count - 1))) % count, corrupt = rng();
+          let proof = { ...(proofs.get(target) as { proofNodes: string[]; transactionIndex: number; encodedReceipt: string; receiptsRoot: string }), receiptLogIndex: noise };
+          if (corrupt < 0.08 && count > 1) proof = { ...proof, ...(proofs.get(other) as object), receiptLogIndex: noise } as typeof proof;
+          else if (corrupt < 0.16 && count > 1) proof = { ...proof, proofNodes: (proofs.get(other) as { proofNodes: string[] }).proofNodes };
+          else if (corrupt < 0.22 && proof.proofNodes.length > 1) proof = { ...proof, proofNodes: proof.proofNodes.slice(0, -1) };
+          else if (corrupt < 0.28) proof = { ...proof, receiptLogIndex: noise + 1 };
+          const log = { address: EP, topics: encoded.topics.map((t) => t.toLowerCase()), data: encoded.data.toLowerCase(), blockNumber: height, blockHash, transactionHash: word(1000 + height * 64 + target), transactionIndex: target, logIndex: noise, index: noise, receiptProof: proof };
+          try {
+            evidence = buildCertifiedRegistrationEvidence(env as never, replica as never, source, log as never, { observedThroughHeight: height, observedTipBlockHash: blockHash, observedHeadHeight: height + depth, confirmationDepth: depth }) as unknown as Record<string, unknown>;
+          } catch { continue; }
+          const tweak = rng();
+          if (tweak < 0.06) evidence = { ...evidence, witnessSignature: `${String(evidence["witnessSignature"]).slice(0, 10)}${String(evidence["witnessSignature"]).slice(10, 12) === "00" ? "11" : "00"}${String(evidence["witnessSignature"]).slice(12)}` };
+          else if (tweak < 0.1) evidence = { ...evidence, topics: (evidence["topics"] as string[]).map((t) => t.toUpperCase().replace("0X", "0x")) };
+          else if (tweak < 0.2) {
+            // Re-signed but inconsistent: the witness signs over fields the receipt proof or the log decoding then refutes.
+            const field = pick(["receiptsRoot", "boardHash", "entityId", "receiptLogIndex", "encodedReceipt"]);
+            const value = field === "receiptLogIndex" ? Number(evidence["receiptLogIndex"]) + 1 : field === "encodedReceipt" ? `${String(evidence["encodedReceipt"])}00` : hex(32);
+            evidence = { ...evidence, [field]: value };
+            evidence["witnessSignature"] = signAccountFrame(env as never, env.runtimeId, buildRegistrationEvidenceDigest(evidence as never)).toLowerCase();
+          }
+          submitted.push(evidence);
+        }
+        const tx = { type: "recordAuthenticatedJAuthority", data: evidence };
+        const og = await runOg(env, treeClone(tx));
+        const rw = applyRuntimeTx(rt, tx as unknown as RuntimeTx, { replay: true });
+        expect(rwCode(rw)).toBe(og);
+        if (rw.ok) rt = rw.value;
+        if (og === null) stored++; else refused++;
+        expect(view(rt.registrationEvidence)).toBe(view(env.infrastructure.certifiedRegistrationEvidence));
+        // The durable post-state view commits the evidence store exactly as og does.
+        const held = env.infrastructure.certifiedRegistrationEvidence;
+        const minimal: OgEnv = { state: { jReplicas: env.state.jReplicas, eReplicas: new Map(), timestamp: 0, height: 0 }, infrastructure: held !== undefined && held.size > 0 ? { certifiedRegistrationEvidence: held } : {}, runtimeId: env.runtimeId };
+        expect(rwDigests(rt)).toEqual(ogDigests(minimal) as never);
+      }
+    }
+    expect(stored).toBeGreaterThan(15);
+    expect(refused).toBeGreaterThan(10);
+    expect(repeated).toBeGreaterThan(3);
   });
 });

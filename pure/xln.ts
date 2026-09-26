@@ -8303,6 +8303,8 @@ export type Runtime = {
   /** og per-EntityReplica local fields, keyed like `entities`. */
   readonly replicaLocal: ReadonlyMap<string, ReplicaLocal>;
   readonly adapterFrontiers: ReadonlyMap<string, AdapterFrontier>; readonly encryptionSeeds: ReadonlyMap<string, string>; readonly frameHash: string;
+  /** og infrastructure.certifiedRegistrationEvidence: receipt-proven EntityProvider registrations, keyed `stackKey:entityId`. */
+  readonly registrationEvidence: ReadonlyMap<string, RegistrationEvidence>;
 };
 /** A whole-frame refusal carries og's error code (og throws out of the Runtime reducer, so nothing of the frame applies). */
 export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }> | Tagged<"runtime_frame" | "runtime_tx" | "runtime_tx_unsupported", { code: string }>;
@@ -8320,6 +8322,7 @@ export const bareJReplica = (name: string): JReplica => ({ name, blockNumber: 0n
 export const createRuntime = (jurisdictions: Iterable<string | JReplica> = [], runtimeId?: string): Runtime => ({
   entities: new Map(), height: 0n, timestamp: 0n, jReplicas: new Map([...jurisdictions].map((j): [string, JReplica] => (typeof j === "string" ? [j, bareJReplica(j)] : [j.name, j]))),
   ...opt("runtimeId", runtimeId), pendingJImports: new Map(), pendingCommittedJOutbox: [], replicaLocal: new Map(), adapterFrontiers: new Map(), encryptionSeeds: new Map(), frameHash: ZERO_FRAME_HASH,
+  registrationEvidence: new Map(),
 });
 export const spawn = (rt: Runtime, r: EntityReplica): Runtime => ({ ...rt, entities: mapSet(rt.entities, replicaKey(r.state.id, r.signerId), r) });
 /** og resolveEntityProposerId: an Account message goes to the receiver's active leader (the CEO `validators[0]` until a view change); a consensus input to the named validator. */
@@ -9674,6 +9677,252 @@ const rewindJHistory = (rt: Runtime, d: Extract<RuntimeTx, { type: "rewindJHisto
     : map(rewindJHistoryTo(replica.state, history), (jHistory) => withLocal(rt, key, { jHistory })));
 };
 
+// ---- og jurisdiction/machine/registration-evidence, receipt-codec verifyCanonicalReceiptProof (@ethereumjs/mpt 10 + @ethereumjs/rlp 10) ----
+type RlpItem = Uint8Array | readonly RlpItem[];
+/** @ethereumjs/rlp _decode: canonical prefixes only; a failure is null. */
+const rlpDecodeAt = (input: Uint8Array): { readonly data: RlpItem; readonly rest: Uint8Array } | null => {
+  const first = input[0] ?? 0, slice = (s: number, e: number): Uint8Array | null => (e > input.length ? null : input.slice(s, e));
+  const lengthOf = (v: Uint8Array | null): number | null => { if (v === null || v.length === 0 || v[0] === 0) return null; const n = Number.parseInt(nobleHex(v), 16); return Number.isNaN(n) ? null : n; };
+  const list = (body: Uint8Array | null, end: number): { readonly data: RlpItem; readonly rest: Uint8Array } | null => {
+    if (body === null) return null;
+    const items: RlpItem[] = [];
+    for (let rest = body; rest.length > 0;) { const d = rlpDecodeAt(rest); if (d === null) return null; items.push(d.data); rest = d.rest; }
+    return { data: items, rest: input.subarray(end) };
+  };
+  if (first <= 0x7f) return { data: input.slice(0, 1), rest: input.subarray(1) };
+  if (first <= 0xb7) {
+    const length = first - 0x7f, data = first === 0x80 ? new Uint8Array(0) : slice(1, length);
+    return data === null || (length === 2 && (data[0] ?? 0) < 0x80) ? null : { data, rest: input.subarray(length) };
+  }
+  if (first <= 0xbf) {
+    const lLength = first - 0xb6;
+    if (input.length - 1 < lLength) return null;
+    const length = lengthOf(slice(1, lLength));
+    if (length === null || length <= 55) return null;
+    const data = slice(lLength, length + lLength);
+    return data === null ? null : { data, rest: input.subarray(length + lLength) };
+  }
+  if (first <= 0xf7) { const length = first - 0xbf; return list(slice(1, length), length); }
+  const lLength = first - 0xf6, length = lengthOf(slice(1, lLength));
+  if (length === null || length < 56 || lLength + length > input.length) return null;
+  return list(slice(lLength, lLength + length), lLength + length);
+};
+/** @ethereumjs/rlp decode: empty input is the empty string; anything left over is an error. */
+const rlpDecode = (input: Uint8Array): RlpItem | null => { if (input.length === 0) return new Uint8Array(0); const d = rlpDecodeAt(input); return d === null || d.rest.length !== 0 ? null : d.data; };
+/**
+ * @ethereumjs/mpt verifyMPTWithMerkleProof: the first node must hash to the root; the key is walked through hashed or embedded nodes.
+ * The value, or null for a proven absence; og throws on a missing node ("Invalid proof provided") or a malformed one.
+ */
+const mptProofGet = (root: Uint8Array, key: Uint8Array, proof: readonly Uint8Array[]): Result<Uint8Array | null, RuntimeError> => {
+  const db = new Map(proof.map((node) => [nobleHex(keccak_256(node)), node] as const));
+  if (proof[0] !== undefined && nobleHex(keccak_256(proof[0])) !== nobleHex(root)) return txErr("Invalid proof nodes given");
+  const target = nibblesOf(key);
+  let ref: RlpItem = root, progress = 0;
+  for (;;) {
+    let raw: RlpItem;
+    if (Array.isArray(ref)) raw = ref;
+    else {
+      const bytes = db.get(nobleHex(ref as Uint8Array));
+      if (bytes === undefined) return txErr("Invalid proof provided");
+      const decoded = rlpDecode(bytes);
+      if (decoded === null) return txErr("invalid RLP");
+      if (!Array.isArray(decoded)) return txErr("Invalid node");
+      raw = decoded;
+    }
+    const node = raw as readonly RlpItem[];
+    if (node.length === 17) {
+      if (progress === target.length) { const v = node[16]; return ok(v instanceof Uint8Array && v.length > 0 ? v : null); }
+      const child = node[target[progress] ?? 0];
+      if (child === undefined || child.length === 0) return ok(null);
+      progress += 1;
+      ref = child;
+      continue;
+    }
+    if (node.length !== 2 || !(node[0] instanceof Uint8Array)) return txErr("Invalid node");
+    const encoded = nibblesOf(node[0]), leaf = (encoded[0] ?? 0) > 1, path = (encoded[0] ?? 0) % 2 ? encoded.slice(1) : encoded.slice(2);
+    if (leaf && target.length - progress > path.length) return ok(null);
+    for (const nibble of path) { if (nibble !== target[progress]) return ok(null); progress += 1; }
+    const next = node[1];
+    if (leaf) return next instanceof Uint8Array ? ok(next) : txErr("Invalid node");
+    if (next === undefined) return txErr("Invalid node");
+    ref = next;
+  }
+};
+/** og RLP.encode(BigInt(index)): 0 is the empty string. */
+const receiptTrieKey = (index: number): Uint8Array => (index === 0 ? Uint8Array.of(0x80) : rlp(magnitude(BigInt(index))));
+/** og CertifiedRegistrationEvidence (types/jurisdiction-runtime.ts): an MPT receipt proof or a Tron RPC attestation, witness-signed. */
+export type RegistrationEvidence = { readonly [field: string]: Binary };
+const J_AUTH_ZERO = `0x${"00".repeat(32)}`, FOUNDATION_ENTITY = `0x${"00".repeat(31)}01`;
+const authBytes32 = (v: unknown, label: string): Result<string, RuntimeError> => { const s = String(v ?? "").trim().toLowerCase(); return /^0x[0-9a-f]{64}$/.test(s) ? ok(s) : txErr(`J_AUTHORITY_${label}_INVALID:${s || "missing"}`); };
+const authAddress = (v: unknown, label: string): Result<string, RuntimeError> => { const a = ethAddress(String(v ?? "")); return a === null ? txErr(`J_AUTHORITY_${label}_INVALID:${String(v ?? "")}`) : ok(a); };
+const authInt = (v: unknown, label: string): Result<number, RuntimeError> => { const n = Number(v); return Number.isSafeInteger(n) && n >= 0 ? ok(n) : txErr(`J_AUTHORITY_${label}_INVALID:${String(v)}`); };
+const authHex = (v: unknown, label: string, maxBytes: number): Result<string, RuntimeError> => {
+  const s = String(v ?? "");
+  if (!/^0x(?:[0-9a-f]{2})*$/.test(s)) return txErr(`J_AUTHORITY_${label}_INVALID`);
+  const n = (s.length - 2) / 2;
+  return n > maxBytes ? txErr(`J_AUTHORITY_${label}_OVERSIZED:${n}:${maxBytes}`) : ok(s);
+};
+const authConsensusBytes = (v: unknown): Result<Uint8Array, BinaryError> => chain(binaryBody(v), encodeConsensus);
+/** og keccakBytesHash(encodeCanonicalConsensusBytes(v)): undefined fields dropped. */
+const authHash = (v: unknown): Result<string, RuntimeError> => mapErr(map(authConsensusBytes(v), (b) => bytesToHex(keccak_256(b))), (): RuntimeError => ({ _tag: "runtime_tx", code: "CANONICAL_ENCODING_INVALID" }));
+/** og canonicalConsensusValuesEqual. */
+const consensusEqual = (a: unknown, b: unknown): boolean => { const x = authConsensusBytes(a), y = authConsensusBytes(b); return x.ok && y.ok && compareBytes(x.value, y.value) === 0; };
+const isTron = (e: RegistrationEvidence): boolean => e["receiptKind"] === "tron-rpc-attested";
+const topicsOfEvidence = (e: RegistrationEvidence): readonly unknown[] => (Array.isArray(e["topics"]) ? e["topics"] : []);
+export const registrationEvidenceKey = (stackKey: unknown, entityId: unknown): Result<string, RuntimeError> =>
+  chain(authBytes32(stackKey, "STACK_KEY"), (s) => map(authBytes32(entityId, "ENTITY_ID"), (e) => `${s}:${e}`));
+/** og buildRegistrationEvidenceRawLogDigest. */
+const rawLogDigest = (e: RegistrationEvidence): Result<string, RuntimeError> =>
+  chain(authAddress(e["emitter"], "EMITTER"), (emitter) => chain(traverse(topicsOfEvidence(e).map((t, i) => [t, i] as const), ([t, i]) => authBytes32(t, `TOPIC_${i}`)), (topics) =>
+    chain(authInt(e["activationHeight"], "ACTIVATION_HEIGHT"), (activationHeight) => chain(authBytes32(e["blockHash"], "BLOCK_HASH"), (blockHash) =>
+      chain(authBytes32(e["transactionHash"], "TRANSACTION_HASH"), (transactionHash) => chain(authInt(e["transactionIndex"], "TRANSACTION_INDEX"), (transactionIndex) =>
+        chain(authInt(e["logIndex"], "LOG_INDEX"), (logIndex) => authHash({ domain: "xln.j-authority.raw-log.v1", emitter, topics, data: String(e["data"]).toLowerCase(), activationHeight, blockHash, transactionHash, transactionIndex, logIndex }))))))));
+/** og buildRegistrationEvidenceDigest: what the witness Runtime signs (everything but its signature). */
+const registrationEvidenceDigest = (e: RegistrationEvidence): Result<string, RuntimeError> => {
+  const { witnessSignature: _signature, ...body } = e;
+  return authHash({ domain: "xln.j-authority.witness.v1", evidence: body });
+};
+/** og computeRegistrationEvidenceClaimHash: the receipt claim, independent of which witness saw it when. */
+export const registrationClaimHash = (e: RegistrationEvidence): Result<string, RuntimeError> => authHash({
+  domain: "xln.j-authority.receipt-claim.v1", version: e["version"], source: e["source"], stackKey: e["stackKey"], entityId: e["entityId"], boardHash: e["boardHash"], activationHeight: e["activationHeight"],
+  blockHash: e["blockHash"], transactionHash: e["transactionHash"], transactionIndex: e["transactionIndex"], logIndex: e["logIndex"], emitter: e["emitter"], topics: e["topics"], data: e["data"], rawLogDigest: e["rawLogDigest"],
+  ...(isTron(e) ? { receiptKind: e["receiptKind"], chainId: e["chainId"], finality: e["finality"] } : { receiptsRoot: e["receiptsRoot"], encodedReceipt: e["encodedReceipt"], receiptProofNodes: e["receiptProofNodes"] }),
+  receiptLogIndex: e["receiptLogIndex"],
+});
+/** og computeRegistrationEvidenceHash. */
+export const registrationEvidenceHash = (e: RegistrationEvidence): Result<string, RuntimeError> => authHash({ domain: "xln.j-authority.evidence.v1", evidence: e });
+/** og canonicalRegistrationReceipt: the Tron attestation fields, or a bounded MPT proof. */
+const canonicalRegistrationReceipt = (e: RegistrationEvidence): Result<Readonly<Record<string, unknown>>, RuntimeError> => {
+  if (isTron(e)) {
+    if (e["finality"] !== "tron-solidified") return txErr("J_AUTHORITY_NATIVE_FINALITY_INVALID");
+    if (["receiptsRoot", "encodedReceipt", "receiptProofNodes"].some((f) => Object.hasOwn(e, f))) return txErr("J_AUTHORITY_NATIVE_MPT_FIELDS_FORBIDDEN");
+    return chain(authInt(e["chainId"], "CHAIN_ID"), (chainId) => map(authBytes32(e["rpcEndpointHash"], "RPC_ENDPOINT_HASH"), (rpcEndpointHash) => ({ receiptKind: e["receiptKind"], finality: e["finality"], chainId, rpcEndpointHash })));
+  }
+  const nodes = e["receiptProofNodes"];
+  if (e["receiptKind"] !== undefined || !Array.isArray(nodes)) return txErr("J_AUTHORITY_RECEIPT_PROOF_SHAPE_INVALID");
+  if (nodes.length === 0 || nodes.length > 128) return txErr(`J_AUTHORITY_PROOF_NODE_COUNT_INVALID:${nodes.length}`);
+  return chain(traverse(nodes.map((n, i) => [n, i] as const), ([n, i]) => authHex(n, `PROOF_NODE_${i}`, 1_048_576)), (receiptProofNodes) => {
+    const total = receiptProofNodes.reduce((sum, n) => sum + (n.length - 2) / 2, 0);
+    if (total > 2_097_152) return txErr(`J_AUTHORITY_PROOF_OVERSIZED:${total}:2097152`);
+    return chain(authBytes32(e["receiptsRoot"], "RECEIPTS_ROOT"), (receiptsRoot) => map(authHex(e["encodedReceipt"], "ENCODED_RECEIPT", 1_048_576), (encodedReceipt) => ({ receiptsRoot, encodedReceipt, receiptProofNodes })));
+  });
+};
+/** og jReplicaStackKey: the certified board stack of a J replica with a chain id and both contracts, else null. */
+const jReplicaStackKey = (r: JReplica): Result<string | null, RuntimeError> => {
+  const depository = r.contracts?.depository, entityProvider = r.contracts?.entityProvider;
+  if (!r.chainId || !depository || !entityProvider) return ok(null);
+  return mapErr(boardStackKey({ chainId: r.chainId, depositoryAddress: depository, entityProviderAddress: entityProvider }), (e): RuntimeError => ({ _tag: "runtime_tx", code: e.code }));
+};
+const HALF_ORDER_J = secp256k1.CURVE.n >> 1n;
+/** og verifyAccountSignature over a canonical compact signature: it must recover to the witness Runtime address. */
+const witnessSigned = (digest: string, signature: string, witness: string): boolean => {
+  if (!/^0x[0-9a-f]{64}$/i.test(digest) || !/^0x[0-9a-f]{130}$/i.test(signature)) return false;
+  const bytes = hexToBytes(signature.toLowerCase()), r = bytes.subarray(0, 32), s = bytes.subarray(32, 64), rec = bytes[64];
+  const rn = BigInt(bytesToHex(r)), sn = BigInt(bytesToHex(s));
+  if ((rec !== 0 && rec !== 1) || rn === 0n || sn === 0n || rn >= secp256k1.CURVE.n || sn > HALF_ORDER_J) return false;
+  const key = recoverPublicKey(hexToBytes(digest.toLowerCase()), r, s, rec);
+  return key !== null && addressOf(key).toLowerCase() === witness;
+};
+/** og assertDecodedRegistrationLog via the EntityProvider ABI: EntityRegistered(bytes32 indexed, uint256 indexed, bytes32) / FoundationBootstrapped(address indexed, bytes32 indexed, uint256, uint256). */
+const decodedRegistrationLog = (e: RegistrationEvidence): Result<{ readonly entityId: string; readonly boardHash: string; readonly entityNumber?: bigint }, RuntimeError> => {
+  const topics = topicsOfEvidence(e).map((t) => String(t).toLowerCase()), data = hexToBytes(String(e["data"])), topic0 = topics[0];
+  const name = topic0 === jEventTopic("EntityRegistered").toLowerCase() ? "EntityRegistered" : topic0 === jEventTopic("FoundationBootstrapped").toLowerCase() ? "FoundationBootstrapped" : "unknown";
+  if (name !== e["source"]) return txErr(`J_AUTHORITY_EVENT_TYPE_MISMATCH:${String(e["source"])}:${name}`);
+  if (topics.length < 3) return txErr("J_AUTHORITY_EVENT_DECODE_FAILED");
+  if (name === "EntityRegistered") return data.length < 32 ? txErr("J_AUTHORITY_EVENT_DECODE_FAILED") : ok({ entityId: topics[1] ?? "", entityNumber: BigInt(topics[2] ?? "0x0"), boardHash: bytesToHex(data.subarray(0, 32)) });
+  if (data.length < 64 || BigInt(topics[1] ?? "0x0") >> 160n !== 0n) return txErr("J_AUTHORITY_EVENT_DECODE_FAILED");
+  return ok({ entityId: FOUNDATION_ENTITY, boardHash: topics[2] ?? "" });
+};
+/** og assertRegistrationEvidenceEnvelope: canonical fields, finality under the local J replica's policy, the decoded log, the witness signature. */
+const registrationEnvelope = (rt: Runtime, e: RegistrationEvidence): Result<void, RuntimeError> => {
+  if (e["version"] !== 1) return txErr(`J_AUTHORITY_VERSION_INVALID:${String(e["version"])}`);
+  if (e["source"] !== "EntityRegistered" && e["source"] !== "FoundationBootstrapped") return txErr(`J_AUTHORITY_SOURCE_INVALID:${String(e["source"])}`);
+  const rawTopics = e["topics"];
+  if (!Array.isArray(rawTopics)) return txErr("J_AUTHORITY_RECEIPT_PROOF_SHAPE_INVALID");
+  if (rawTopics.length === 0 || rawTopics.length > 4) return txErr(`J_AUTHORITY_TOPIC_COUNT_INVALID:${rawTopics.length}`);
+  type Row = readonly [string, Result<unknown, RuntimeError>];
+  return chain(authHex(e["data"], "EVENT_DATA", 65_536), (data) => chain(canonicalRegistrationReceipt(e), (receipt) => chain(authHex(e["witnessSignature"], "WITNESS_SIGNATURE", 65), (witnessSignature) => {
+    const rows: readonly (() => Row)[] = [
+      () => ["stackKey", authBytes32(e["stackKey"], "STACK_KEY")], () => ["entityId", authBytes32(e["entityId"], "ENTITY_ID")], () => ["boardHash", authBytes32(e["boardHash"], "BOARD_HASH")],
+      () => ["blockHash", authBytes32(e["blockHash"], "BLOCK_HASH")], () => ["transactionHash", authBytes32(e["transactionHash"], "TRANSACTION_HASH")], () => ["observedTipBlockHash", authBytes32(e["observedTipBlockHash"], "OBSERVED_TIP_HASH")],
+      () => ["rawLogDigest", authBytes32(e["rawLogDigest"], "RAW_LOG_DIGEST")], () => ["emitter", authAddress(e["emitter"], "EMITTER")], () => ["witnessRuntimeId", authAddress(e["witnessRuntimeId"], "WITNESS")],
+      () => ["activationHeight", authInt(e["activationHeight"], "ACTIVATION_HEIGHT")], () => ["transactionIndex", authInt(e["transactionIndex"], "TRANSACTION_INDEX")], () => ["logIndex", authInt(e["logIndex"], "LOG_INDEX")],
+      () => ["receiptLogIndex", authInt(e["receiptLogIndex"], "RECEIPT_LOG_INDEX")], () => ["observedThroughHeight", authInt(e["observedThroughHeight"], "OBSERVED_THROUGH_HEIGHT")],
+      () => ["observedHeadHeight", authInt(e["observedHeadHeight"], "OBSERVED_HEAD_HEIGHT")], () => ["confirmationDepth", authInt(e["confirmationDepth"], "CONFIRMATION_DEPTH")],
+      () => ["topics", traverse(rawTopics.map((t, i) => [t, i] as const), ([t, i]) => authBytes32(t, `TOPIC_${i}`))],
+    ];
+    const canonical: Record<string, unknown> = {};
+    for (const row of rows) { const [field, r] = row(); if (!r.ok) return r; canonical[field] = r.value; }
+    Object.assign(canonical, { data }, receipt, { witnessSignature });
+    for (const [field, value] of Object.entries(canonical)) if (!consensusEqual(e[field], value)) return txErr(`J_AUTHORITY_NON_CANONICAL_FIELD:${field}`);
+    const n = (f: string): number => canonical[f] as number;
+    if (witnessSignature.length !== 132) return txErr(`J_AUTHORITY_WITNESS_SIGNATURE_LENGTH_INVALID:${witnessSignature.length}`);
+    if (n("activationHeight") < 1 || e["receiptsRoot"] === J_AUTH_ZERO) return txErr(`J_AUTHORITY_UNCOMMITTED_RECEIPT:${n("activationHeight")}:${String(e["receiptsRoot"])}`);
+    if (n("observedThroughHeight") < n("activationHeight") || n("observedHeadHeight") - n("activationHeight") < n("confirmationDepth") || n("observedThroughHeight") > n("observedHeadHeight") - n("confirmationDepth"))
+      return txErr(`J_AUTHORITY_FINALITY_INSUFFICIENT:${n("activationHeight")}:${n("observedThroughHeight")}:${n("observedHeadHeight")}:${n("confirmationDepth")}`);
+    const witness = canonical["witnessRuntimeId"] as string;
+    return chain(rt.runtimeId ? authAddress(rt.runtimeId, "RUNTIME_ID") : txErr(`J_AUTHORITY_WITNESS_RUNTIME_MISMATCH:${witness}:missing`), (runtimeId) => {
+      if (witness !== runtimeId) return txErr(`J_AUTHORITY_WITNESS_RUNTIME_MISMATCH:${witness}:${rt.runtimeId ?? "missing"}`);
+      const matches: JReplica[] = [];
+      for (const r of rt.jReplicas.values()) { const k = jReplicaStackKey(r); if (!k.ok) return k; if (k.value === e["stackKey"]) matches.push(r); }
+      const local = matches[0];
+      if (matches.length !== 1 || local === undefined) return txErr(`J_AUTHORITY_STACK_LOCAL_MATCH_INVALID:${String(e["stackKey"])}:${matches.length}`);
+      return chain(authAddress(local.contracts?.entityProvider, "LOCAL_ENTITY_PROVIDER"), (provider): Result<void, RuntimeError> => {
+        if (provider !== e["emitter"]) return txErr(`J_AUTHORITY_EMITTER_STACK_MISMATCH:${String(e["emitter"])}:${String(local.contracts?.entityProvider)}`);
+        // og assertReceiptPolicy: the committed J replica's receipt policy; a witness cannot downgrade an EVM stack to RPC trust.
+        if ((local.watcherReceiptCommitment === "tron-rpc-attested") !== isTron(e)) return txErr("J_AUTHORITY_RECEIPT_COMMITMENT_MISMATCH");
+        if (isTron(e)) {
+          if (e["chainId"] !== local.chainId) return txErr("J_AUTHORITY_NATIVE_CHAIN_MISMATCH");
+          if (e["confirmationDepth"] !== 0) return txErr("J_AUTHORITY_NATIVE_FINALITY_DEPTH_INVALID");
+          const configured = (local.rpcs ?? []).map((rpc) => { try { return `0x${keccakUtf8(new URL(rpc).toString())}`; } catch { return null; } });
+          if (configured.some((h) => h === null)) return txErr("J_AUTHORITY_NATIVE_RPC_URL_INVALID");
+          if (!configured.includes(String(e["rpcEndpointHash"]))) return txErr("J_AUTHORITY_NATIVE_RPC_NOT_CONFIGURED");
+        }
+        return chain(authInt(local.watcherConfirmationDepth, "LOCAL_CONFIRMATION_DEPTH"), (trusted) => {
+          if (n("confirmationDepth") !== trusted) return txErr(`J_AUTHORITY_FINALITY_POLICY_MISMATCH:${n("confirmationDepth")}:${trusted}`);
+          return chain(rawLogDigest(e), (digest) => {
+            if (digest !== e["rawLogDigest"]) return txErr(`J_AUTHORITY_RAW_LOG_DIGEST_MISMATCH:${String(e["entityId"])}`);
+            return chain(decodedRegistrationLog(e), (log) => {
+              if (log.entityNumber !== undefined && (log.entityNumber <= 0n || log.entityNumber !== BigInt(log.entityId))) return txErr(`J_AUTHORITY_ENTITY_NUMBER_MISMATCH:${log.entityId}:${log.entityNumber}`);
+              if (log.entityId !== e["entityId"] || log.boardHash !== e["boardHash"]) return txErr(`J_AUTHORITY_EVENT_BODY_MISMATCH:entity=${log.entityId}:${String(e["entityId"])}:board=${log.boardHash}:${String(e["boardHash"])}`);
+              return chain(registrationEvidenceDigest(e), (signed) => (witnessSigned(signed, witnessSignature, witness) ? ok(undefined) : txErr(`J_AUTHORITY_WITNESS_SIGNATURE_INVALID:${witness}`)));
+            });
+          });
+        });
+      });
+    });
+  })));
+};
+/** og verifyCanonicalReceiptProof + assertReceiptContainsRawLog: the receipt is in the block's receipts trie and carries this exact log. */
+const receiptProven = (e: RegistrationEvidence): Result<void, RuntimeError> => {
+  const nodes = (e["receiptProofNodes"] as readonly string[]).map(hexToBytes), encoded = hexToBytes(String(e["encodedReceipt"]));
+  if (nodes.length === 0) return txErr("J_RECEIPT_PROOF_NODES_MISSING");
+  return chain(mptProofGet(hexToBytes(String(e["receiptsRoot"])), receiptTrieKey(Number(e["transactionIndex"])), nodes), (value) => {
+    const actual = value === null ? "" : bytesToHex(value), expected = bytesToHex(encoded);
+    if (actual !== expected) return txErr(`J_RECEIPT_PROOF_VALUE_MISMATCH:expected=${expected}:actual=${actual || "missing"}`);
+    const decoded = rlpDecode(encoded[0] !== undefined && encoded[0] <= 0x7f ? encoded.slice(1) : encoded);
+    if (decoded === null) return txErr("invalid RLP");
+    const logs = Array.isArray(decoded) ? (decoded as readonly RlpItem[])[3] : undefined;
+    if (!Array.isArray(logs)) return txErr("J_AUTHORITY_RECEIPT_LOGS_INVALID");
+    const index = Number(e["receiptLogIndex"]), rawLog = (logs as readonly RlpItem[])[index];
+    if (!Array.isArray(rawLog) || rawLog.length !== 3 || !Array.isArray(rawLog[1])) return txErr(`J_AUTHORITY_RECEIPT_LOG_MISSING:${index}`);
+    const [emitterBytes, topicItems, dataBytes] = rawLog as unknown as readonly [RlpItem, readonly RlpItem[], RlpItem];
+    if (!(emitterBytes instanceof Uint8Array) || !(dataBytes instanceof Uint8Array)) return txErr("J_AUTHORITY_RECEIPT_LOG_INVALID");
+    return chain(authAddress(bytesToHex(emitterBytes), "RECEIPT_LOG_EMITTER"), (emitter) => chain(traverse(topicItems.map((t, i) => [t, i] as const), ([t, i]) => (t instanceof Uint8Array ? authBytes32(bytesToHex(t), `RECEIPT_TOPIC_${i}`) : txErr(`J_AUTHORITY_RECEIPT_TOPIC_${i}_INVALID`))), (topics) =>
+      emitter !== e["emitter"] || !consensusEqual(topics, e["topics"]) || bytesToHex(dataBytes) !== String(e["data"]).toLowerCase() ? txErr(`J_AUTHORITY_RECEIPT_LOG_MISMATCH:${String(e["transactionHash"])}:${String(e["logIndex"])}`) : ok(undefined)));
+  });
+};
+/** og assertCertifiedRegistrationEvidence. */
+const certifiedRegistrationEvidence = (rt: Runtime, e: RegistrationEvidence): Result<void, RuntimeError> =>
+  chain(registrationEnvelope(rt, e), () => (isTron(e) ? ok(undefined) : receiptProven(e)));
+/** og recordAuthenticatedJAuthority: store verified evidence once per (stack, entity); the same claim again is a no-op, a different claim is refused. */
+const recordAuthenticatedJAuthority = (rt: Runtime, e: RegistrationEvidence): Result<Runtime, RuntimeError> =>
+  chain(certifiedRegistrationEvidence(rt, e), () => chain(registrationEvidenceKey(e["stackKey"], e["entityId"]), (key) => {
+    const existing = rt.registrationEvidence.get(key);
+    if (existing === undefined) return ok({ ...rt, registrationEvidence: mapSet(rt.registrationEvidence, key, e) });
+    return chain(registrationClaimHash(existing), (held) => chain(registrationClaimHash(e), (incoming) => (held !== incoming ? txErr(`J_AUTHORITY_EVIDENCE_CONFLICT:${key}:${held}:${incoming}`) : ok(rt))));
+  }));
+
 /** og applyRuntimeTx. */
 export const applyRuntimeTxStep = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<TxStep, RuntimeError> => chain(runtimeTxAuthorized(tx, ctx), (): Result<TxStep, RuntimeError> => {
   const state = (r: Result<Runtime, RuntimeError>): Result<TxStep, RuntimeError> => map(r, noJ);
@@ -9686,6 +9935,7 @@ export const applyRuntimeTxStep = (rt: Runtime, tx: RuntimeTx, ctx: Pick<Runtime
     case "advanceJWatcherCursor": return state(advanceJWatcherCursor(rt, tx.data));
     case "observeJRange": return state(observeJRange(rt, tx.data));
     case "rewindJHistory": return state(rewindJHistory(rt, tx.data));
+    case "recordAuthenticatedJAuthority": return state(recordAuthenticatedJAuthority(rt, tx.data));
     case "retryJSubmit": return retryJSubmit(rt, tx.data);
     case "recordJSubmitResult": return state(recordJSubmitResult(rt, tx.data));
     case "retryEntityProviderAction": return retryEntityProviderAction(rt, tx.data);
@@ -9834,7 +10084,8 @@ const jReplicaSnapshot = (r: JReplica): Binary => binaryOf({
 const durableInfrastructure = (rt: Runtime): { readonly [key: string]: Binary } | undefined => {
   const rows: [string, unknown, number][] = [
     ["runtimeAdapterCommandFrontiers", rt.adapterFrontiers, rt.adapterFrontiers.size], ["pendingCommittedJOutbox", rt.pendingCommittedJOutbox, rt.pendingCommittedJOutbox.length],
-    ["pendingJurisdictionImports", rt.pendingJImports, rt.pendingJImports.size], ["entityEncryptionSeeds", rt.encryptionSeeds, rt.encryptionSeeds.size],
+    ["pendingJurisdictionImports", rt.pendingJImports, rt.pendingJImports.size], ["certifiedRegistrationEvidence", rt.registrationEvidence, rt.registrationEvidence.size],
+    ["entityEncryptionSeeds", rt.encryptionSeeds, rt.encryptionSeeds.size],
   ];
   const kept = rows.filter(([, , size]) => size > 0);
   return kept.length === 0 ? undefined : Object.fromEntries(kept.map(([k, m]) => [k, binaryOf(m)]));
