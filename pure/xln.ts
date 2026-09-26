@@ -103,8 +103,6 @@ export const LendingTxNames = ["lendingOffer", "lendingBorrow", "lendingRepay", 
 export const EntityTxNames = ["directPayment", "placeSwapOffer"] as const;
 export const AccountInputKinds = ["dispute", "board_hanko_refresh"] as const;
 export const EntityInputKinds = ["leaderTimeoutVote", "jPrefixAttestations"] as const;
-export const HoleNames = ["reveal_before_height", "quote_last_ms"] as const;
-export type Hole = (typeof HoleNames)[number];
 
 
 export type Step<S, Eff> = { readonly state: S; readonly effects: readonly Eff[] };
@@ -2122,8 +2120,7 @@ export type BodyError =
   | Tagged<"rebalance", { reason: string }>
   | Tagged<"lending", { reason: string }>
   | Tagged<"payment_route", { reason: string }>
-  | CrossError
-  | Tagged<"unchosen", { hole: Hole }>;
+  | CrossError;
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
 /** `registeredBoardHash`: og resolveSettlementBoardAuthority -- the source's certified board (the receiver's counterpartyCertifiedBoard); absent, the Verify resolves it. */
 export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number; readonly deltaTransformer?: DeltaTransformerRef | undefined; readonly registeredBoardHash?: string | undefined };
@@ -2617,19 +2614,18 @@ export const wireOf = (tx: WireAccountTx): { readonly type: string } => {
   if (tx.type === "htlc_lock") out["revealBeforeHeight"] = Number(tx.revealBeforeHeight);
   return out as { readonly type: string };
 };
-type Author = "bilateral" | "unchosen";
-export type KindRow = { readonly author: Author; readonly l0: boolean; readonly repeatable: boolean; readonly effects: readonly Effect["_tag"][] };
-const kind = <R extends KindRow>(author: Author, l0: boolean, repeatable: boolean, effects: readonly Effect["_tag"][] = []): R => ({ author, l0, repeatable, effects }) as R;
+export type KindRow = { readonly l0: boolean; readonly repeatable: boolean; readonly effects: readonly Effect["_tag"][] };
+const kind = <R extends KindRow>(l0: boolean, repeatable: boolean, effects: readonly Effect["_tag"][] = []): R => ({ l0, repeatable, effects }) as R;
 export const AccountKinds = {
-  add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true, ["direct_payment_forward"]),
-  htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret", "htlc_error"]),
-  swap_offer: kind("bilateral", false, false, ["swap_offer_upsert"]), swap_cancel_request: kind("bilateral", false, false, ["swap_cancel_requested"]), swap_resolve: kind("bilateral", false, false, ["swap_cancelled", "swap_offer_upsert"]),
-  settle_transition: kind("bilateral", false, false),
-  request_collateral: kind("bilateral", false, false, ["request_collateral_committed"]), rebalance_refund: kind("bilateral", false, false), rebalance_policy: kind("bilateral", false, false),
-  lending_fund: kind("bilateral", false, false), lending_borrow_request: kind("bilateral", false, false), lending_repay: kind("bilateral", false, false), lending_credit: kind("bilateral", false, false),
-  lending_close_request: kind("bilateral", false, false), lending_close_payout: kind("bilateral", false, false),
-  cross_pull_lock: kind("bilateral", false, false), cross_pull_close: kind("bilateral", false, false),
-  j_event_claim: kind("bilateral", false, false, ["account_settled_finalized_bilateral"]),
+  add_delta: kind(true, false), set_credit_limit: kind(true, false), payment: kind(true, true, ["direct_payment_forward"]),
+  htlc_lock: kind(false, false), htlc_resolve: kind(false, false, ["forward_secret", "htlc_error"]),
+  swap_offer: kind(false, false, ["swap_offer_upsert"]), swap_cancel_request: kind(false, false, ["swap_cancel_requested"]), swap_resolve: kind(false, false, ["swap_cancelled", "swap_offer_upsert"]),
+  settle_transition: kind(false, false),
+  request_collateral: kind(false, false, ["request_collateral_committed"]), rebalance_refund: kind(false, false), rebalance_policy: kind(false, false),
+  lending_fund: kind(false, false), lending_borrow_request: kind(false, false), lending_repay: kind(false, false), lending_credit: kind(false, false),
+  lending_close_request: kind(false, false), lending_close_payout: kind(false, false),
+  cross_pull_lock: kind(false, false), cross_pull_close: kind(false, false),
+  j_event_claim: kind(false, false, ["account_settled_finalized_bilateral"]),
 } as const satisfies Kinds<AccountTx["type"], KindRow>;
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
 export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret" | "htlc_error"> : K extends "swap_cancel_request" ? Of<Effect, "swap_cancel_requested">
