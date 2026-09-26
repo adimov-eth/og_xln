@@ -33,6 +33,8 @@ import { applyJEvent as ogApplyJEvent } from "../../core/entity/tx/j-events.ts";
 import { handleUnsafeAccountFrame as ogHandleUnsafeAccountFrame } from "../../core/entity/tx/handlers/account/dispute-input.ts";
 import { handleJAbortSentBatch as ogJAbort } from "../../core/entity/tx/handlers/j-batch/j-abort-sent-batch.ts";
 import { handleJClearBatch as ogJClear } from "../../core/entity/tx/handlers/j-batch/j-clear-batch.ts";
+import { handleCrossJurisdictionSalvageEntityTx as ogSalvage } from "../../core/entity/tx/handlers/cross-j/salvage.ts";
+import { handleResolveHtlcLockEntityTx as ogResolveHtlcLock } from "../../core/entity/tx/handlers/htlc/direct.ts";
 import { HTLC_ENFORCEMENT_RESERVE_MS as OG_RESERVE_MS } from "../../core/account/consensus/dispute/deadline-policy.ts";
 import { createDisputeProofHashWithNonce } from "../../core/protocol/dispute/proof-builder.ts";
 import { getEntityAccountForWrite } from "../../core/entity/state/persistent-account-map.ts";
@@ -321,7 +323,7 @@ const aliceRange = (r: Rand, og: any, eventLists: readonly (readonly { type: str
 /** Every string equal (case-insensitively) to a key of `m` becomes its value, deeply. */
 const swapIds = (v: any, m: Readonly<Record<string, string>>): any => typeof v === "string" ? (m[v.toLowerCase()] ?? v) : Array.isArray(v) ? v.map((x) => swapIds(x, m)) : v instanceof Map ? new Map([...v].map(([k, x]) => [k, swapIds(x, m)]))
   : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, swapIds(x, m)])) : v;
-type JCase = { rw: EntityState; replicas: ReadonlyMap<EntityId, AccountReplica>; og: any; events: { type: string; data: Record<string, unknown> }[] };
+type JCase = { rw: EntityState; replicas: ReadonlyMap<EntityId, AccountReplica>; og: any; events: { type: string; data: Record<string, unknown> }[]; raw: CrossRoute[]; routes: CrossRoute[]; secrets: string[]; locks: ReadonlyMap<string, HtlcLock> };
 /** ALICE (in a random cross-j role) with random routes, a BOB Account holding inbound / outbound locks (live or disputed with a Target recovery), a paybook, and random SecretRevealed / HashLadderRevealRegistered events. */
 const jCase = (r: Rand, n: number): JCase => {
   const role = xpick(r, [U1, H1, H2, U2]), ids: Record<string, string> = { [role.toLowerCase()]: ALICE, [XPEER[role]!.toLowerCase()]: BOB };
@@ -354,7 +356,7 @@ const jCase = (r: Rand, n: number): JCase => {
   rw = { ...rw, crossJurisdictionSwaps: new Map(routes.map((c) => [c.orderId, c] as const)) as never, paybook };
   // og shells over the same data
   const ogLocks = new Map([...locks].map(([k, l]) => [k, { ...l, tokenId: 1 }]));
-  const ogAccount: any = { status: disputed ? "disputed" : "active", state: { jNonce: 0, leftEntity: left, rightEntity: base.state.account.id.right, locks: ogLocks }, ...(disputed ? { activeDispute: structuredClone(active) } : {}) };
+  const ogAccount: any = { status: disputed ? "disputed" : "active", state: { jNonce: 0, leftEntity: left, rightEntity: base.state.account.id.right, locks: ogLocks, disputeConfig: { ...TERMS.disputeConfig } }, ...(disputed ? { activeDispute: structuredClone(active) } : {}) };
   const accounts = new Map([[BOB as string, ogAccount]]);
   const shell = Object.assign(Object.create(EntityAccountCandidateMap.prototype), { get: (id: string) => accounts.get(id), getForWrite: (id: string) => accounts.get(id), has: (id: string) => accounts.has(id), keys: () => accounts.keys(), entries: () => accounts.entries(), values: () => accounts.values(), [Symbol.iterator]: () => accounts.entries() });
   const swaps = ensureEntityCollectionCandidate(undefined, ogCrossIndex.cloneCrossJurisdictionRoute as never) as Map<string, unknown>;
@@ -372,7 +374,7 @@ const jCase = (r: Rand, n: number): JCase => {
       ladderHash: xint(r, 8) === 0 ? word(r) : pullLadderHash(pull), fillRatio: dec.fillRatio, fullSecret: dec.fullSecret ?? Z32, reveals: [...(dec.reveals ?? [Z32, Z32, Z32, Z32])], targetRole,
       revealedAt: xpick(r, [1_700_000_000, 1_700_000_001, 1_700_000_005, 1_699_999_999]) } });
   }
-  return { rw, replicas: new Map([[BOB, replica]]), og, events };
+  return { rw, replicas: new Map([[BOB, replica]]), og, events, raw, routes, secrets, locks };
 };
 const bookSlot = { getPaybookEntry: (s: any, h: string) => s.paybook.entries.get(h), getPaybookEntryForWrite: (s: any, h: string) => s.paybook.entries.get(h), addPaybookFees: (s: any, amount: bigint) => { s.paybook.feesEarned += amount; } };
 const routeRegistryView = (routes: Iterable<[string, any]>) => [...routes].map(([k, v]) => [k, v.status, v.sourceRegistryFillRatio ?? null, v.targetRegistryFillRatio ?? null, v.sourceRegistryRecord ?? null, v.targetRegistryRecord ?? null]);
@@ -607,4 +609,68 @@ describe("disputes-final: finalize latches on j_abort_sent_batch / j_clear_batch
     }
     expectKinds(kinds, ["j_clear_batch:released", "j_clear_batch:kept", "j_abort_sent_batch:released", "j_abort_sent_batch:kept"]);
   }, 60_000);
+});
+
+// ---- og cross-j/salvage.ts and htlc/direct.ts resolveHtlcLock on ALICE's Entity (jCase fixtures) ----
+describe("disputes-final: crossJurisdictionSalvage / resolveHtlcLock on the Entity (og entity/tx/handlers/cross-j/salvage.ts, htlc/direct.ts)", () => {
+  const payView = (p: any) => stableJson([...(p?.entries ?? new Map())].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]: [string, any]) => [k, { ...v, ...(v.inboundEntity ? { inboundEntity: String(v.inboundEntity).toLowerCase() } : {}), ...(v.outboundEntity ? { outboundEntity: String(v.outboundEntity).toLowerCase() } : {}) }]).concat([["fees", String(p?.feesEarned ?? 0n)]]));
+  const withJb = (r: Rand, c: JCase): void => {
+    if (xint(r, 3) === 0) return;
+    const jb = { ...ogInitJBatch(), batch: { ...ogInitJBatch().batch, revealSecrets: otherRows(r, xpick(r, [0, 0, 1, 49])) }, ...(xint(r, 3) === 0 ? { sentBatch: { batch: { ...ogInitJBatch().batch, revealSecrets: otherRows(r, 1) }, entityNonce: 3, batchHash: Z32 } } : {}) };
+    c.rw = { ...c.rw, committed: { ...c.rw.committed, jBatchState: structuredClone(jb) as never } };
+    c.og.jBatchState = structuredClone(jb);
+  };
+  test("MATCH: 250 random reveal ports (owned / foreign / unknown routes, terminal routes, valid / foreign / empty binaries, claimed ratio mismatches, target dispute clock present or not, draft / full / sent J batch) -- same verdict, messages, stashed reveals, J batch and j_broadcast as og", async () => {
+    const r = xrng(0x5a17), kinds = new Map<string, number>();
+    for (let i = 0; i < 250; i++) {
+      const c = jCase(r, i);
+      withJb(r, c);
+      const k = xint(r, c.routes.length + 1), route = c.routes[k], pre = c.raw[k];
+      const ratio = xpick(r, [100, 200, 65_535, 1 + xint(r, 65_534)]);
+      const binary = route === undefined || pre === undefined || xint(r, 3) === 0 ? xpick(r, ["0x", unwrapOk(crossPullReveal(ratio, word(r))).binary, unwrapOk(crossPullReveal(ratio, word(r))).binary, ""]) : unwrapOk(crossPullReveal(ratio, unwrapOk(crossPrivateSeed(RUNTIME_SEED, pre)))).binary;
+      const claimed = xint(r, 6) === 0 ? xpick(r, [0, ratio + 1, -3]) : ratio;
+      const tx = { type: "crossJurisdictionSalvage", data: { routeId: route?.orderId ?? "C-missing", binary, fillRatio: claimed } } as EntityTx;
+      const f = foldTx(c.rw, c.replicas, tx, { verify: verifiers.verify, timestamp: BigInt(T0), jReplicas: JREPLICAS as never }, "runtime");
+      let ogOut: Out<any>;
+      try { ogOut = { ok: true, value: await ogSalvage({ quietRuntimeLogs: true } as never, c.og, tx as never, [], true) }; } catch (e) { ogOut = { ok: false, message: String((e as Error).message) }; }
+      expect([i, f.ok ? "ok" : (f.error as any).reason]).toEqual([i, ogOut.ok ? "ok" : ogOut.message]);
+      bump(kinds, ogOut.ok ? "ok" : ogOut.message.split(":")[0]!);
+      if (!f.ok || !ogOut.ok) continue;
+      const d = f.value, next = ogOut.value.newState, msgs = readEntityFrameEvents(next).map((e: any) => e.message);
+      expect([i, (d.events ?? []).map((e) => e.message)]).toEqual([i, msgs]);
+      expect([i, routeView((d.state.crossJurisdictionSwaps ?? new Map()) as Map<string, any>)]).toEqual([i, routeView(next.crossJurisdictionSwaps)]);
+      expect([i, d.state.committed["jBatchState"] ?? null]).toEqual([i, next.jBatchState ?? null]);
+      expect([i, d.outputs.map((o: any) => [o.to, o.input?.txs?.map((t: any) => t.type).join(",")])]).toEqual([i, ogOut.value.outputs.map((o: any) => [o.entityId, o.entityTxs.map((t: any) => t.type).join(",")])]);
+      for (const m of msgs) bump(kinds, String(m).replace(/C[0-9]+/g, "C#").slice(0, 44));
+    }
+    expectKinds(kinds, ["ok", "🌉 Cross-j reveal port ignored for C#: inval", "⏳ Cross-j reveal port C#: waiting for the ta", "🌉 Cross-j reveal port C# skipped: route not", "🌉 Cross-j reveal port C#: registering ratio", "❌ Cross-j reveal port C# fill mismatch", "❌ Cross-j reveal port C# invalid pull binary", "⏳ Cross-j reveal port C#: queued behind the", "J_HASH_LADDER_REGISTRATION_CONFLICT"]);
+  }, 120_000);
+  test("MATCH: 200 random resolveHtlcLock txs (known / unknown Account in any case, malformed / unknown lock ids, wrong or malformed secrets, paybook conflicts, live or disputed Account) -- same verdict, message, paybook, wake and queued htlc_resolve as og", async () => {
+    const r = xrng(0x4e50), kinds = new Map<string, number>();
+    const slot = { ...bookSlot, putPaybookEntry: (s: any, h: string, e: any) => { s.paybook.entries.set(h, e); } };
+    for (let i = 0; i < 200; i++) {
+      const c = jCase(r, i), lockIds = [...c.locks.keys()];
+      const lockId = xpick(r, [...lockIds, ...lockIds, word(r), "lock-bad"]), lock = c.locks.get(lockId);
+      const matching = lock === undefined ? undefined : c.secrets.find((x) => hashHtlcSecret(x) === lock.hashlock);
+      const secret = matching !== undefined && xint(r, 5) > 0 ? matching : xpick(r, [word(r), "0x12", ...c.secrets]);
+      const tx = { type: "resolveHtlcLock", data: { counterpartyEntityId: xpick(r, [BOB, BOB, BOB.toUpperCase().replace("0X", "0x"), W("0e")]), lockId, secret } } as EntityTx;
+      const f = foldTx(c.rw, c.replicas, tx, { verify: verifiers.verify, timestamp: BigInt(T0), jReplicas: JREPLICAS as never });
+      let ogOut: Out<any>;
+      try { ogOut = { ok: true, value: ogResolveHtlcLock(c.og, tx as never, true, slot as never) }; } catch (e) { ogOut = { ok: false, message: String((e as Error).message) }; }
+      expect([i, f.ok ? "ok" : (f.error as any).reason]).toEqual([i, ogOut.ok ? "ok" : ogOut.message]);
+      bump(kinds, ogOut.ok ? "ok" : ogOut.message.split(":")[0]!);
+      if (!f.ok || !ogOut.ok) continue;
+      const d = f.value, next = ogOut.value.newState;
+      expect([i, (d.events ?? []).map((e) => e.message)]).toEqual([i, readEntityFrameEvents(next).map((e: any) => e.message)]);
+      expect([i, payView(d.state.paybook)]).toEqual([i, payView(next.paybook)]);
+      expect([i, d.outputs.map((o: any) => [o.to, o.input?.txs?.length ?? -1])]).toEqual([i, ogOut.value.outputs.map((o: any) => [o.entityId, o.entityTxs.length])]);
+      const bob = d.accountReplicas.get(BOB)!;
+      if (bob._tag !== "disputed") {
+        const queued = bob.mempool.filter((t: any) => t.type === "htlc_resolve").map((t: any) => [BOB, t.lockId, t.secret]);
+        expect([i, queued]).toEqual([i, ogOut.value.accountTxs.map((t: any) => [t.accountId, t.tx.data.lockId, t.tx.data.secret])]);
+        bump(kinds, "queued");
+      }
+    }
+    expectKinds(kinds, ["ok", "queued", "HTLC_RESOLVE_ACCOUNT_MISSING", "HTLC_RESOLVE_LOCK_ID_INVALID", "HTLC_RESOLVE_SECRET_INVALID", "HTLC_RESOLVE_LOCK_MISSING", "HTLC_RESOLVE_HASHLOCK_MISMATCH", "PAYBOOK_"]);
+  }, 120_000);
 });
