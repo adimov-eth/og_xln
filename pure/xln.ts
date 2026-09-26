@@ -2122,8 +2122,17 @@ export type BodyError =
   | Tagged<"payment_route", { reason: string }>
   | CrossError;
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
-/** `registeredBoardHash`: og resolveSettlementBoardAuthority -- the source's certified board (the receiver's counterpartyCertifiedBoard); absent, the Verify resolves it. */
-export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number; readonly deltaTransformer?: DeltaTransformerRef | undefined; readonly registeredBoardHash?: string | undefined };
+/**
+ * `registeredBoardHash`: og resolveSettlementBoardAuthority's passed board -- the receiver's counterpartyCertifiedBoard. Absent, `boardAuthority`
+ * (og's fallback over the source Entity's local replicas) resolves it; with neither, the Hankos are verified without a pinned board.
+ */
+export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number; readonly deltaTransformer?: DeltaTransformerRef | undefined; readonly registeredBoardHash?: string | undefined; readonly boardAuthority?: BoardAuthority | undefined };
+/**
+ * og resolveSettlementBoardAuthority with no certified board passed (entity/account/account-consensus-context.ts), bound to the Runtime's local
+ * replicas: the source Entity's certified board, undefined for a lazy board or no local replica, or og's thrown text (which og's settlement
+ * handler turns into the tx's refusal).
+ */
+export type BoardAuthority = (sourceEntityId: string) => Result<string | undefined, string>;
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
 /**
  * Account outputs to the parent Entity (og apply-result outcomes and AccountOutput candidate effects), perspective-free:
@@ -2882,13 +2891,17 @@ const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_tr
           const pinned = w.postSettlementDisputeProof;
           if (pinned !== undefined && (pinned.nonce !== postNonce || pinned.proofBodyHash.toLowerCase() !== bodyHash.toLowerCase() || pinned.disputeHash.toLowerCase() !== disputeHash.toLowerCase() || pinned.proposerIsLeft !== post.proposerIsLeft)) return settleErr("POST_SETTLEMENT_PROOF_PIN_MISMATCH");
           const source = (ctx.byLeft ? a.account.id.left : a.account.id.right) as EntityId;
+          // og verifySettlementHankoHankos: the board authority resolves before the Hankos are read
+          const resolved = auth.registeredBoardHash ? ok(auth.registeredBoardHash) : auth.boardAuthority?.(source) ?? ok(undefined);
+          if (!resolved.ok) return settleErr(resolved.error);
+          const pin = resolved.value;
           if (!exactHanko(post.hanko)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
           // og verifySettlementHankoHankos: the post-settlement proof admits the previous board's grace (Account.sol:1063); the cooperative settlement Hanko is current-board only (Account.sol:894)
-          if (!auth.verify(disputeHash, post.hanko, source, { ...opt("registeredBoardHash", auth.registeredBoardHash), allowPreviousBoard: true })) return settleErr("POST_SETTLEMENT_PROOF_HANKO_INVALID");
+          if (!auth.verify(disputeHash, post.hanko, source, { ...opt("registeredBoardHash", pin), allowPreviousBoard: true })) return settleErr("POST_SETTLEMENT_PROOF_HANKO_INVALID");
           const executor = w.executorIsLeft === ctx.byLeft, settlementHanko = x.settlementHanko;
           if (executor && settlementHanko !== undefined) return settleErr("SETTLEMENT_EXECUTOR_HANKO_FORBIDDEN");
           if (!executor && !exactHanko(settlementHanko)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_MISSING");
-          if (!executor && settlementHanko !== undefined && !auth.verify(settlementHash, settlementHanko, source, { ...opt("registeredBoardHash", auth.registeredBoardHash), allowPreviousBoard: false })) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
+          if (!executor && settlementHanko !== undefined && !auth.verify(settlementHash, settlementHanko, source, { ...opt("registeredBoardHash", pin), allowPreviousBoard: false })) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
           const pinnedOwn = ctx.byLeft ? pinned?.leftHanko : pinned?.rightHanko, ownSettlement = ctx.byLeft ? w.leftHanko : w.rightHanko;
           if (pinnedOwn !== undefined && pinnedOwn.toLowerCase() !== post.hanko.toLowerCase()) return settleErr("POST_SETTLEMENT_PROOF_EQUIVOCATION");
           if (settlementHanko !== undefined && ownSettlement !== undefined && ownSettlement.toLowerCase() !== settlementHanko.toLowerCase()) return settleErr("SETTLEMENT_HANKO_EQUIVOCATION");
@@ -4683,8 +4696,8 @@ export type BoardRefresh = { readonly activationJHeight: number; readonly activa
 /** `finalizedJHeight`: the owning Entity's finalized J height (og securityContext); defaults to the Account's own. `counterpartyBoard`: og counterpartyCertifiedBoard. */
 /** `autoRebalance`: og runPostFrameAutoRebalanceCheck runs after each commit (the owning Entity is not a hub: og owningEntityIsHub = !hubRebalanceConfig). */
 /** `deltaTransformer`: og requireAccountDeltaTransformerAddress over the Runtime's jReplicas for this Account's domain (never committed). */
-export type DoorContext = { readonly verify: Verify; readonly self: EntityId; readonly now: bigint; readonly finalizedJHeight?: bigint | undefined; readonly counterpartyBoard?: CertifiedBoard | undefined; readonly autoRebalance?: boolean | undefined; readonly deltaTransformer?: DeltaTransformerRef | undefined };
-export type AccountContext = { readonly verify: Verify; readonly party: Party; readonly counterpartyBoard?: CertifiedBoard | undefined; readonly autoRebalance?: boolean | undefined; readonly deltaTransformer?: DeltaTransformerRef | undefined };
+export type DoorContext = { readonly verify: Verify; readonly self: EntityId; readonly now: bigint; readonly finalizedJHeight?: bigint | undefined; readonly counterpartyBoard?: CertifiedBoard | undefined; readonly autoRebalance?: boolean | undefined; readonly deltaTransformer?: DeltaTransformerRef | undefined; readonly boardAuthority?: BoardAuthority | undefined };
+export type AccountContext = { readonly verify: Verify; readonly party: Party; readonly counterpartyBoard?: CertifiedBoard | undefined; readonly autoRebalance?: boolean | undefined; readonly deltaTransformer?: DeltaTransformerRef | undefined; readonly boardAuthority?: BoardAuthority | undefined };
 /** og verifyHanko authority for a peer Hanko: the certified board when known, and whether its predecessor's grace window applies. */
 const peerAuthority = (ctx: AccountContext, allowPreviousBoard: boolean): HankoAuthority => ({ ...opt("registeredBoardHash", ctx.counterpartyBoard?.boardHash), allowPreviousBoard });
 export type AckContext = AccountContext & { readonly delivery: Delivery };
@@ -4784,16 +4797,16 @@ export const proposalWindow = (mempool: readonly WireAccountTx[], selected?: rea
   if (source.length > ACCOUNT_MEMPOOL_SIZE) return err({ _tag: "proposal_selection", reason: "too_large" });
   return selected !== undefined && withoutAccountTxs(mempool, selected).length !== mempool.length - selected.length ? err({ _tag: "proposal_selection", reason: "not_in_mempool" }) : ok(source);
 };
-export const planOpen = (r: OpenAccount, party: Party, entityClock: FrameClock, verify?: Verify, selected?: readonly WireAccountTx[], dt?: DeltaTransformerRef): Result<ProposalPlan, AccountReplicaError> => {
+export const planOpen = (r: OpenAccount, party: Party, entityClock: FrameClock, verify?: Verify, selected?: readonly WireAccountTx[], dt?: DeltaTransformerRef, authority?: BoardAuthority): Result<ProposalPlan, AccountReplicaError> => {
   if (r.mempool.length === 0) return err({ _tag: "empty_mempool" });
-  return chain(proposalWindow(r.mempool, selected), (window) => planWindow(r, window, party, entityClock, verify, dt));
+  return chain(proposalWindow(r.mempool, selected), (window) => planWindow(r, window, party, entityClock, verify, dt, authority));
 };
 /** The lenient proposal body just before window[index] (refused txs skipped, as og's per-tx transition discard does). */
 const lenientBefore = (s: AccountBody, window: readonly WireAccountTx[], index: number, ctx: FoldCtx): AccountBody => proposalFold(s, window.slice(0, index), ctx).state;
-const planWindow = (r: OpenAccount, window: readonly WireAccountTx[], party: Party, entityClock: FrameClock, verify: Verify | undefined, dt: DeltaTransformerRef | undefined): Result<ProposalPlan, AccountReplicaError> => {
+const planWindow = (r: OpenAccount, window: readonly WireAccountTx[], party: Party, entityClock: FrameClock, verify: Verify | undefined, dt: DeltaTransformerRef | undefined, authority: BoardAuthority | undefined): Result<ProposalPlan, AccountReplicaError> => {
   // og admission.ts: a lagging proposer never mints a frame behind the committed watermark.
   const clock: FrameClock = { ...entityClock, timestamp: entityClock.timestamp > r.head.timestamp ? entityClock.timestamp : r.head.timestamp };
-  const height = r.head.height + 1n, floor = proofNonceFloor(r.dispute), ctx = foldCtx({ height, ...clock }, party.left, verify === undefined ? undefined : { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt) }), folded = proposalFold(r.state, window, ctx), firstRefusal = folded.refused[0];
+  const height = r.head.height + 1n, floor = proofNonceFloor(r.dispute), ctx = foldCtx({ height, ...clock }, party.left, verify === undefined ? undefined : { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt), ...opt("boardAuthority", authority) }), folded = proposalFold(r.state, window, ctx), firstRefusal = folded.refused[0];
   const required = minimumSafeNonce(r.state, r.dispute), stale = (tx: WireAccountTx, e: BodyError): boolean => { const n = staleHankoNonce(r.state, tx, e); return n !== undefined && n.required === required && n.supplied !== required; };
   const failure = (index: number, e: BodyError): AccountTxFailure => { const w = lenientBefore(r.state, window, index, ctx); return accountTxFailure(w, window[index] ?? assertNever(index as never), ctx, e, party.self, r.dispute); };
   return chain(map(proposalRefusals(window, folded.refused, stale, failure), (retried) => withoutAccountTxs(r.mempool, withoutAccountTxs(window, retried))), (deferred) => {
@@ -4805,8 +4818,8 @@ const planWindow = (r: OpenAccount, window: readonly WireAccountTx[], party: Par
     }));
   });
 };
-export const planAccountProposal = (r: AccountReplica, self: EntityId, clock: FrameClock, verify?: Verify, selected?: readonly WireAccountTx[], dt?: DeltaTransformerRef): Result<ProposalPlan, AccountReplicaError> => chain(partyOf(replicaId(r), self), (party) => match(r, {
-  open: (o) => planOpen(o, party, clock, verify, selected, dt), proposed: () => err({ _tag: "already_proposed" }), received: () => err({ _tag: "already_proposed" }), preparing: () => err(frozenError("preparing")), disputed: () => err(frozenError("disputed")),
+export const planAccountProposal = (r: AccountReplica, self: EntityId, clock: FrameClock, verify?: Verify, selected?: readonly WireAccountTx[], dt?: DeltaTransformerRef, authority?: BoardAuthority): Result<ProposalPlan, AccountReplicaError> => chain(partyOf(replicaId(r), self), (party) => match(r, {
+  open: (o) => planOpen(o, party, clock, verify, selected, dt, authority), proposed: () => err({ _tag: "already_proposed" }), received: () => err({ _tag: "already_proposed" }), preparing: () => err(frozenError("preparing")), disputed: () => err(frozenError("disputed")),
 }));
 const previewOf = (planned: Result<ProposalPlan, AccountReplicaError>): Result<Preview, AccountReplicaError> => chain(planned, (p) => match(p, { frame: ({ preview }): Result<Preview, AccountReplicaError> => ok(preview), idle: ({ refused }): Result<Preview, AccountReplicaError> => err(refused) }));
 export const previewOpen = (r: OpenAccount, self: EntityId, clock: FrameClock, verify?: Verify): Result<Preview, AccountReplicaError> => previewOf(planAccountProposal(r, self, clock, verify));
@@ -4913,7 +4926,7 @@ const install = (r: ProposedAccount | ReceivedAccount, signed: SignedPair, after
   return step(reopen(r, { state: draft.state, head: { _tag: "installed", height: frame.height, prevFrameHash: frame.stateHash, timestamp: frame.timestamp, certificate: { parent: frame.prevFrameHash, ...signed }, ...opt("crossTxs", committedCrossTxs(frame.txs)) }, mempool: r.mempool, acknowledged: after.acknowledged, dispute: after.dispute }), draft.effects);
 };
 const residentAck = (r: OpenAccount): AccountAck | null => (r.acknowledged !== undefined && r.acknowledged.height === r.head.height ? r.acknowledged : null);
-export const proposeOpen = (r: OpenAccount, input: Propose, ctx: AccountContext): Verb<OpenAccount | ProposedAccount> => chain(planOpen(r, ctx.party, { timestamp: input.timestamp, jHeight: input.jHeight }, ctx.verify, input.selected, ctx.deltaTransformer), (planned) => match(planned, {
+export const proposeOpen = (r: OpenAccount, input: Propose, ctx: AccountContext): Verb<OpenAccount | ProposedAccount> => chain(planOpen(r, ctx.party, { timestamp: input.timestamp, jHeight: input.jHeight }, ctx.verify, input.selected, ctx.deltaTransformer, ctx.boardAuthority), (planned) => match(planned, {
   idle: ({ refused, deferred }): Verb<OpenAccount | ProposedAccount> => (input.frameHanko === undefined && input.disputeHanko === undefined ? ok(done({ ...r, mempool: deferred })) : err(refused)),
   frame: ({ preview: { frame, draft, frameProof, dispute, deferred, witnesses: promoted, floor } }): Verb<OpenAccount | ProposedAccount> => {
     const frameHanko = input.frameHanko;
@@ -4989,7 +5002,7 @@ const createAck = (r: ReceivedAccount, input: Ack, ctx: AccountContext): Verb<Op
       const ackOut: AccountAck = { height: frame.height, frameHash: frame.stateHash, frameHanko: input.frameHanko, ...opt("disputeHanko", carried) };
       const installed = install(r, signedBy(ctx.party, input.frameHanko, frameHanko), { dispute: storeCounterparty(witnesses, r.disputeHanko), acknowledged: ackOut });
       // og consensus/index.ts commit: the frame's handler messages (replayed from the proposer's side), `🤝 Accepted frame`, then the post-commit rebalance
-      const said = frameTxMessages(r.state, frame, proposerIsLeft(r, ctx.party), ctx.party.self, { verify: ctx.verify, proofNonceFloor: r.candidate.floor });
+      const said = frameTxMessages(r.state, frame, proposerIsLeft(r, ctx.party), ctx.party.self, { verify: ctx.verify, proofNonceFloor: r.candidate.floor, ...opt("registeredBoardHash", ctx.counterpartyBoard?.boardHash), ...opt("boardAuthority", ctx.boardAuthority) });
       const post = postCommitRebalance(installed.state, ctx, "frame commit");
       return done<OpenAccount | ReceivedAccount, AccountOutput>(post.replica, [{ kind: "ack", ...sentBy(r, ctx.party), ...ackOut }, ...said.map(accountSay), accountSay(`🤝 Accepted frame ${frame.height} from Entity ${ctx.party.peer.slice(-4)}`), ...post.outputs, ...effectsOut(installed.effects)]);
     }));
@@ -5064,11 +5077,11 @@ const receipt = <R extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAc
     () => mapErr(incomingDeadline(r.state, frame, byLeft, ctx), (v): AccountReplicaError => (v.dispute ? { _tag: "dispute_required", cause: v.error, frame, frameHanko: input.frameHanko } : v.error)));
   return gates.ok ? { _tag: "continue", validated: validated.value } : answered(gates);
 };
-const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify, dt?: DeltaTransformerRef, registeredBoardHash?: string): Verb<ReceivedAccount> => {
+const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify, dt?: DeltaTransformerRef, registeredBoardHash?: string, authority?: BoardAuthority): Verb<ReceivedAccount> => {
   const { frame } = input, onLeft = other(party.left), floor = proofNonceFloor(cur.dispute);
   const evidence = (cause: AccountReplicaError, reason?: string): AccountReplicaError => ({ _tag: "dispute_required", cause, frame, frameHanko: input.frameHanko, ...opt("reason", reason ?? (cause._tag === "state_root_mismatch" ? "Bilateral account state root mismatch" : undefined)) });
   // og consensus/index.ts classifyIncomingValidationFailure: a stale account-basis hanko for the one unsigned workspace is a plain refusal, not dispute evidence.
-  const settlement: SettlementCtx = { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt), ...opt("registeredBoardHash", registeredBoardHash) };
+  const settlement: SettlementCtx = { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt), ...opt("registeredBoardHash", registeredBoardHash), ...opt("boardAuthority", authority) };
   // og replayIncomingFrameOnClone: a refused tx is dispute evidence `Frame application failed: <og text>`; a thrown handler aborts the input.
   const required = minimumSafeNonce(cur.state, cur.dispute), replayed = (cause: AccountReplicaError): AccountReplicaError => {
     const stale = cause._tag === "settlement" ? frame.txs.filter((tx) => { const n = staleHankoNonce(cur.state, tx, cause); return n !== undefined && n.supplied < n.required && n.required === required; }) : [];
@@ -5081,7 +5094,7 @@ const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validat
       map(mapErr(requireDispute(frameProof, witnesses, validated), (e) => evidence(e, disputeRequirementText(e, frameProof, witnesses, validated))), () => done<ReceivedAccount, AccountOutput>({ ...cur, _tag: "received", candidate: new Candidate(frame, input.frameHanko, frameProof, draft, floor), disputeHanko: validated, dispute: witnesses }))))));
 };
 const proposalOnOpen = (r: OpenAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ReceivedAccount> =>
-  match(receipt(r, input, ctx), { answered: ({ result }): Verb<OpenAccount | ReceivedAccount> => result, continue: ({ validated }): Verb<OpenAccount | ReceivedAccount> => admitPeerFrame(r, input, ctx.party, validated, ctx.verify, ctx.deltaTransformer, ctx.counterpartyBoard?.boardHash) });
+  match(receipt(r, input, ctx), { answered: ({ result }): Verb<OpenAccount | ReceivedAccount> => result, continue: ({ validated }): Verb<OpenAccount | ReceivedAccount> => admitPeerFrame(r, input, ctx.party, validated, ctx.verify, ctx.deltaTransformer, ctx.counterpartyBoard?.boardHash, ctx.boardAuthority) });
 const proposalOnProposed = (r: ProposedAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => match(receipt(r, input, ctx), {
   answered: ({ result }): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => result,
   // og incoming/collision.ts: LEFT keeps its frame and ignores RIGHT's; RIGHT rolls its frame back into the mempool and accepts LEFT's.
@@ -5090,7 +5103,7 @@ const proposalOnProposed = (r: ProposedAccount, input: AckFrame, ctx: InboundAcc
     if (ctx.party.left) return ok(done<OpenAccount | ProposedAccount | ReceivedAccount, AccountOutput>(r, [accountSay(`📤 LEFT-WINS: Ignored RIGHT's frame ${h} (waiting for their ACK)`), ...(r.mempool.length > 0 ? [accountSay(`⚠️ LEFT has ${r.mempool.length} pending txs while waiting for RIGHT's ACK`)] : [])]));
     const own = r.candidate.frame, restored = unqueued(own.txs, r.mempool).length;
     const said = [accountSay(`🔄 ROLLBACK: Discarded our frame ${own.height}, restored ${restored}/${own.txs.length} txs to mempool`), accountSay(`📥 Accepted LEFT's frame ${h} (we are RIGHT, deterministic tiebreaker)`)];
-    return map(admitPeerFrame(restore(r), input, ctx.party, validated, ctx.verify, ctx.deltaTransformer, ctx.counterpartyBoard?.boardHash), (a) => ({ replica: a.replica, outputs: [...said, ...a.outputs] }));
+    return map(admitPeerFrame(restore(r), input, ctx.party, validated, ctx.verify, ctx.deltaTransformer, ctx.counterpartyBoard?.boardHash, ctx.boardAuthority), (a) => ({ replica: a.replica, outputs: [...said, ...a.outputs] }));
   },
 });
 const proposalOnReceived = (r: ReceivedAccount, input: AckFrame, ctx: InboundAccountContext): Verb<ReceivedAccount> => match(receipt(r, input, ctx), {
@@ -5312,7 +5325,7 @@ export const admit = (r: AccountReplica, txs: readonly WireAccountTx[], self?: E
   chain(self === undefined ? ok(undefined) : map(partyOf(replicaId(r), self), (p) => p.left), (onLeft) => map(enqueue(r, txs, onLeft), (q) => q.replica));
 /** Entity-owned admission (og tx-effects.ts applyLocalAccountEffects → applyAccountEnqueue). og shouldSuppressReturnedAccountTx: a frozen Account silently takes no new work. `clock`/`verify` are kept for callers; og admission reads neither. */
 export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, _clock?: FrameClock, _verify?: Verify): Result<AccountReplica, AccountReplicaError> => !isLive(r) ? map(partyOf(replicaId(r), self), () => r) : admit(r, txs, self);
-const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party, ...opt("counterpartyBoard", ctx.counterpartyBoard), ...opt("autoRebalance", ctx.autoRebalance), ...opt("deltaTransformer", ctx.deltaTransformer) }));
+const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party, ...opt("counterpartyBoard", ctx.counterpartyBoard), ...opt("autoRebalance", ctx.autoRebalance), ...opt("deltaTransformer", ctx.deltaTransformer), ...opt("boardAuthority", ctx.boardAuthority) }));
 export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => chain(accountContext(r, ctx), (c) => matchBy("kind", input, {
   propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c), resume: (i) => resume(r, i, c),
   dispute: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => dispute(r, i, { ...c, from: sender })),
@@ -5575,6 +5588,8 @@ export type EntityContext = { readonly verify: Verify; readonly verifyMember: Me
   readonly jHistory?: ValidatorJHistory | undefined;
   /** og env.state.eReplicas for a cross-j opening cohort (selectCrossJOpeningAccountProposalTxs); absent outside a Runtime, where no sibling gating runs. */
   readonly siblings?: SiblingReplicas | undefined;
+  /** og resolveSettlementBoardAuthority over env.state.eReplicas (the source Entity's local replicas); absent outside a Runtime. */
+  readonly boardAuthority?: BoardAuthority | undefined;
   /**
    * og applyEntityInput options for a `txs` input: `defer` admits without proposing (the Runtime flushes each touched replica once per frame),
    * `cross-j` is a trusted local cross-j command that must commit alone, `account-work` proposes only queued Account work.
@@ -6182,7 +6197,7 @@ export const localTimeoutVote = (r: EntityReplica, timestamp: bigint, jHistory?:
 };
 
 /** `activeJurisdiction`: og EntityRuntimeContext.activeJurisdiction (the Runtime's first imported J), the Htlc* jurisdictionId fallback. */
-type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined; readonly boardHandover?: HandoverConfig | undefined; readonly siblings?: SiblingReplicas | undefined; readonly jReplicas?: ReadonlyMap<string, JReplica> | undefined; readonly runtimeSeed?: string | undefined };
+type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined; readonly boardHandover?: HandoverConfig | undefined; readonly siblings?: SiblingReplicas | undefined; readonly boardAuthority?: BoardAuthority | undefined; readonly jReplicas?: ReadonlyMap<string, JReplica> | undefined; readonly runtimeSeed?: string | undefined };
 /** og env.state.eReplicas as a cross-j opening reads it: the live sibling replica of this Runtime by (Entity, signer), both normalized. */
 export type SiblingReplicas = (entityId: string, signerId: string) => EntityReplica | undefined;
 /** og requireAccountDeltaTransformerAddress(env, account.state) for one of this Entity's Accounts. */
@@ -8555,7 +8570,7 @@ const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext)
     if (!cohort.ok) return cohort;
     if (cohort.value === null) continue;
     const selected = cohort.value;
-    const dt = accountDt(ctx, child), plan = planAccountProposal(child, self, clock, ctx.verify, selected, dt), party = partyOf(replicaId(child), self);
+    const dt = accountDt(ctx, child), plan = planAccountProposal(child, self, clock, ctx.verify, selected, dt, ctx.boardAuthority), party = partyOf(replicaId(child), self);
     if (!plan.ok && accountThrew(plan.error)) return plan;
     if (!plan.ok || !party.ok) continue;
     const input: AccountInput = match(plan.value, {
@@ -8895,6 +8910,45 @@ export const signingBoardHash = (state: EntityState, entityId: string): Result<s
   return chain(boardStackKey(j), (stackKey) => registry === undefined ? boardErr(`CERTIFIED_BOARD_SIGNING_ROOT_MISSING:${id}:${stackKey}`)
     : chain(lookupBoardRecord(state.boardNodes ?? new Map(), registry.boardRegistryRoot, stackKey, id), (record) => record === null ? boardErr(`CERTIFIED_BOARD_SIGNING_MEMBERSHIP_MISSING:${id}:${stackKey}`) : ok(record.boardHash)));
 }));
+/**
+ * og resolveSigningCertifiedBoardHash over several candidate states (board-registry/index.ts): each must sit on the requested stack and hold a
+ * record for the Entity, and all must agree on (stack, activation, epoch, board).
+ */
+const signingBoardOver = (states: readonly EntityState[], entityId: string, requested: string | undefined): Result<string, string> => {
+  const id = boardWord(entityId, "ENTITY_ID");
+  if (!id.ok) return err(id.error.code);
+  const bindings: string[] = [];
+  for (const state of states) {
+    const j = entityBoardStack(state), registry = entityBoardRegistry(state);
+    if (j === undefined) return err(`CERTIFIED_BOARD_SIGNING_STACK_MISSING:${id.value}`);
+    const stackKey = boardStackKey(j);
+    if (!stackKey.ok) return err(stackKey.error.code);
+    if (requested !== undefined && requested !== stackKey.value) return err(`CERTIFIED_BOARD_SIGNING_STACK_MISMATCH:${id.value}`);
+    if (registry === undefined) return err(`CERTIFIED_BOARD_SIGNING_ROOT_MISSING:${id.value}:${stackKey.value}`);
+    const record = lookupBoardRecord(state.boardNodes ?? new Map(), registry.boardRegistryRoot, stackKey.value, id.value);
+    if (!record.ok) return err(record.error.code);
+    if (record.value === null) return err(`CERTIFIED_BOARD_SIGNING_MEMBERSHIP_MISSING:${id.value}:${stackKey.value}`);
+    bindings.push(`${stackKey.value}:${record.value.activatedAtJHeight}:${record.value.logIndex}:${record.value.boardEpoch}:${record.value.boardHash}`);
+  }
+  const unique = [...new Set(bindings)];
+  return unique.length !== 1 ? err(`CERTIFIED_BOARD_SIGNING_REPLICA_DIVERGENCE:${id.value}:${unique.sort().join(",")}`) : ok(unique[0]!.slice(unique[0]!.lastIndexOf(":") + 1));
+};
+/**
+ * og resolveSettlementBoardAuthority's fallback over the source Entity's local replica states: none, or a lazy board (config board == id),
+ * pins nothing; otherwise the certified board, which must be the configured one.
+ */
+export const settlementBoardAuthority = (states: readonly EntityState[], sourceEntityId: string): Result<string | undefined, string> => {
+  const source = lower(sourceEntityId);
+  if (states.length === 0) return ok(undefined);
+  const configured = new Set(states.map((st) => lower(quorumBoardHash(st.quorum))));
+  if (configured.size !== 1) return err(`SETTLEMENT_HANKO_LOCAL_BOARD_DIVERGENCE:${sourceEntityId}`);
+  const board = [...configured][0]!;
+  if (board === source) return ok(undefined);
+  const first = entityBoardStack(states[0]!), requested = first === undefined ? undefined : boardStackKey(first);
+  if (requested !== undefined && !requested.ok) return err(requested.error.code);
+  return chain(signingBoardOver(states, sourceEntityId, requested?.value), (certified) => lower(certified) !== board
+    ? err(`SETTLEMENT_HANKO_BOARD_AUTHORITY_MISMATCH:${sourceEntityId}:${certified}:${board}`) : ok(certified));
+};
 export type BoardJEventStep = { readonly state: EntityState; readonly events: readonly FrameEvent[] };
 /**
  * og applyCertifiedBoardJEvent (entity/tx/j-events-board.ts) for one finalized board event: the committed registry advances, its new nodes join
@@ -11028,7 +11082,7 @@ export const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx
     }),
     // og input-phases.ts: the sender's record in this Entity's certified registry is the Account's counterpartyCertifiedBoard
     accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => chain(observerBoardRecord(state, x.data.fromEntityId), (record) => {
-      const at = replicas.get(peer), door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp, autoRebalance: hubConfigOf(state) === undefined, ...(record === null ? {} : { counterpartyBoard: { boardHash: record.boardHash, activatedAtJHeight: record.activatedAtJHeight, logIndex: record.logIndex } }), ...(at === undefined ? {} : { deltaTransformer: accountDt(ctx, at) }) };
+      const at = replicas.get(peer), door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp, autoRebalance: hubConfigOf(state) === undefined, ...(record === null ? {} : { counterpartyBoard: { boardHash: record.boardHash, activatedAtJHeight: record.activatedAtJHeight, logIndex: record.logIndex } }), ...(at === undefined ? {} : { deltaTransformer: accountDt(ctx, at) }), ...opt("boardAuthority", ctx.boardAuthority) };
       const held: Folded = { state, accountReplicas: replicas };
       // og finishDisputedAccountInput: a 'dispute' disposition ends the input in handleUnsafeAccountFrame (no committed followups)
       const unsafeOr = (at: Folded, created: boolean, go: (child: AccountReplica, applied: Result<AccountApply, AccountReplicaError>) => Result<Draft, EntityError>): Result<Draft, EntityError> => {
@@ -11527,7 +11581,7 @@ const proposeSelected = (queued: OpenEntity, authority: OpenEntity, selected: re
   // og materializeHtlcPreparedInfraContext: the proposer decrypts every inbound onion layer against the pre-frame state; validators replay the same bytes.
   const inbound = { state: queued.state, replicas: queued.accountReplicas, timestamp: Number(timestamp), publicKey: String(queued.state.committed["entityEncryptionPublicKey"] ?? ""), privateKey: ctx.htlc?.encryptionPrivateKey };
   return chain(htlcFrameTxs(txs) ? inboundHtlcEntries({ ...inbound, online: onlineObserver(ctx.htlc).online }, txs) : ok([]), (entries) =>
-  chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("siblings", ctx.siblings), ...opt("jReplicas", ctx.jReplicas), ...opt("runtimeSeed", ctx.runtimeSeed) }), ({ draft, included, evicted, accountFrames }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
+  chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("siblings", ctx.siblings), ...opt("boardAuthority", ctx.boardAuthority), ...opt("jReplicas", ctx.jReplicas), ...opt("runtimeSeed", ctx.runtimeSeed) }), ({ draft, included, evicted, accountFrames }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
     if (keep !== undefined && !keep(accountFrames ?? 0)) return ok(done<OpenEntity | ProposedEntity, EntityOutput>(queued));
     const pool = withoutTxs(queued.mempool, [...prepared.refused.keys(), ...evicted]);
     return chain(handoverLeaderState(queued.state, included), (handoverLeader) => chain(buildFrame(queued, leader, handoverLeader ?? ordinary, timestamp, included, draft, infra, jPrefixCertificate), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx, candidate.draft.state), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
@@ -11795,7 +11849,7 @@ const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHas
   if (frame.timestamp < r.state.timestamp) return err({ _tag: "frame_timestamp_regression", timestamp: frame.timestamp });
   // og assertHtlcPreparedInfraContext: validators check the committed origins against public facts, never recreating proposer entropy.
   return chain(frameInfraOf(frame), (infra) => chain(entityKeypair(r.state, ctx), () => chain(assertInboundEntries(r, frame, infra, ctx), () => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
-    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("siblings", ctx.siblings), ...opt("jReplicas", ctx.jReplicas), ...opt("runtimeSeed", ctx.runtimeSeed) }), ({ draft, evicted }) => {
+    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("siblings", ctx.siblings), ...opt("boardAuthority", ctx.boardAuthority), ...opt("jReplicas", ctx.jReplicas), ...opt("runtimeSeed", ctx.runtimeSeed) }), ({ draft, evicted }) => {
       if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
       return chain(handoverLeaderState(r.state, frame.txs), (handoverLeader) => chain(buildFrame(r, frame.leader, handoverLeader ?? committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra, frame.jPrefixCertificate), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
         local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame }))));
@@ -16279,12 +16333,13 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
     return undefined;
   };
   const siblings: SiblingReplicas = (entity, signer) => { const key = find(entity, signer); return key === undefined ? undefined : store.get(key); };
+  const boardAuthority: BoardAuthority = (source) => settlementBoardAuthority([...store.values()].filter((r) => lower(r.state.id) === lower(source)).map((r) => r.state), source);
   type Staged = { readonly key: string; readonly outputs: readonly EntityOutput[]; readonly committed: boolean };
   const stage = (routed: RoutedEntityInput, lane: EntityContext["lane"], record: boolean, required?: EntityTx): Result<Staged, RuntimeError> => {
     const key = replicaKey(routed.entityId, routed.signerId), r = store.get(key);
     if (r === undefined) return err({ _tag: "no_such_entity", id: routed.entityId });
     const stamped: RoutedEntityInput = routed.input.kind === "txs" || routed.input.kind === "jPrefixAttestations" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
-    const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, rt, routed.entityId), ...opt("activeJurisdiction", rt.activeJurisdiction), ...opt("jHistory", replicaJHistory({ ...rt, entities: store }, key, r)), siblings, ...opt("lane", lane), ...opt("required", required), jReplicas: rt.jReplicas });
+    const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, rt, routed.entityId), ...opt("activeJurisdiction", rt.activeJurisdiction), ...opt("jHistory", replicaJHistory({ ...rt, entities: store }, key, r)), siblings, boardAuthority, ...opt("lane", lane), ...opt("required", required), jReplicas: rt.jReplicas });
     if (!applied.ok) return applied;
     const effects = applied.value.committed, progressed = consensusProgressed(r, applied.value.replica, stamped.input, rt.replicaLocal.get(key)), committed = applied.value.replica.head.height > r.head.height;
     store.set(key, applied.value.replica);

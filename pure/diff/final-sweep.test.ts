@@ -10,6 +10,10 @@ import { resolveObserverCertifiedAccountCounterpartyProposer as ogCertifiedPropo
 import { decodeBuffer as ogDecodeBuffer } from "../../core/storage/codec/codec.ts";
 import { applyRuntime, convertOutput, createRuntime, lazyBoardEntityId, runtimeOutputRows, type EntityOutput, type EntityTx, type Runtime, type RoutedEntityInput, type RuntimeTx } from "../xln.ts";
 import { TERMS, aliceAddr, bobAddr, verifiers } from "../xln_run.ts";
+import { createAccountConsensusContext as ogConsensusContext } from "../../core/entity/account/account-consensus-context.ts";
+import { applyCertifiedBoardRegistryEvent as ogApplyBoardEvent } from "../../core/jurisdiction/machine/board-registry/index.ts";
+import { applyBoardJEvent, createEntity, quorumBoardHash, settlementBoardAuthority, type EntityState, type JEvent } from "../xln.ts";
+import { carolAddr } from "../xln_run.ts";
 import {
   accountId,
   accountTerms,
@@ -300,5 +304,53 @@ describe("final-sweep: RF-18 outbox signer (og resolveEntityOutputSignerId)", ()
     const uncertified: Runtime = { ...remote, entities: new Map([...remote.entities].map(([k, r]) => [k, r.state.id === A ? bare : r])) } as Runtime;
     expect(signerOf(uncertified)).toBe("SIGNER_RESOLUTION_FAILED");
     expect(signerOf(uncertified, { verifiedProfileSigner: (e) => (e === B.toLowerCase() ? "0x" + "cd".repeat(20) : undefined) })).toBe("0x" + "cd".repeat(20));
+  });
+});
+
+// ---------- consensus-final SJ-18: og resolveSettlementBoardAuthority's local-replica fallback (entity/account/account-consensus-context.ts) ----------
+
+describe("final-sweep: SJ-18 settlement board authority fallback (og resolveSettlementBoardAuthority)", () => {
+  const JUR = { name: "j", chainId: 31337, depositoryAddress: "0x5fbdb2315678afecb367f032d93f642f64180aa3", entityProviderAddress: "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512" };
+  const OTHER_EP = "0x" + "e2".repeat(20);
+  const word = (n: bigint | number): string => `0x${BigInt(n).toString(16).padStart(64, "0")}`;
+  const meta = (block: number, log: number) => ({ blockNumber: block, blockHash: word(30 + block), transactionHash: word(40 + block + log), logIndex: log });
+  const foundation: JEvent = { type: "FoundationBootstrapped", recipient: "0x" + "11".repeat(20), boardHash: word(900), controlTokenId: 1n, dividendTokenId: 2n, meta: meta(2, 0) };
+  const registered = (id: string, board: string, block = 3): JEvent => ({ type: "EntityRegistered", entityId: id, entityNumber: BigInt(id), boardHash: board, meta: meta(block, 0) });
+  const toOg = (e: JEvent): any => { const { meta: m, type, ...data } = e as any; return { type, ...m, data: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v])) }; };
+  type Replica = { state: EntityState; og: any };
+  const replica = (id: string, members: readonly (readonly [string, bigint])[], threshold: bigint, events: readonly JEvent[], ep: string | null, nodes: Map<string, any>): Replica => {
+    const authority = new Map(members.map(([a, s]) => [a, { shares: s }]));
+    let state = unwrapR(createEntity({ id: unwrapR(entityId(id) as never), jurisdiction: { chainId: JUR.chainId, depositoryAddress: JUR.depositoryAddress }, threshold, members: authority, ...(ep === null ? {} : { jurisdictionConfig: { entityProviderAddress: ep } }) }) as never as { ok: true; value: { state: EntityState } }).state;
+    let registry: any;
+    const ogJ = { ...JUR, entityProviderAddress: ep ?? JUR.entityProviderAddress };
+    for (const e of events) {
+      state = unwrapR(applyBoardJEvent(state, e, e.meta?.blockNumber ?? 0) as never as { ok: true; value: { state: EntityState } }).state;
+      const og = ogApplyBoardEvent(registry, nodes, ogJ as any, toOg(e));
+      registry = og.state;
+      for (const [h, n] of og.newNodes) nodes.set(h, n);
+    }
+    const config = { mode: "proposer-based", threshold, validators: members.map(([a]) => a.toLowerCase()), shares: Object.fromEntries(members.map(([a, s]) => [a.toLowerCase(), s])), ...(ep === null ? {} : { jurisdiction: ogJ }) };
+    return { state, og: { entityId: id, config, ...(registry === undefined ? {} : { certifiedBoardState: registry }) } };
+  };
+  test("MATCH: 300 random replica sets (lazy, certified, mismatched, unregistered, no registry, no jurisdiction, diverging configs, diverging stacks, none) give og's authority or refusal", async () => {
+    const r = rng(1818), SIGNERS = [aliceAddr, bobAddr, carolAddr] as const, seen = new Set<string>();
+    for (let i = 0; i < 300; i++) {
+      const n = 1 + Math.floor(r() * 3), members = [...SIGNERS].sort(() => r() - 0.5).slice(0, n).map((a) => [a, BigInt(1 + Math.floor(r() * 3))] as const);
+      const power = members.reduce((t, [, s]) => t + s, 0n), threshold = BigInt(1 + Math.floor(r() * Number(power)));
+      const board = quorumBoardHash({ _tag: "teaching", threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])) } as never);
+      const mode = pick(r, ["none", "lazy", "match", "mismatch", "unregistered", "noRegistry", "noJurisdiction", "configDiverge", "stackDiverge", "twoMatch"] as const);
+      const id = mode === "lazy" ? board : word(2 + Math.floor(r() * 8)), nodes = new Map<string, any>();
+      const events = mode === "noRegistry" || mode === "noJurisdiction" ? [] : [foundation, ...(mode === "unregistered" ? [registered(word(99), hex(r, 32))] : [registered(id, mode === "mismatch" ? hex(r, 32) : board)])];
+      const replicas: Replica[] = mode === "none" ? [] : [replica(id, members, threshold, events, mode === "noJurisdiction" ? null : JUR.entityProviderAddress, nodes)];
+      if (mode === "configDiverge") replicas.push(replica(id, [[carolAddr, 1n], [aliceAddr, 2n]], 1n, events, JUR.entityProviderAddress, nodes));
+      if (mode === "stackDiverge") replicas.push(replica(id, members, threshold, events, OTHER_EP, nodes));
+      if (mode === "twoMatch") replicas.push(replica(id, members, threshold, events, JUR.entityProviderAddress, nodes));
+      const env = { state: { timestamp: 0, eReplicas: new Map(replicas.map((x, k) => [`${id}:${k}`, { state: x.og }])), jReplicas: new Map() }, infrastructure: { certifiedBoardNodes: nodes } };
+      let og: unknown;
+      try { og = { ok: true, value: await ogConsensusContext(env as never).resolveSettlementBoardAuthority(id) }; } catch (e) { og = { ok: false, error: (e as Error).message }; }
+      expect(settlementBoardAuthority(replicas.map((x) => x.state), id)).toEqual(og as never);
+      seen.add((og as { ok: boolean; value?: string; error?: string }).ok ? `ok:${(og as { value?: string }).value === undefined ? "none" : "pin"}` : String((og as { error: string }).error).split(":")[0]);
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(6);
   });
 });
