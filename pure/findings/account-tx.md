@@ -16,17 +16,17 @@ After every tx, both sides must agree on accept or reject, and every accepted tx
 |---|---|---|
 | add_delta | add_delta | MATCH |
 | set_credit_limit | set_credit_limit | MATCH |
-| direct_payment | payment (wire `direct_payment`) | MATCH. Covers route, deliveryMode, trusted gateway and asserted direction. The forward effect is REMAINING (runtime). |
-| htlc_lock | htlc_lock | MATCH, including the committed HtlcLock shape. `envelope` is REMAINING (onion hole). |
+| direct_payment | payment (wire `direct_payment`) | MATCH. The forward effect is FIXED (consensus-final.md): entity-consensus-2.test.ts ER-15 trusted gateway MATCH, cross-j.test.ts "40 random sequences ... outputs (directPaymentForward)". |
+| htlc_lock | htlc_lock | MATCH, including the envelope (consensus-final.md): cross-j.test.ts "200 random htlc_lock txs with envelopes". |
 | htlc_resolve (secret / error) | htlc_resolve (outcome-based) | MATCH |
-| swap_offer | swap_offer (`swapOffer`) | MATCH for the same-jurisdiction path. Cross-j is REMAINING. |
+| swap_offer | swap_offer (`swapOffer`) | MATCH. Cross-j is FIXED (consensus-final.md): cross-j.test.ts "60 random pull-lock / offer / resolve / close sequences". |
 | swap_cancel_request | swap_cancel_request | MATCH |
 | swap_resolve | swap_resolve (`swapResolve`) | MATCH |
 | settle_transition (upsert/submit/clear/hanko) | settle_transition (`settleTransition`) | MATCH. Hanko success depends on H1/H2 and on consensus wiring. |
 | j_event_claim | j_event_claim (`claimJ` / `finalizeSettled`) | MATCH |
 | request_collateral / rebalance_refund / rebalance_policy | same names (`requestCollateral`, `rebalanceRefund`, `rebalancePolicy`) | MATCH. The rewrite quote/accept/deposit_collateral kinds are removed. |
 | lending_* (6 kinds) | same names (`lending`) | MATCH |
-| cross_pull_lock / cross_pull_close | refused as the `unchosen: cross_open` hole | REMAINING |
+| cross_pull_lock / cross_pull_close | refused as the `unchosen: cross_open` hole | FIXED (consensus-final.md): cross-j.test.ts "60 random pull-lock / offer / resolve / close sequences", "a pull holds amount on the payer side". |
 | (none in og) | deposit_to_custody / withdraw_from_custody / hub_custody_debit | **REMOVED** (integration): with `AccountBody.hub/custody/debits` and `HubSide`; test "MATCH: the rewrite-only custody kinds are gone" |
 | (none in og) | subcontract_* | Removed. og never writes `subcontracts`. |
 
@@ -52,7 +52,7 @@ After every tx, both sides must agree on accept or reject, and every accepted tx
 | AT-16 | medium | direct-payment.ts:134; lock.ts:49-51 | `MAX_PAYMENT_AMOUNT` = 2^256-1 | The ceiling was 2^128-1. | **FIXED**. `representable` adds og's int512 offdelta check. |
 | AT-17 | medium | swap/offer/{admission,quantization,commit}.ts; swap-limits.ts | `swapOffer`, `SwapOffer` (og shape) | Admission checks and quantization were missing. | **FIXED**: ':' check, duplicate, the 50/32 offer caps and the 32 per-side-per-market cap, decimals, amount bounds, maxFee/minNetReceive authority, same token, timeInForce, lot size, canonical price (step 1, stable-quote orientation), priceTicks drift, requantized authority, capacity and hold overflow. EXTRA `minFillRatio`/`expiresAtHeight` are removed. `createdHeight` = frame jHeight, as og mutation.ts passes it. **REMAINING**: cross-j offers (`crossJurisdiction`), because the cross-j route model is unported. |
 | AT-18 | medium | swap/resolve/{validation,settlement,remainder}.ts | `swapResolve` | The taker fee and the remainder requantization were missing. | **FIXED**: fee authority (`assertSwapNetAuthorization`), fee movement, exact-lot remainder requantization, dust release and pro-rata authority. |
-| AT-19 | low | direct-payment.ts:141-278 | `paymentRoute`, payment tx fields, `wireTx` payment | Route, deliveryMode and trusted gateway were missing. | **FIXED** for validation and wire form. **REMAINING**: the `directPaymentForward` effect for a trusted gateway is not emitted, because it is runtime/entity routing outside this region. |
+| AT-19 | low | direct-payment.ts:141-278 | `paymentRoute`, payment tx fields, `wireTx` payment | Route, deliveryMode and trusted gateway were missing. | **FIXED** (consensus-final.md): validation, wire form and the directPaymentForward effect (entity-consensus-2.test.ts ER-15 MATCH). |
 | AT-20 | low | j-events/finality.ts:56-66 | `finalizeSettled` | `requestedRebalance` was not reduced. | **FIXED** with og-shaped `requested`/`requestFees`. Test: "MATCH (AT-20)". The shadow `submittedAtByToken` deletion is replica-level and not ported. |
 | AT-21 | low | tx/mutation.ts:183-186 | replica phase grammar | The dispute-status guard is not re-checked per tx. | **EQUIVALENT, no change.** og `canProcessAccountTxForDisputeStatus` admits only `active`. In the rewrite, frames fold only in the `open`/`proposed`/`received` phases, which map to og `active`. `preparing`/`disputed` never fold txs. |
 | AT-22 | info | handlers/rebalance/*, balance/lending.ts, settlement/pull.ts | see catalog | Kinds were missing or replaced. | **FIXED**: request_collateral, rebalance_refund, rebalance_policy and lending_* are ported with og state (`requestedRebalance`, `requestedRebalanceFeeState`, `rebalanceFeePolicies`, `lendingIntents`), and root lockstep tests cover them. **REMOVED**: the EXTRA set_rebalance_policy, rebalance_request, rebalance_quote, rebalance_accept, deposit_collateral (with its `queue_r2c` effect) and subcontract_*. **REMAINING, three items:** (1) cross_pull_lock/close need og extensions/cross-j (about 2.4k lines: route canonicalization, pull binding, hash-ladder binary). They stay an explicit `unchosen: cross_open` refusal. (2) ~~The EXTRA custody kinds are kept~~ **FIXED (integration)**: deposit_to_custody / withdraw_from_custody / hub_custody_debit, `hub`, `custody` and `debits` are removed; `lendingIntents` commits og's map only; `consumerExample` uses a direct payment. (3) The runtime events og returns (request_collateral_committed, swap cancel request, htlc error) are not emitted. |

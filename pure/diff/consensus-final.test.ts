@@ -14,10 +14,11 @@ import { encodeBoard, hashBoard } from "../../core/entity/factory.ts";
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
 import {
   accountId as rwAccountId, applyEntityInput, entityFrameHash, counterpartyBoardActivationConflict, createEntity, entityId, entityProfileHash, foldTxs, genesisReplica, jRangeBudgetPrefix,
+  applyRuntime, convertOutput, createRuntime, replicaKey, spawn, tokenId, type Runtime, type RoutedEntityInput,
   parseEvmTx, quorumBoardHash, selectProposable, selfAuthorityTransitionFrame, withoutCounterpartyBoardActivationConflicts,
   type Address, type EntityId, type EntityInput, type EntityTx,
 } from "../xln.ts";
-import { TERMS, aliceAddr, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, unwrap, verifiers } from "../xln_run.ts";
 
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const rng = prng(0xc0_f1a1);
@@ -313,5 +314,57 @@ describe("consensus-final: the j_event frame-hash projection of og entity/consen
     }
     expect(refused).toBeGreaterThan(40);
     expect(refused).toBeLessThan(300);
+  });
+});
+
+describe("consensus-final: a received Account frame commits at once (rebalance-refresh.md RR-12)", () => {
+  test("MATCH (og commits the peer's frame when it signs the ACK): 40 random credit / payment rounds between three Entities -- after every Runtime step no Account sits in 'received', and each ack_frame leaves the receiver's head at the frame height", () => {
+    const g = prng(0x12_12);
+    const gi = (n: number) => Math.floor(g() * n);
+    const signers = new Map<EntityId, Address>([[ALICE, aliceAddr], [BOB, bobAddr], [CAROL, carolAddr]]);
+    const party = (id: EntityId) => unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[signers.get(id) as Address, { shares: 1n }]]) }));
+    const t1 = unwrap(tokenId("1"));
+    let clock = NOW, received = 0;
+    const noneReceived = (rt: Runtime): void => {
+      for (const r of rt.entities.values()) for (const c of r.accountReplicas.values()) expect(c._tag).not.toBe("received");
+    };
+    const quiet = (start: Runtime, first: RoutedEntityInput[]): Runtime => {
+      let rt = start;
+      const queue = [...first];
+      for (let n = 0; queue.length > 0; n++) {
+        if (n > 300) throw new Error("no quiescence");
+        const input = queue.shift() as RoutedEntityInput;
+        const before = rt;
+        const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, verifiers));
+        rt = out.runtime;
+        noneReceived(rt);
+        const i = input.input as any;
+        if (i.kind === "txs") for (const tx of i.txs) if (tx.type === "accountInput" && tx.data.kind === "ack_frame" && tx.data.frame !== undefined) {
+          received++;
+          const key = replicaKey(input.entityId, signers.get(input.entityId) as Address), prior = before.entities.get(key)?.accountReplicas.get(tx.data.fromEntityId);
+          const child = rt.entities.get(key)?.accountReplicas.get(tx.data.fromEntityId);
+          // a proposer that wins the simultaneous-proposal tie keeps its own frame (og: the left side ignores the right's proposal)
+          if (child !== undefined && out.rejected.length === 0 && prior?._tag !== "proposed") expect(child.head._tag === "installed" && child.head.height >= BigInt(tx.data.frame.height)).toBe(true);
+        }
+        clock += 1n;
+        for (const o of out.outbox) {
+          if ("input" in o && o.input.kind === "txs" && o.input.txs.length === 0 && o.to === input.entityId) continue;
+          queue.push(unwrap(convertOutput(rt, o, input.entityId, clock)));
+        }
+      }
+      return rt;
+    };
+    const create = (id: EntityId, txs: EntityTx[]): RoutedEntityInput => ({ entityId: id, signerId: signers.get(id) as Address, input: { kind: "txs", timestamp: (clock += 10n), txs } });
+    const open = (to: EntityId): EntityTx => ({ type: "openAccount", data: { targetEntityId: to, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig, creditAmount: 1000n, tokenId: t1 } } as EntityTx);
+    let rt = spawn(spawn(spawn(createRuntime(), party(ALICE)), party(BOB)), party(CAROL));
+    rt = quiet(rt, [create(BOB, [open(ALICE), open(CAROL)])]);
+    rt = quiet(rt, [create(ALICE, [{ type: "extendCredit", data: { counterpartyEntityId: BOB, tokenId: t1, amount: 1000n } } as EntityTx]), create(CAROL, [{ type: "extendCredit", data: { counterpartyEntityId: BOB, tokenId: t1, amount: 1000n } } as EntityTx])]);
+    const ids = [ALICE, BOB, CAROL];
+    for (let round = 0; round < 40; round++) {
+      const from = ids[gi(3)] as EntityId, to = from === BOB ? (gi(2) === 0 ? ALICE : CAROL) : BOB;
+      const tx: EntityTx = { type: "directPayment", data: { targetEntityId: to, tokenId: t1, amount: BigInt(1 + gi(5)), route: [from, to], deliveryMode: "direct" } } as EntityTx;
+      rt = quiet(rt, gi(3) === 0 ? [create(from, [tx]), create(to === BOB ? BOB : to, [{ ...tx, data: { ...(tx.data as any), targetEntityId: from, route: [to, from] } } as EntityTx])] : [create(from, [tx])]);
+    }
+    expect(received).toBeGreaterThan(40);
   });
 });
