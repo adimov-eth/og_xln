@@ -40,6 +40,9 @@ import { buildQuorumHanko as ogQuorumHanko } from "../../core/hanko/signing.ts";
 import { buildEntityLeaderVoteBody as ogVoteBody, buildPreparedFrameEvidence as ogPreparedEvidence } from "../../core/entity/consensus/leader/index.ts";
 import { applyEntityInput as applyEntityInputRw, localTimeoutVote, quorumBoardHash, type EntityInput } from "../xln.ts";
 import { crypto } from "../xln_run.ts";
+import { encodeBuffer as ogEncodeBuffer } from "../../core/storage/codec/codec.ts";
+import { prepareRuntimeOutputRows as ogOutputRows } from "../../core/storage/wal/outbox-payload.ts";
+import { runtimeOutputRows, runtimeOutputsDigest } from "../xln.ts";
 import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "../../core/jurisdiction/machine/events/event-normalization.ts";
 import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
 import { verifyAccountSignature as ogVerifyAccountSignature, registerSignerKey } from "../../core/account/crypto.ts";
@@ -1149,5 +1152,112 @@ describe("runtime-final: certified frame head and og-wire leader votes in replic
     expect(got).toEqual(want);
     expect(digest).toBe(wantDigest);
     expect(prepared).toBe(4);
+  });
+});
+
+// ---- og storage/wal/outbox-payload.ts prepareRuntimeOutputRows: each outbox row is og's RoutedEntityInput wire (entity/types.ts EntityInput) ----
+describe("runtime-final: outbox rows on og's RoutedEntityInput wire (og storage/wal/outbox-payload.ts, delivery/entity-output-signer.ts)", () => {
+  const sig0x = (s: string): string => (s.startsWith("0x") ? s : `0x${s}`);
+  type Members = readonly (readonly [Address, bigint])[];
+  const lazyEntity = (members: Members, threshold: bigint): EntityId => unwrap(rwEntityId(quorumBoardHash({ _tag: "teaching", threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])) })));
+  const validator = (members: Members, threshold: bigint, signer: Address): EntityReplica =>
+    unwrap(createEntity({ id: lazyEntity(members, threshold), jurisdiction: TERMS.domain, threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])), signerId: signer }));
+  const ogConfig = (s: EntityState) => {
+    const q = s.quorum as unknown as { threshold: bigint; members: ReadonlyMap<string, { shares: bigint }> }, m = [...q.members];
+    return { mode: "proposer-based" as const, threshold: q.threshold, validators: m.map(([a]) => a.toLowerCase()), shares: Object.fromEntries(m.map(([a, x]) => [a.toLowerCase(), x.shares])) };
+  };
+  /** og's EntityFrame for a rewrite frame, `collectedSigs` re-signed per manifest entry for the given signers. */
+  const ogFrameOf = (f: EntityFrame, signers: readonly string[]) => ({
+    height: Number(f.height), parentFrameHash: f.prevFrameHash, stateRoot: f.stateRoot, authorityRoot: f.authorityRoot, timestamp: Number(f.timestamp), entityContext: f.entityContext,
+    txs: f.txs.map(wireEntityTx), events: f.events, hash: unwrap(hashEntityFrame(f)), leader: { proposerSignerId: f.leader.proposerSignerId, view: f.leader.view }, hashesToSign: f.hashesToSign.map((h) => ({ ...h })),
+    collectedSigs: new Map(signers.map((s) => [s, f.hashesToSign.map((h) => sig0x(unwrap(crypto.sign(h.hash as never, s as Address))))])),
+  });
+  /** og RoutedEntityInput for one rewrite output, built from og's own builders (vote body, prepared evidence, quorum Hanko). */
+  const ogOutput = async (o: EntityOutput, state: EntityState, signerOf: (to: string) => string): Promise<unknown> => {
+    const marker = o.atomicCrossJurisdictionPair === undefined ? {} : { atomicCrossJurisdictionPair: { ...o.atomicCrossJurisdictionPair } };
+    if (!("input" in o)) return { entityId: o.to, signerId: signerOf(o.to), entityTxs: [wireEntityTx(o.tx)], ...marker };
+    const i = o.input, base = { entityId: o.to, signerId: o.signerId.toLowerCase(), ...marker };
+    if (i.kind === "txs") return { ...base, entityTxs: i.txs.map(wireEntityTx) };
+    if (i.kind === "precommit") return { ...base, hashPrecommitFrame: { height: Number(i.height), frameHash: i.frameHash }, hashPrecommits: new Map([...i.signatures].map(([k, v]) => [k, v.map(sig0x)])) };
+    if (i.kind === "proposal") {
+      const frame = ogFrameOf(i.frame, [...i.signatures.keys()]);
+      const hankos = i.hankos === undefined ? undefined : [await ogQuorumHanko({} as never, state.id, frame.hash, [...frame.collectedSigs].map(([s, v]) => ({ signerId: s, signature: v[0] as string })), ogConfig(state))];
+      return { ...base, proposedFrame: { ...frame, ...(hankos === undefined ? {} : { hankos }) } };
+    }
+    if (i.kind === "leaderTimeoutVote") {
+      const v = i.vote, pf = v.preparedFrame, view = { entityId: state.id, height: 0, prevFrameHash: "genesis", config: ogConfig(state) };
+      return { ...base, leaderTimeoutVote: { ...ogVoteBody(view as never), voterId: v.voterId, signature: sig0x(v.signature), ...(pf === undefined ? {} : { preparedFrame: ogPreparedEvidence(ogFrameOf(pf.frame, [...pf.signatures.keys()]) as never) }) } };
+    }
+    throw new Error(`lane ${i.kind}`);
+  };
+  const expectRows = async (rt: Runtime, outbox: readonly EntityOutput[], stateOf: (o: EntityOutput) => EntityState, signerOf: (to: string) => string): Promise<void> => {
+    const og = await Promise.all(outbox.map((o) => ogOutput(o, stateOf(o), signerOf)));
+    const rows = unwrap(runtimeOutputRows(rt, outbox)), hex = (b: Uint8Array): string => Buffer.from(b).toString("hex");
+    expect(rows.map(hex)).toEqual(og.map((x) => hex(ogEncodeBuffer(x, { omitSymbolKeys: true }))));
+    expect(sig0x(unwrap(runtimeOutputsDigest(rows)))).toBe(ogOutputRows(1, og as never).commitment.digest);
+  };
+  test("MATCH (randomized): 40 validator sets -- every Entity output (forwarded txs, proposals, precommits, commit notices with og's frame Hanko) encodes as og RoutedEntityInput; the outbox digest equals og prepareRuntimeOutputRows", async () => {
+    seed = 163;
+    let notices = 0, lanes = new Set<string>();
+    for (let n = 0; n < 40; n++) {
+      const pool = [aliceAddr, bobAddr, carolAddr] as Address[], size = 2 + ri(2);
+      const members: Members = pool.slice(0, size).map((a) => [a, BigInt(1 + ri(2))] as const);
+      const total = members.reduce((t, [, s]) => t + s, 0n), threshold = 1n + BigInt(ri(Number(total)));
+      const reps = new Map(members.map(([a]) => [a.toLowerCase(), validator(members, threshold, a)] as const));
+      const outbox: EntityOutput[] = [];
+      const ceo = String((reps.values().next().value as EntityReplica).state.quorum.proposer).toLowerCase(), other = [...reps.keys()].find((k) => k !== ceo) as string;
+      for (let k = 1, frames = 1 + ri(3); k <= frames; k++) {
+        // a non-leader forwards its mempool to the leader; the leader proposes
+        const first = rng() < 0.3 ? other : ceo;
+        const queue: [string, EntityInput][] = [[first, { kind: "txs", timestamp: NOW + BigInt(k), txs: Array.from({ length: 1 + ri(2) }, (_, i) => ({ type: "chat", data: { from: first, message: `m${n}.${k}.${i}` } }) as EntityTx) }]];
+        for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+          const [s, input] = next, r = reps.get(s);
+          if (r === undefined) continue;
+          const applied = applyEntityInputRw(r, input, { ...verifiers, self: r.state.id, signerId: s as Address });
+          if (!applied.ok && applied.error._tag === "precommit_not_active") continue;
+          const out = unwrap(applied);
+          reps.set(s, out.replica);
+          for (const o of out.outputs) {
+            const marked = rng() < 0.15 ? { ...o, atomicCrossJurisdictionPair: { phase: pick(["proposal", "ack"] as const), pairKey: `k${ri(9)}` } } : o;
+            outbox.push(marked);
+            if ("input" in o) { queue.push([o.signerId.toLowerCase(), o.input]); lanes.add(o.input.kind); if (o.input.kind === "proposal" && o.input.hankos !== undefined) notices += 1; }
+          }
+        }
+      }
+      let rt = createRuntime();
+      for (const r of reps.values()) rt = spawn(rt, r);
+      const state = (reps.get(ceo) as EntityReplica).state;
+      await expectRows(rt, outbox, () => state, () => { throw new Error("no account output"); });
+    }
+    expect([...lanes].sort()).toEqual(["precommit", "proposal", "txs"]);
+    expect(notices).toBeGreaterThan(20);
+  }, 120_000);
+  test("MATCH: timeout votes with prepared frames and an Account message bound to the receiving replica's active leader (og resolveEntityProposerId) encode as og RoutedEntityInput", async () => {
+    const members: Members = [[aliceAddr as Address, 1n], [bobAddr as Address, 1n], [carolAddr as Address, 1n]];
+    const [a, b, c] = members.map(([s]) => s.toLowerCase()) as [string, string, string];
+    const reps = new Map(members.map(([s]) => [s.toLowerCase(), validator(members, 3n, s)] as const));
+    const ctxOf = (s: string) => ({ ...verifiers, self: (reps.get(s) as EntityReplica).state.id, signerId: s as Address });
+    const ceo = unwrap(applyEntityInputRw(reps.get(a) as EntityReplica, { kind: "txs", timestamp: NOW, txs: [{ type: "chat", data: { from: a, message: "held" } } as EntityTx] }, ctxOf(a)));
+    for (const o of ceo.outputs) if ("input" in o) { const s = o.signerId.toLowerCase(); reps.set(s, unwrap(applyEntityInputRw(reps.get(s) as EntityReplica, o.input, ctxOf(s))).replica); }
+    const outbox: EntityOutput[] = [];
+    for (const s of [b, c]) {
+      const vote = localTimeoutVote(reps.get(s) as EntityReplica, NOW + 10_000n);
+      if (vote === undefined) throw new Error("no vote");
+      const out = unwrap(applyEntityInputRw(reps.get(s) as EntityReplica, vote, ctxOf(s)));
+      reps.set(s, out.replica);
+      outbox.push(...out.outputs);
+    }
+    expect(outbox.filter((o) => "input" in o && o.input.kind === "leaderTimeoutVote" && o.input.vote.preparedFrame !== undefined).length).toBe(4);
+    let rt = createRuntime();
+    for (const r of reps.values()) rt = spawn(rt, r);
+    await expectRows(rt, outbox, () => (reps.get(a) as EntityReplica).state, () => { throw new Error("no account output"); });
+    // an Account opening from solo ALICE to solo BOB: the Account message binds BOB's active leader
+    const solo = (id: EntityId, signer: string) => unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[signer as Address, { shares: 1n }]]), signerId: signer as Address }));
+    const ab = spawn(spawn(createRuntime(), solo(ALICE, aliceAddr)), solo(BOB, bobAddr));
+    const open: EntityTx = { type: "openAccount", data: { targetEntityId: BOB, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig } } as EntityTx;
+    const step = unwrap(applyRuntime(ab, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW, txs: [open] } }] }, verifiers));
+    const accountOut = step.outbox.filter((o) => !("input" in o));
+    expect(accountOut.length).toBe(1);
+    await expectRows(step.runtime, step.outbox, () => (step.runtime.entities.values().next().value as EntityReplica).state, (to) => (to === BOB ? bobAddr.toLowerCase() : ""));
   });
 });

@@ -4943,7 +4943,8 @@ export type EntityOutput = ({ readonly to: EntityId; readonly tx: OutputTx } | {
 /** og EntityInput lanes: `entityTxs`, `proposedFrame` (+`collectedSigs`), `hashPrecommitFrame` + `hashPrecommits`. */
 export type EntityInput =
   | { readonly kind: "txs"; readonly timestamp: bigint; readonly txs: readonly EntityTx[] }
-  | { readonly kind: "proposal"; readonly frame: EntityFrame; readonly signatures: Precommits }
+  /** `hankos`: og's commit notice carries the committed frame's own Hanko (og installCommittedState `frame.hankos = [hankos[0]]`); receivers rebuild it. */
+  | { readonly kind: "proposal"; readonly frame: EntityFrame; readonly signatures: Precommits; readonly hankos?: readonly Hanko[] | undefined }
   | { readonly kind: "precommit"; readonly height: bigint; readonly frameHash: EntityFrameHash; readonly signatures: Precommits }
   /** og `leaderTimeoutVote` lane. `local` is og's process-local marker: the scheduler's unsigned intent for this replica's own signer, never set on an output. */
   | { readonly kind: "leaderTimeoutVote"; readonly timestamp: bigint; readonly vote: LeaderVote; readonly local?: boolean | undefined }
@@ -10841,7 +10842,7 @@ const commitEffects = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHas
  * og buildCertifiedEntityFrameLink + projectCertifiedEntityFrameLinkIdentity: the frame's manifest head, the first signature of each signer,
  * the entity-frame Hanko over the post-frame board (og installCommittedState `hankos[0]`), the leader and the post-frame authority.
  */
-const certifiedLink = (frame: EntityFrame, frameHash: EntityFrameHash, signatures: Precommits, state: EntityState): Result<Binary, EntityError> => {
+const certifiedLink = (frame: EntityFrame, frameHash: EntityFrameHash, signatures: Precommits, state: EntityState): Result<{ readonly link: Binary; readonly hanko: Hanko }, EntityError> => {
   const head = frame.hashesToSign[0];
   if (head === undefined || head.type !== "entityFrame" || head.hash !== frameHash) return invariant(`ENTITY_CERTIFIED_LINK_FRAME_MANIFEST_INVALID:${frame.height}:${frameHash}`);
   if (signatures.size === 0) return invariant(`ENTITY_CERTIFIED_LINK_SIGNATURES_MISSING:${frame.height}:${frameHash}`);
@@ -10850,13 +10851,13 @@ const certifiedLink = (frame: EntityFrame, frameHash: EntityFrameHash, signature
   if (missing !== undefined) return invariant(`ENTITY_CERTIFIED_LINK_FRAME_SIGNATURE_MISSING:${frame.height}:${missing}`);
   const config = rootConfig(state), active = signerId(state.leaderState?.activeValidatorId ?? config.validators[0] ?? "");
   if (active.length === 0) return invariant("ENTITY_FRAME_AUTHORITY_LEADER_MISSING");
-  return chain(quorumHanko(state, frameHash, first), (hanko) => map(leaderBinary(frame.leader, false), (leader): Binary => ({
+  return chain(quorumHanko(state, frameHash, first), (hanko) => map(leaderBinary(frame.leader, false), (leader) => ({ hanko, link: {
     frameHash: lower(frameHash), parentFrameHash: frame.prevFrameHash, stateRoot: lower(frame.stateRoot), authorityRoot: lower(frame.authorityRoot), leader,
     hashesToSign: [{ hash: head.hash, type: head.type, context: head.context }], collectedSigs: precommitsBinary(new Map([...first].map(([id, s]) => [id, [s]]))), hankos: [hanko],
     postAuthority: { config: binaryOf(config), leaderState: { activeValidatorId: active, view: state.leaderState?.view ?? 0, changedAtHeight: state.leaderState?.changedAtHeight ?? 0 } },
-  })));
+  } as Binary })));
 };
-const publishFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean | Quorum, draft: Draft): Result<EntityApply<OpenEntity>, EntityError> => chain(certifiedLink(r.frame, frameHash, signatures, draft.state), (link) => {
+const publishFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean | Quorum, draft: Draft): Result<EntityApply<OpenEntity>, EntityError> => chain(certifiedLink(r.frame, frameHash, signatures, draft.state), ({ link, hanko }) => {
   // og finalizeCommitNotification broadcastValidators: the committed (post-frame) board unless a handover names the retired one
   const board = broadcast === true ? draft.state.quorum : broadcast === false ? undefined : broadcast;
   const others = board === undefined ? [] : [...membersOf(board).keys()].filter((v) => signerId(v) !== signerId(r.signerId));
@@ -10867,7 +10868,7 @@ const publishFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash
     ...opt("jPrefixRound", r.jPrefixRound !== undefined && r.jPrefixRound.targetEntityHeight > Number(r.frame.height) ? r.jPrefixRound : undefined) };
   // og finalizeCommitNotification emitter: the relay certificate's next leader for exactly this frame, else the frame's proposer.
   const emitter = pending !== undefined ? pending.nextLeaderId : r.frame.leader.proposerSignerId;
-  return ok(done(opened, [...publishCommitted(draft.outputs, r.signerId, emitter), ...others.map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "proposal", frame: r.frame, signatures } }))]));
+  return ok(done(opened, [...publishCommitted(draft.outputs, r.signerId, emitter), ...others.map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "proposal", frame: r.frame, signatures, hankos: [hanko] } }))]));
 });
 /** og admitEntityTransactions + startEntityProposalIfReady: queue, forward a non-leader mempool to the leader, or propose from the mempool. */
 const admitTxs = <R extends EntityReplica>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<R, EntityError> => {
@@ -15979,10 +15980,36 @@ export const runtimeView = (rt: Runtime): { readonly [key: string]: Binary } => 
   };
 };
 export type RuntimeFrameCommit = { readonly runtime: Runtime; readonly frame: StorageFrame; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly queuedRetries: readonly RuntimeTx[]; readonly rejected: readonly RuntimeError[] };
-const outputRows = (outbox: readonly EntityOutput[]): Result<readonly Uint8Array[], RuntimeError> => traverse(outbox, (o) => encodeBinary(binaryOf(o)));
+/** og EntityInput wire lanes (entity/types.ts): `entityTxs`, `proposedFrame` (with a commit notice's `hankos`), `hashPrecommitFrame` + `hashPrecommits`, `leaderTimeoutVote`, `jPrefixAttestations`. The rewrite's Runtime-clock stamps are not wire fields. */
+const inputBinary = (input: EntityInput): Result<{ readonly [k: string]: Binary }, RuntimeError> => matchBy("kind", input, {
+  txs: (i): Result<{ readonly [k: string]: Binary }, RuntimeError> => map(traverse(i.txs, entityFrameTx), (entityTxs) => ({ entityTxs: entityTxs as unknown as Binary })),
+  proposal: (i): Result<{ readonly [k: string]: Binary }, RuntimeError> => map(frameBinary(i.frame, i.signatures, false), (f) => ({ proposedFrame: i.hankos === undefined ? f : { ...(f as { readonly [k: string]: Binary }), hankos: [...i.hankos] } })),
+  precommit: (i): Result<{ readonly [k: string]: Binary }, RuntimeError> => map(frameNumber(i.height), (height) => ({ hashPrecommitFrame: { height, frameHash: i.frameHash }, hashPrecommits: precommitsBinary(i.signatures) })),
+  leaderTimeoutVote: (i): Result<{ readonly [k: string]: Binary }, RuntimeError> => map(voteBinary(i.vote), (leaderTimeoutVote) => ({ leaderTimeoutVote })),
+  jPrefixAttestations: (i): Result<{ readonly [k: string]: Binary }, RuntimeError> => ok({ jPrefixAttestations: jpBinary(i.attestations) }),
+});
+/**
+ * og resolveEntityProposerId for an Account message: the receiving Entity's local replica that is its active leader, else its first local replica.
+ * og first tries the certified Account counterparty route and falls back to verified gossip routes; the rewrite models neither, so a receiver
+ * without a local replica binds no signer.
+ */
+const outputSigner = (rt: Runtime, to: EntityId): string | undefined => {
+  const local = [...rt.entities.values()].filter((r) => lower(r.state.id) === lower(to));
+  const chosen = local.find(isActiveLeader) ?? local[0];
+  return chosen === undefined ? undefined : lower(chosen.signerId);
+};
+/** og RoutedEntityInput as prepareRuntimeOutputRows encodes it: destination, bound signer, the input's wire lane, the cohort marker. */
+const outputBinary = (rt: Runtime, o: EntityOutput): Result<Binary, RuntimeError> => {
+  const marker = o.atomicCrossJurisdictionPair === undefined ? {} : { atomicCrossJurisdictionPair: binaryOf(o.atomicCrossJurisdictionPair) };
+  if ("input" in o) return map(inputBinary(o.input), (lane): Binary => ({ entityId: o.to, signerId: lower(o.signerId), ...lane, ...marker }));
+  const signer = outputSigner(rt, o.to);
+  return map(entityFrameTx(o.tx), (tx): Binary => ({ entityId: o.to, ...(signer === undefined ? {} : { signerId: signer }), entityTxs: [tx as unknown as Binary], ...marker }));
+};
+/** og prepareRuntimeOutputRows: one encodeBuffer row per outbox output, in order. */
+export const runtimeOutputRows = (rt: Runtime, outbox: readonly EntityOutput[]): Result<readonly Uint8Array[], RuntimeError> => traverse(outbox, (o) => chain(outputBinary(rt, o), encodeBinary));
 const sealFrame = (rt: Runtime, step: RuntimeStep): Result<RuntimeFrameCommit, RuntimeError> => {
   const after = step.runtime;
-  return chain(frameNumber(after.height), (height) => chain(frameNumber(after.timestamp), (timestamp) => chain(outputRows(step.outbox), (rows) => chain(runtimeOutputsDigest(rows), (outputsDigest) =>
+  return chain(frameNumber(after.height), (height) => chain(frameNumber(after.timestamp), (timestamp) => chain(runtimeOutputRows(after, step.outbox), (rows) => chain(runtimeOutputsDigest(rows), (outputsDigest) =>
     chain(replicaMetaRows(after), (metaRows) => chain(replicaMetaDigest(metaRows), (metaDigest) => chain(runtimeComponentDigests(runtimeView(after)), (components) =>
       chain(storagePostStateHash({ height, timestamp, replicaMetaDigest: metaDigest, runtimeComponentDigests: components, runtimeOutputCount: rows.length, runtimeOutputsDigest: outputsDigest }), (postStateHash) =>
         chain(canonicalEntityHashes(after), (entityHashes) => {
