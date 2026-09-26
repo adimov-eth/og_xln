@@ -5891,15 +5891,13 @@ const disputePeerOf = (self: string, sender: string, counterentity: string): str
  */
 export const disputeStartedEffects = (state: EntityState, e: { readonly sender: string; readonly counterentity: string; readonly proofbodyHash: string; readonly disputeTimeout: number; readonly starterInitialArguments?: string | undefined; readonly batchNonce?: number | undefined }, timestamp: number): Result<DisputeJEffects, EntityError> => {
   if ((e.starterInitialArguments ?? "0x") !== "0x" && e.starterInitialArguments !== "") return invariant("DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED");
-  const self = rowId(state.id), sender = rowId(e.sender), peer = disputePeerOf(self, e.sender, e.counterentity), weAreStarter = sender === self, initialHash = String(e.proofbodyHash).toLowerCase();
-  const synced = syncBatchNonce(committedJBatch(state) as RetiringJBatch | undefined, sender, self, e.batchNonce);
-  const ownSent = weAreStarter && (synced.jb?.sentBatch?.batch["disputeStarts"] ?? []).some((s) => rowId((s as BatchRow).counterentity) === peer && String((s as { readonly proofbodyHash?: unknown }).proofbodyHash || "").toLowerCase() === initialHash);
-  const retired = synced.jb === undefined ? undefined : retireJBatch(synced.jb, [scrubStarts(peer), scrubCountersForStart(peer, initialHash)], ownSent);
+  const self = rowId(state.id), peer = disputePeerOf(self, e.sender, e.counterentity), weAreStarter = rowId(e.sender) === self;
+  const retired = startedRetirement(committedJBatch(state) as RetiringJBatch | undefined, self, e);
   return map(crontabOf(state), (crontab) => {
     const hooked = scheduleHook(crontab, { id: `dispute-deadline:${peer}`, triggerAt: Math.max(0, Number.isFinite(timestamp) ? timestamp : 0) + (weAreStarter ? 1 : 5000), type: "dispute_deadline", data: { accountId: peer } });
-    const messages = [...(synced.message === undefined ? [] : [synced.message]), ...(retired !== undefined && retired.removed > 0 ? [`🧹 Removed ${retired.removed} stale dispute-start op(s) for ${peer.slice(-4)}`] : []),
+    const messages = [...(retired.synced === undefined ? [] : [retired.synced]), ...(retired.removed > 0 ? [`🧹 Removed ${retired.removed} stale dispute-start op(s) for ${peer.slice(-4)}`] : []),
       `⚔️ DISPUTE ${weAreStarter ? "STARTED" : "vs us"} with ${peer.slice(-4)}, timeout: unix ${e.disputeTimeout}`];
-    return { state: withCrontab(withJBatch(state, retired?.jb ?? synced.jb), hooked), events: messages.map(status), broadcast: retired?.broadcast ?? false };
+    return { state: withCrontab(withJBatch(state, retired.jb), hooked), events: messages.map(status), broadcast: retired.broadcast };
   });
 };
 /**
@@ -5909,18 +5907,47 @@ export const disputeStartedEffects = (state: EntityState, e: { readonly sender: 
  * registration for the Account (keeping a sent batch that will acknowledge exactly this finalization).
  */
 export const disputeFinalizedEffects = (state: EntityState, e: { readonly sender: string; readonly counterentity: string; readonly initialProofbodyHash: string; readonly batchNonce?: number | undefined; readonly initialNonce: number; readonly hadActiveDispute: boolean; readonly settlementInvalidated: boolean }): Result<DisputeJEffects, EntityError> => {
-  const self = rowId(state.id), sender = rowId(e.sender), peer = disputePeerOf(self, e.sender, e.counterentity), initialHash = String(e.initialProofbodyHash || "").toLowerCase();
-  const synced = syncBatchNonce(committedJBatch(state) as RetiringJBatch | undefined, sender, self, e.batchNonce), sent = synced.jb?.sentBatch;
+  const self = rowId(state.id), peer = disputePeerOf(self, e.sender, e.counterentity), retired = finalizedRetirement(committedJBatch(state) as RetiringJBatch | undefined, self, e);
+  return map(crontabOf(state), (crontab) => {
+    const messages = [...(retired.synced === undefined ? [] : [retired.synced]), ...(e.settlementInvalidated ? [`🧹 Invalidated stale settlement intent after dispute finality with ${peer.slice(-4)}`] : []),
+      ...(e.hadActiveDispute ? [`✅ DISPUTE FINALIZED with ${peer.slice(-4)} (nonce ${e.initialNonce})`] : []), ...(retired.removed > 0 ? [`🧹 Removed ${retired.removed} stale dispute-finalize op(s) for ${peer.slice(-4)}`] : [])];
+    const next = withJBatch(state, retired.jb);
+    return { state: e.hadActiveDispute ? withCrontab(next, cancelHook(crontab, `dispute-deadline:${peer}`)) : next, events: messages.map(status), broadcast: retired.broadcast };
+  });
+};
+/** og J7's J-batch part, shared by the Entity (its committed jBatchState) and the Host (its JBatchState): the nonce sync, then the retirement. */
+type RetiredJBatch = { readonly jb: RetiringJBatch | undefined; readonly synced?: string | undefined; readonly removed: number; readonly broadcast: boolean };
+const retiredWith = (synced: ReturnType<typeof syncBatchNonce>, scrubs: readonly Scrub[], keepSent: boolean): RetiredJBatch => {
+  if (synced.jb === undefined) return { jb: undefined, ...opt("synced", synced.message), removed: 0, broadcast: false };
+  const r = retireJBatch(synced.jb, scrubs, keepSent);
+  return { jb: r.jb, ...opt("synced", synced.message), removed: r.removed, broadcast: r.broadcast };
+};
+/** og initializeStartedDispute: every stale start and non-binding counter-proof for the Account goes, keeping our own sent start until its HankoBatchProcessed. */
+const startedRetirement = (jb: RetiringJBatch | undefined, self: string, e: { readonly sender: string; readonly counterentity: string; readonly proofbodyHash: string; readonly batchNonce?: number | undefined }): RetiredJBatch => {
+  const sender = rowId(e.sender), peer = disputePeerOf(self, e.sender, e.counterentity), initialHash = String(e.proofbodyHash).toLowerCase();
+  const synced = syncBatchNonce(jb, sender, self, e.batchNonce);
+  const ownSent = sender === self && (synced.jb?.sentBatch?.batch["disputeStarts"] ?? []).some((s) => rowId((s as BatchRow).counterentity) === peer && String((s as { readonly proofbodyHash?: unknown }).proofbodyHash || "").toLowerCase() === initialHash);
+  return retiredWith(synced, [scrubStarts(peer), scrubCountersForStart(peer, initialHash)], ownSent);
+};
+/** og retireFinalizedDisputeState: every finalization, counter-proof and Source hash-ladder registration for the Account goes, keeping a sent batch that acknowledges exactly this finalization. */
+const finalizedRetirement = (jb: RetiringJBatch | undefined, self: string, e: { readonly sender: string; readonly counterentity: string; readonly initialProofbodyHash?: string | undefined; readonly batchNonce?: number | undefined }): RetiredJBatch => {
+  const sender = rowId(e.sender), peer = disputePeerOf(self, e.sender, e.counterentity), initialHash = String(e.initialProofbodyHash || "").toLowerCase();
+  const synced = syncBatchNonce(jb, sender, self, e.batchNonce), sent = synced.jb?.sentBatch;
   // og sentBatchOwnsDisputeFinalityAck
   const ownAck = sender === self && sent !== undefined && e.batchNonce !== undefined && Number.isSafeInteger(e.batchNonce) && e.batchNonce > 0 && sent.entityNonce === e.batchNonce
     && (sent.batch["disputeFinalizations"] ?? []).some((f) => rowId((f as BatchRow).counterentity) === peer && String((f as BatchRow).initialProofbodyHash || "").toLowerCase() === initialHash);
-  const retired = synced.jb === undefined ? undefined : retireJBatch(synced.jb, [scrubFinalizations(peer), scrubCounters(peer), scrubSourceLadders(peer)], ownAck);
-  return map(crontabOf(state), (crontab) => {
-    const messages = [...(synced.message === undefined ? [] : [synced.message]), ...(e.settlementInvalidated ? [`🧹 Invalidated stale settlement intent after dispute finality with ${peer.slice(-4)}`] : []),
-      ...(e.hadActiveDispute ? [`✅ DISPUTE FINALIZED with ${peer.slice(-4)} (nonce ${e.initialNonce})`] : []), ...(retired !== undefined && retired.removed > 0 ? [`🧹 Removed ${retired.removed} stale dispute-finalize op(s) for ${peer.slice(-4)}`] : [])];
-    const next = withJBatch(state, retired?.jb ?? synced.jb);
-    return { state: e.hadActiveDispute ? withCrontab(next, cancelHook(crontab, `dispute-deadline:${peer}`)) : next, events: messages.map(status), broadcast: retired?.broadcast ?? false };
-  });
+  return retiredWith(synced, [scrubFinalizations(peer), scrubCounters(peer), scrubSourceLadders(peer)], ownAck);
+};
+/**
+ * og J7 on the Host's jBatchState for a DisputeStarted / DisputeFinalized whose Account is the Host's one Account: the nonce sync and J batch
+ * retirement, and og queueLocalJBatchBroadcast as a `j_broadcast_request`. The Host carries no crontab and no Entity messages (those are
+ * disputeStartedEffects / disputeFinalizedEffects on the Entity); secrets in the starter's arguments are refused as there.
+ */
+export const hostDisputeJBatch = (j: JState, self: string, e: Extract<JEvent, { readonly type: "DisputeStarted" | "DisputeFinalized" }>): Result<{ readonly j: JState; readonly effects: readonly HostEffect[] }, JObserveError> => {
+  if (e.type === "DisputeStarted" && e.starterInitialArguments !== "0x" && e.starterInitialArguments !== "") return err({ _tag: "j_observe", reason: "DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED" });
+  const jb = j.jBatch as unknown as RetiringJBatch | undefined;
+  const r = e.type === "DisputeStarted" ? startedRetirement(jb, rowId(self), e) : finalizedRetirement(jb, rowId(self), e);
+  return ok({ j: r.jb === undefined ? j : { ...j, jBatch: r.jb as unknown as JBatchState }, effects: r.broadcast ? [{ _tag: "j_broadcast_request", entityId: self }] : [] });
 };
 // ---- Account Hankos through the Entity manifest: og accountInput response + proposePendingAccountFrames, hanko-witness.ts, hanko/signing.ts ----
 /**
@@ -9151,7 +9178,7 @@ const routeEntity = (tx: EntityRouteTx, self: EntityId, id: AccountId): Result<A
  * og j-events.ts applyDisputeStartedJEvent / applyDisputeFinalizedJEvent (J7 dispatch): a DisputeStarted / DisputeFinalized event whose account
  * (og resolveDisputeAccountContext: the counterentity when we sent it, else the sender) is the Host's one Account becomes that Account's
  * external_finality, built by disputeStartedInput / disputeFinalizedInput against the frozen Account's current proof body. Other Accounts' events are
- * og's `account_missing` no-op. Not ported here: counter-proof selection, jBatch scrubbing, crontab dispute-deadline hooks, HTLC / cross-j follow-ups.
+ * og's `account_missing` no-op. The Host's jBatchState then takes og's J-batch retirement (hostDisputeJBatch). Not ported here: counter-proof selection, HTLC / cross-j follow-ups.
  */
 const disputeFinalityOf = (host: Host, op: JOp, peer: EntityId): Result<AccountFinality | undefined, HostError> => {
   if (op.type !== "j_event" || (op.event.type !== "DisputeStarted" && op.event.type !== "DisputeFinalized")) return ok(undefined);
@@ -9173,8 +9200,9 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
   },
   j: (i) => chain(partyOf(replicaId(host.account), host.self), (party) => chain(applyJ(host.j, i.tx, host.self, party.peer, ctx, host.account.state), ({ j, effects, release }) => {
     const moved: Host = { ...host, j, account: releaseLatches(host.account, party.peer, release) };
-    return chain(disputeFinalityOf(host, i.tx, party.peer), (finality): Result<HostStep, AccountReplicaError | HostError> => (finality === undefined ? ok(step(moved, effects))
-      : map(accountStep(moved, applyAccountInput(host.account, { kind: "external_finality", ...envelopeOf(host.account.state.terms, party), finality }, { verify, self: host.self, now: ctx.timestamp })), (s) => step(s.state, [...effects, ...s.effects]))));
+    return chain(disputeFinalityOf(host, i.tx, party.peer), (finality): Result<HostStep, AccountReplicaError | HostError> => (finality === undefined || i.tx.type !== "j_event" || (i.tx.event.type !== "DisputeStarted" && i.tx.event.type !== "DisputeFinalized") ? ok(step(moved, effects))
+      : chain(map(accountStep(moved, applyAccountInput(host.account, { kind: "external_finality", ...envelopeOf(host.account.state.terms, party), finality }, { verify, self: host.self, now: ctx.timestamp })), (s) => step(s.state, [...effects, ...s.effects])),
+        (s) => map(hostDisputeJBatch(s.state.j, host.self, (i.tx as Extract<JOp, { readonly type: "j_event" }>).event as Extract<JEvent, { readonly type: "DisputeStarted" | "DisputeFinalized" }>), (b) => step({ ...s.state, j: b.j }, [...s.effects, ...b.effects])))));
   })),
   ladder: (i) => { const key = ladderKey(i.tx); return map(revealSlot(host.ladder.get(key), i.tx), (slot) => step({ ...host, ladder: mapSet(host.ladder, key, slot) })); },
   entity: (i) => chain(routeEntity(i.tx, host.self, replicaId(host.account)), (routed) => admitTx(host, routed, ctx, verify)),

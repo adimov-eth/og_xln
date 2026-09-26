@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { ethers } from "ethers";
 import {
-  createEntity, derivedDeadlines, sanitizeDisputeArgument, disputeFinalizedEffects, disputeStartedEffects, dueWakeJobs, entityRootOf, executeCrontab, foldTxs, initCrontab, prioritizeWake, scheduleHook, withCrontab, crontabOf, wireEntityTx, genesisHost, localProof, committedView, ZERO_WORD,
+  createEntity, derivedDeadlines, sanitizeDisputeArgument, disputeFinalizedEffects, disputeStartedEffects, dueWakeJobs, entityRootOf, executeCrontab, foldTxs, initCrontab, prioritizeWake, scheduleHook, withCrontab, crontabOf, wireEntityTx, genesisHost, applyHost, localProof, committedView, ZERO_WORD,
   type AccountReplica, type ActiveDispute, type Binary, type Crontab, type EntityError, type EntityId, type EntityState, type EntityTx, type PaybookEntry, type ScheduledHook, type ScheduledWakeJob,
 } from "../xln.ts";
 import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, genesisAB, hankoVerify, unwrap } from "../xln_run.ts";
@@ -362,6 +362,44 @@ describe("scheduler-disputes: J7 Entity-side dispute effects (og entity/tx/j-eve
     expect([removedAny > 50, broadcasts > 10, synced > 5]).toEqual([true, true, true]);
     // og applyKnownHtlcSecret for secrets in the starter's arguments is not ported: a named invariant
     expect(disputeStartedEffects(entity([aliceAddr]), { sender: BOB, counterentity: ALICE, proofbodyHash: h1, disputeTimeout: 1, starterInitialArguments: "0xabcd" }, 0)).toEqual({ ok: false, error: { _tag: "entity_invariant", reason: "DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED" } });
+  });
+  test("MATCH: 200 random DisputeStarted / DisputeFinalized J events through the Host's J-event path -- og's J batch retirement, nonce sync and queueLocalJBatchBroadcast on the Host's jBatchState", () => {
+    const host0: any = unwrap(genesisHost(ALICE, genesisAB()) as any);
+    const good: string = (unwrap(localProof(unwrap(committedView(host0.account.state)))) as any).bodyHash;
+    const L = BigInt(TERMS.disputeConfig.leftResponseSeconds), R = BigInt(TERMS.disputeConfig.rightResponseSeconds);
+    const swap = (v: any): any => (typeof v === "string" ? (v === h1 ? good : v) : Array.isArray(v) ? v.map(swap) : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, swap(x)])) : v);
+    let removedAny = 0, broadcasts = 0, applied = 0;
+    for (let i = 0; i < 200; i++) {
+      const jBatch = rng() < 0.9 ? swap(randomJBatch()) : undefined, [sender, counterentity] = pick([[BOB, ALICE], [ALICE, BOB], [CAROL, ALICE]] as const), batchNonce = pick([undefined, 0, 3, 5, 7]);
+      const self = lowerId(ALICE), cp = lowerId(sender) === self ? lowerId(counterentity) : lowerId(sender), started = rng() < 0.5;
+      const host = { ...host0, j: { ...host0.j, ...(jBatch === undefined ? {} : { jBatch: structuredClone(jBatch) }) } };
+      const og: any = { entityId: ALICE, ...(jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) }, msgs: string[] = [];
+      let ogBroadcast = false;
+      const t0 = BigInt(1_000 + ri(50)), initialProofbodyHash = pick([good, h2]);
+      const event = started
+        ? { type: "DisputeStarted", sender, counterentity, nonce: BigInt(1 + ri(4)), proposerIsLeft: rng() < 0.5, proofbodyHash: good, watchSeed: TERMS.watchSeed, starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD,
+          disputeTimeout: t0 + L + R, disputeStartTimestamp: t0, leftResponseSeconds: L, rightResponseSeconds: R, initialProofbody: (unwrap(localProof(unwrap(committedView(host0.account.state)))) as any).body, ...(batchNonce === undefined ? {} : { batchNonce }) }
+        : { type: "DisputeFinalized", sender, counterentity, nonce: BigInt(ri(4)), finalProofbodyHash: good, finalizationEvidenceHash: ZERO_WORD, finalProofbody: (unwrap(localProof(unwrap(committedView(host0.account.state)))) as any).body, initialProofbodyHash, ...(batchNonce === undefined ? {} : { batchNonce }) };
+      // og resolveDisputeAccountContext: only the Account's own events run J7 (account_missing is a no-op)
+      if (cp === lowerId(BOB)) {
+        ogSync(og, lowerId(sender), self, batchNonce, msgs);
+        if (started) {
+          const own = lowerId(sender) === self && Boolean(og.jBatchState?.sentBatch?.batch.disputeStarts.some((s: any) => String(s.counterentity || "").toLowerCase() === cp && String(s.proofbodyHash || "").toLowerCase() === good));
+          ogBroadcast = ogRetire(og, (b) => scrubDisputeStartsForCounterparty(b, cp) + scrubCounterDisputesForActiveStart(b, cp, good), own).broadcast;
+        } else {
+          const ownAck = lowerId(sender) === self && sentBatchOwnsDisputeFinalityAck(og, cp, initialProofbodyHash, batchNonce);
+          const r = ogRetire(og, (b) => scrubDisputeFinalizationsForCounterparty(b, cp) + scrubCounterDisputesForCounterparty(b, cp) + scrubSourceHashLadderRegistrationsForCounterparty(b, cp), ownAck);
+          ogBroadcast = r.broadcast;
+          if (r.removed > 0) removedAny++;
+        }
+        applied++;
+      }
+      const rw: any = unwrap(applyHost(host, { layer: "j", tx: { type: "j_event", blockNumber: 7, event } } as any, { timestamp: NOW, jHeight: 0n }, hankoVerify) as any);
+      expect(rw.state.j.jBatch).toEqual(og.jBatchState);
+      expect(rw.effects.filter((e: any) => e._tag === "j_broadcast_request")).toEqual(ogBroadcast ? [{ _tag: "j_broadcast_request", entityId: ALICE }] : []);
+      if (ogBroadcast) broadcasts++;
+    }
+    expect([applied > 100, removedAny > 20, broadcasts > 5]).toEqual([true, true, true]);
   });
 });
 
