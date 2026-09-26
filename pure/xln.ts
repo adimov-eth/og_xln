@@ -80,6 +80,9 @@ export const firstDefined = <T>(...asks: readonly (() => T | undefined)[]): T | 
 /** A refusable step over a value that may be absent; absence passes through as absence. */
 export const whenDefined = <T, U, E>(v: T | undefined, f: (t: T) => Result<U, E>): Result<U | undefined, E> =>
   v === undefined ? ok(undefined) : f(v);
+/** `every` over a refusable predicate: the first `false` or the first refusal ends it; later items are not asked. */
+export const everyResult = <X, E>(xs: Iterable<X>, pass: (x: X) => Result<boolean, E>): Result<boolean, E> =>
+  foldResult(xs, true, (all, x) => (all ? pass(x) : ok(false)));
 
 
 // ---- matching: exhaustive tables keyed by a discriminant ----
@@ -3261,7 +3264,8 @@ export const verifyAccountHanko = (
 ): Result<AccountHankoVerdict, AccountHankoError> => {
   const target = expectedEntityId === "" ? undefined : bytes32Of(expectedEntityId);
   const registered = registeredBoardHash?.trim().toLowerCase();
-  const isRegistered = (entityId: string, boardHash: string): boolean => entityId === target && boardHash === registered;
+  const isRegistered = (entityId: string, boardHash: string): Result<boolean, never> =>
+    ok(entityId === target && boardHash === registered);
   const verdict = checkAccountHanko(hanko, digest, expectedEntityId, isRegistered);
   return map(verdict, ({ entityId, signers }) => ({ entityId, signers }));
 };
@@ -3282,26 +3286,29 @@ const decodedAccountHanko = (hanko: string): Result<HankoBytes, AccountHankoErro
   if (!unique(env.claims.map((c) => c.entityId))) return hankoRefuse("duplicate_claim_entity");
   return ok(env);
 };
-type BoardAuthorizer = (entityId: string, boardHash: string) => boolean;
+/** Whether a claim's board is the one certified for its Entity; a refusal is a fault that aborts the whole check. */
+type BoardAuthorizer<F> = (entityId: string, boardHash: string) => Result<boolean, F>;
 /** Claims that resolve, reach quorum, are all reachable and sit on authorized boards, checked in og's order. */
-const acceptedClaims = (
-  env: HankoBytes, signerIds: readonly string[], authorize: BoardAuthorizer,
-): Result<readonly ResolvedClaim[], AccountHankoError> => {
-  const authorized = (c: ResolvedClaim): boolean => c.entityId === c.boardHash || authorize(c.entityId, c.boardHash);
+const acceptedClaims = <F>(
+  env: HankoBytes, signerIds: readonly string[], authorize: BoardAuthorizer<F>,
+): Result<readonly ResolvedClaim[], AccountHankoError | F> => {
+  const authorized = (c: ResolvedClaim): Result<boolean, F> =>
+    (c.entityId === c.boardHash ? ok(true) : authorize(c.entityId, c.boardHash));
   const resolved = traverse(env.claims, (_, i) => resolveAccountClaim(env, signerIds, i));
   return chain(resolved, (claims) => {
     if (claims.some((c) => c.votingPower < c.threshold)) return hankoRefuse("quorum");
     const reachable = accountReachability(env.placeholders.length, signerIds.length, claims);
-    return chain(reachable, () => (claims.every(authorized) ? ok(claims) : hankoRefuse("authority")));
+    return chain(reachable, () =>
+      chain(everyResult(claims, authorized), (all) => (all ? ok(claims) : hankoRefuse("authority"))));
   });
 };
 /**
  * og verifyCanonicalHanko with og's `validateBoardAuthority` callback for every claim whose board is
  * not self-hashed; also yields the target claim's first member.
  */
-export const checkAccountHanko = (
-  hanko: string, digest: string, expectedEntityId: string, authorize: BoardAuthorizer,
-): Result<AccountHankoVerdict & { readonly firstMember: string }, AccountHankoError> => {
+export const checkAccountHanko = <F = never>(
+  hanko: string, digest: string, expectedEntityId: string, authorize: BoardAuthorizer<F>,
+): Result<AccountHankoVerdict & { readonly firstMember: string }, AccountHankoError | F> => {
   const target = expectedEntityId === "" ? undefined : bytes32Of(expectedEntityId);
   if (target === null) return hankoRefuse("expected_entity");
   if (!/^0[xX][0-9a-fA-F]{64}$/.test(digest)) return hankoRefuse("digest");
@@ -13258,6 +13265,9 @@ export const autoRebalance = (child: AccountReplica, self: EntityId): readonly A
 /** og processingTrigger / direct-payment wake: an empty input to `validators[0]`. */
 const wake = (state: EntityState, timestamp: bigint): EntityOutput =>
   ({ to: state.id, signerId: state.quorum.proposer, input: { kind: "txs", timestamp, txs: [] } });
+/** og queueLocalJBatchBroadcast's output: a self j_broadcast for the given signer. */
+const selfJBroadcast = (state: EntityState, signerId: string, timestamp: bigint): EntityOutput =>
+  ({ to: state.id, signerId: signerId as Address, input: { kind: "txs", timestamp, txs: [{ type: "j_broadcast", data: {} }] } });
 const sameDomain = (a: Domain, b: Domain): boolean =>
   a.chainId === b.chainId && sameHex(a.depositoryAddress, b.depositoryAddress);
 type OpenAccountData = Extract<EntityTx, { type: "openAccount" }>["data"];
@@ -13432,6 +13442,9 @@ type CommittedJBatch = {
 };
 const committedJBatch = (state: EntityState): CommittedJBatch | undefined =>
   state.committed["jBatchState"] as CommittedJBatch | undefined;
+/** The Entity with its committed jBatchState replaced; every jBatch shape is stored as the same binary slot. */
+const withCommittedJBatch = (state: EntityState, jb: object): EntityState =>
+  ({ ...state, committed: { ...state.committed, jBatchState: jb as unknown as Binary } });
 /**
  * og hasQueuedDisputeStart / hasQueuedDisputeFinalize: an operation for this counterparty in the draft, the sent
  * batch or a recovery batch.
@@ -14015,7 +14028,7 @@ const latchBroadcast = (signerId: string | undefined) => (next: Cj): Result<Cj, 
   const latched = cjHost(next, { ...next.host, jb: { ...jb, autoBroadcastDraft: true } });
   if (jb.sentBatch !== undefined) return ok(latched);
   return signerId
-    ? ok({ ...latched, outputs: [...latched.outputs, { kind: "j_broadcast", signerId }] })
+    ? ok(cjBroadcast(latched, signerId))
     : halt("DISPUTE_START_CROSS_J_BROADCAST_SIGNER_MISSING");
 };
 /**
@@ -14743,6 +14756,7 @@ export type LadderDecoded = {
 const lc = (v: unknown): string => String(v || "").toLowerCase();
 const cjSay = (cj: Cj, ...messages: readonly string[]): Cj => ({ ...cj, messages: [...cj.messages, ...messages] });
 const cjHost = (cj: Cj, host: CjHost): Cj => ({ ...cj, host });
+const cjBroadcast = (cj: Cj, signerId: string): Cj => ({ ...cj, outputs: [...cj.outputs, { kind: "j_broadcast", signerId }] });
 /**
  * og PersistentEntityCollectionMap iteration: keys by their u16-length-prefixed UTF-8 bytes (length first, then bytes).
  */
@@ -15386,7 +15400,7 @@ const localJBroadcast = (cj: Cj): Result<{ readonly cj: Cj; readonly value: bool
     && ((jb.recoveryBatches ?? []).some((b) => cjOps(b) > 0) || cjOps(jb.batch) > 0);
   if (!unsent || cj.outputs.some((o) => o.kind === "j_broadcast")) return ok({ cj, value: false });
   if (!signerId) return invariant("J_BATCH_AUTO_BROADCAST_SIGNER_MISSING");
-  return ok({ cj: { ...cj, outputs: [...cj.outputs, { kind: "j_broadcast", signerId }] }, value: true });
+  return ok({ cj: cjBroadcast(cj, signerId), value: true });
 };
 /** One Account in og's helper view: sides, response windows, activeDispute, and the frozen Pull ids of each side. */
 const cjAccountOf = (child: AccountReplica): CjAccount => {
@@ -15445,13 +15459,7 @@ const cjInto = (d: Draft, cj: Cj, timestamp: bigint): Draft => {
  * command.
  */
 const cjOutput = (state: EntityState, o: CjOut, timestamp: bigint): EntityOutput => {
-  if (o.kind === "j_broadcast") {
-    return {
-      to: state.id,
-      signerId: o.signerId as Address,
-      input: { kind: "txs", timestamp, txs: [{ type: "j_broadcast", data: {} }] },
-    };
-  }
+  if (o.kind === "j_broadcast") return selfJBroadcast(state, o.signerId, timestamp);
   const data = {
     protocol: "cross-j" as const,
     sourceEntityId: lower(state.id),
@@ -15485,138 +15493,350 @@ const scheduleDisputeDeadline = (
 };
 // ---- og entity/tx/handlers/cross-j/{salvage,force-sibling-dispute}.ts, htlc/direct.ts handleResolveHtlcLockEntityTx, paybook/lifecycle.ts ----
 type SalvageData = Extract<EntityTx, { type: "crossJurisdictionSalvage" }>["data"];
-/** og handleCrossJurisdictionSalvageEntityTx: the Target user re-registers the Source chain's verified hash-ladder reveal on its own chain. */
-const crossSalvage = (d: Draft, x: SalvageData, ctx: FoldContext): Result<Draft, EntityError> => {
-  const { routeId, binary, fillRatio } = x, say = (m: string): Result<Draft, EntityError> => ok({ ...d, events: [...(d.events ?? []), status(m)] });
-  const claimed = Math.floor(Number(fillRatio) || 0);
-  if (!binary || claimed <= 0) return say(`🌉 Cross-j reveal port ignored for ${routeId}: invalid result`);
-  const route = d.state.crossJurisdictionSwaps?.get(routeId);
-  if (route === undefined || lc(route.target?.counterpartyEntityId) !== lc(d.state.id)) return say(`🌉 Cross-j reveal port ${routeId} skipped: route not owned here`);
+/** A reveal port checked against its route: a note to log, nothing to do, or a pull binary the Target chain accepts. */
+type PortCheck =
+  | { readonly kind: "note"; readonly message: string }
+  | { readonly kind: "settled" }
+  | {
+      readonly kind: "verified";
+      readonly route: CrossRoute;
+      readonly pull: LadderPull;
+      readonly decoded: LadderDecoded;
+    };
+type VerifiedPort = Extract<PortCheck, { kind: "verified" }>;
+/**
+ * og salvage admission: a claimed fill, a route this Entity is Target user of, and a binary that opens its Target pull.
+ */
+const checkPort = (state: EntityState, x: SalvageData): Result<PortCheck, EntityError> => {
+  const { routeId, binary } = x;
+  const claimed = Math.floor(Number(x.fillRatio) || 0);
+  const note = (message: string): Result<PortCheck, EntityError> => ok({ kind: "note", message });
+  if (!binary || claimed <= 0) return note(`🌉 Cross-j reveal port ignored for ${routeId}: invalid result`);
+  const route = state.crossJurisdictionSwaps?.get(routeId);
+  if (route === undefined || lc(route.target?.counterpartyEntityId) !== lc(state.id))
+    return note(`🌉 Cross-j reveal port ${routeId} skipped: route not owned here`);
   const pull = route.targetPull;
-  if (pull === undefined) return halt(`CROSS_J_REVEAL_PORT_TARGET_PULL_MISSING:${routeId}:${d.state.id}`);
-  if (isCrossTerminal(route.status)) return ok(d);
-  if (binary === "0x") return say(`🌉 Cross-j reveal port ignored for ${routeId}: empty result`);
+  if (pull === undefined) return halt(`CROSS_J_REVEAL_PORT_TARGET_PULL_MISSING:${routeId}:${state.id}`);
+  if (isCrossTerminal(route.status)) return ok({ kind: "settled" });
+  if (binary === "0x") return note(`🌉 Cross-j reveal port ignored for ${routeId}: empty result`);
   const verified = verifyHashLadderBinary({ fullHash: pull.fullHash, partialRoot: pull.partialRoot }, binary);
-  if (!verified.ok) return say(`❌ Cross-j reveal port ${routeId} invalid pull binary: ${verified.error.reason}`);
+  if (!verified.ok) return note(`❌ Cross-j reveal port ${routeId} invalid pull binary: ${verified.error.reason}`);
   const ratio = verified.value.fillRatio;
-  if (ratio <= 0) return say(`🌉 Cross-j reveal port ignored for ${routeId}: zero fill`);
-  if (ratio !== claimed) return say(`❌ Cross-j reveal port ${routeId} fill mismatch: claimed ${claimed}, verified ${ratio}`);
-  const cj = cjOf(d, ctx.timestamp, ctx.runtimeSeed), decoded = verified.value;
-  if (cj.host.accounts.get(lc(route.target.entityId))?.active === undefined)
-    return map(stashReveal(cj.host, route.target.entityId, pull, decoded, true), (host) => cjInto(d, cjSay(cjHost(cj, host), `⏳ Cross-j reveal port ${routeId}: waiting for the target dispute clock`), ctx.timestamp));
-  return chain(queueLadderReveal(cj.host, route.target.entityId, pull, decoded, true), ({ host, result }): Result<Draft, EntityError> => {
-    const sent = host.jb?.sentBatch !== undefined, signer = cj.host.validators[0];
-    const broadcast = (c: Cj): Result<Cj, EntityError> => (signer ? ok({ ...c, outputs: [...c.outputs, { kind: "j_broadcast", signerId: signer }] }) : halt(`CROSS_J_REVEAL_PORT_SIGNER_MISSING:${routeId}`));
-    const base = cjHost(cj, host);
-    if (result === "queued")
-      return map(sent ? ok(base) : broadcast(base), (c) => cjInto(d, cjSay(c, sent ? `⏳ Cross-j reveal port ${routeId}: queued behind the pending jBatch` : `🌉 Cross-j reveal port ${routeId}: registering ratio ${ratio} on the target chain`), ctx.timestamp));
-    if (result === "deferred-batch-pending")
-      return map(!sent && host.jb !== undefined && cjOps(host.jb.batch) > 0 ? broadcast(base) : ok(base), (c) => cjInto(d, cjSay(c, `⏳ Cross-j reveal port ${routeId}: deferred until the pending jBatch is acknowledged`), ctx.timestamp));
-    return ok(cjInto(d, base, ctx.timestamp));
+  if (ratio <= 0) return note(`🌉 Cross-j reveal port ignored for ${routeId}: zero fill`);
+  if (ratio !== claimed)
+    return note(`❌ Cross-j reveal port ${routeId} fill mismatch: claimed ${claimed}, verified ${ratio}`);
+  return ok({ kind: "verified", route, pull, decoded: verified.value });
+};
+/**
+ * Register a verified reveal on the Target chain: stashed until the Target Account's dispute clock runs, else queued,
+ * with a broadcast when no batch is in flight to carry it.
+ */
+const portReveal = (cj: Cj, routeId: string, port: VerifiedPort): Result<Cj, EntityError> => {
+  const { route, pull, decoded } = port;
+  const counterparty = route.target.entityId;
+  const signerId = cj.host.validators[0];
+  if (cj.host.accounts.get(lc(counterparty))?.active === undefined)
+    return map(stashReveal(cj.host, counterparty, pull, decoded, true), (host) =>
+      cjSay(cjHost(cj, host), `⏳ Cross-j reveal port ${routeId}: waiting for the target dispute clock`),
+    );
+  return chain(queueLadderReveal(cj.host, counterparty, pull, decoded, true), ({ host, result }) => {
+    const queued = cjHost(cj, host);
+    const jb = host.jb;
+    const sent = jb?.sentBatch !== undefined;
+    const broadcast = (): Result<Cj, EntityError> =>
+      signerId ? ok(cjBroadcast(queued, signerId)) : halt(`CROSS_J_REVEAL_PORT_SIGNER_MISSING:${routeId}`);
+    switch (result) {
+      case "queued":
+        return sent
+          ? ok(cjSay(queued, `⏳ Cross-j reveal port ${routeId}: queued behind the pending jBatch`))
+          : map(broadcast(), (c) =>
+              cjSay(c, `🌉 Cross-j reveal port ${routeId}: registering ratio ${decoded.fillRatio} on the target chain`),
+            );
+      case "deferred-batch-pending":
+        return map(!sent && jb !== undefined && cjOps(jb.batch) > 0 ? broadcast() : ok(queued), (c) =>
+          cjSay(c, `⏳ Cross-j reveal port ${routeId}: deferred until the pending jBatch is acknowledged`),
+        );
+      default:
+        return ok(queued);
+    }
   });
 };
+/**
+ * og handleCrossJurisdictionSalvageEntityTx: the Target user re-registers the Source chain's verified hash-ladder
+ * reveal on its own chain.
+ */
+const crossSalvage = (d: Draft, x: SalvageData, ctx: FoldContext): Result<Draft, EntityError> =>
+  chain(checkPort(d.state, x), (port) => {
+    switch (port.kind) {
+      case "note":
+        return ok(withStatus(d, port.message));
+      case "settled":
+        return ok(d);
+      case "verified":
+        return map(portReveal(cjOf(d, ctx.timestamp, ctx.runtimeSeed), x.routeId, port), (cj) =>
+          cjInto(d, cj, ctx.timestamp),
+        );
+    }
+  });
 type ForceSiblingData = Extract<EntityTx, { type: "crossJurisdictionForceSiblingDispute" }>["data"];
-/** og localDisputeCounterparty: the Account this route participant disputes. */
-const siblingLocalCounterparty = (route: CrossRoute, self: string): string | null =>
-  lc(route.source.entityId) === self ? lc(route.source.counterpartyEntityId) : lc(route.source.counterpartyEntityId) === self ? lc(route.source.entityId)
-    : lc(route.target.counterpartyEntityId) === self ? lc(route.target.entityId) : lc(route.target.entityId) === self ? lc(route.target.counterpartyEntityId) : null;
+/** og localDisputeCounterparty: the other end of this participant's own leg, the Account it disputes. */
+const legPeerOf = (route: CrossRoute, self: string): string | null => {
+  const p = routeParties(route);
+  switch (self) {
+    case p.sourceUser: return p.sourceHub;
+    case p.sourceHub: return p.sourceUser;
+    case p.targetUser: return p.targetHub;
+    case p.targetHub: return p.targetUser;
+    default: return null;
+  }
+};
 /** og observedIsOtherLegParticipant: the observed peer sits on the leg this Entity is not on. */
 const observedOtherLeg = (route: CrossRoute, self: string, observed: string): boolean => {
-  if (!observed || observed === self) return false;
-  const source = [lc(route.source.entityId), lc(route.source.counterpartyEntityId)], target = [lc(route.target.entityId), lc(route.target.counterpartyEntityId)];
+  const p = routeParties(route), source = [p.sourceUser, p.sourceHub], target = [p.targetHub, p.targetUser];
   const onSource = source.includes(self), onTarget = target.includes(self);
-  return onSource && !onTarget ? target.includes(observed) : onTarget && !onSource ? source.includes(observed) : false;
+  const otherLeg = onSource && !onTarget ? target : onTarget && !onSource ? source : [];
+  return observed !== "" && observed !== self && otherLeg.includes(observed);
 };
-/** og handleCrossJurisdictionForceSiblingDisputeEntityTx: fail loud on a broken route mirror, then prepare the sibling Account's dispute. */
+/**
+ * og handleCrossJurisdictionForceSiblingDisputeEntityTx: fail loud on a broken route mirror, then prepare the sibling
+ * Account's dispute.
+ */
 const forceSiblingDispute = (d: Draft, x: ForceSiblingData, ctx: FoldContext): Result<Draft, EntityError> => {
-  const { routeId } = x, self = lc(d.state.id), route = d.state.crossJurisdictionSwaps?.get(routeId);
+  const { routeId } = x;
+  const self = lc(d.state.id);
+  const observed = lc(x.observedCounterpartyEntityId);
+  const route = d.state.crossJurisdictionSwaps?.get(routeId);
   if (route === undefined) return halt(`CROSS_J_SIBLING_DISPUTE_ROUTE_MISSING:${routeId}`);
   if (!route.sourcePull || !route.targetPull) return halt(`CROSS_J_SIBLING_DISPUTE_PULLS_MISSING:${routeId}`);
-  const local = siblingLocalCounterparty(route, self);
+  const local = legPeerOf(route, self);
   if (!local) return halt(`CROSS_J_SIBLING_DISPUTE_NOT_PARTICIPANT:${routeId}:self=${self}`);
-  const observed = lc(x.observedCounterpartyEntityId || "");
-  if (!observedOtherLeg(route, self, observed)) return halt(`CROSS_J_SIBLING_DISPUTE_OBSERVED_LEG_INVALID:${routeId}:observed=${observed}:self=${self}:local=${local}`);
-  return prepareDispute(d, { counterpartyEntityId: local as EntityId, description: `sibling-dispute:${routeId}`, crossJurisdictionRouteId: routeId }, ctx);
+  if (!observedOtherLeg(route, self, observed))
+    return halt(
+      `CROSS_J_SIBLING_DISPUTE_OBSERVED_LEG_INVALID:${routeId}:observed=${observed}:self=${self}:local=${local}`,
+    );
+  const dispute = {
+    counterpartyEntityId: local as EntityId,
+    description: `sibling-dispute:${routeId}`,
+    crossJurisdictionRouteId: routeId,
+  };
+  return prepareDispute(d, dispute, ctx);
 };
-/** og persistVerifiedPaymentSecret: the canonical payment id, the entry's secret / token / amount / endpoint agree, then the secret and our side's endpoint. */
-export const persistVerifiedPaymentSecret = (paybook: Paybook, selfIsLeft: boolean, counterparty: string, lock: Pick<HtlcLock, "lockId" | "hashlock" | "tokenId" | "amount" | "senderIsLeft">, secret: string, timestamp: number): Result<Paybook, EntityError> => {
-  if (lock.lockId.toLowerCase() !== lock.hashlock.toLowerCase()) return invariant(`PAYBOOK_LOCK_ID_MUST_EQUAL_HASHLOCK:${lock.lockId}:${lock.hashlock}`);
-  const entry: PaybookEntry = paybook.entries.get(lock.hashlock) ?? { hashlock: lock.hashlock, tokenId: Number(lock.tokenId), amount: lock.amount, createdTimestamp: timestamp };
-  if (entry.secret && entry.secret.toLowerCase() !== secret.toLowerCase()) return invariant(`PAYBOOK_SECRET_CONFLICT:${lock.hashlock}`);
-  if (entry.tokenId !== undefined && entry.tokenId !== Number(lock.tokenId)) return invariant(`PAYBOOK_TOKEN_CONFLICT:${lock.hashlock}`);
-  if (entry.amount !== undefined && entry.amount !== lock.amount) return invariant(`PAYBOOK_AMOUNT_CONFLICT:${lock.hashlock}`);
-  const localSent = lock.senderIsLeft === selfIsLeft, endpoint = localSent ? entry.outboundEntity : entry.inboundEntity;
-  if (endpoint && endpoint.toLowerCase() !== counterparty.toLowerCase()) return invariant(`PAYBOOK_ENTITY_CONFLICT:${lock.hashlock}`);
-  const next: PaybookEntry = localSent ? { ...entry, secret, outboundEntity: counterparty } : { ...entry, secret, inboundEntity: counterparty };
-  return ok({ ...paybook, entries: mapSet(paybook.entries, lock.hashlock, next) });
+/** The lock fields a paid preimage is checked against. */
+type PaidLock = Pick<HtlcLock, "lockId" | "hashlock" | "tokenId" | "amount" | "senderIsLeft">;
+/**
+ * og persistVerifiedPaymentSecret: the canonical payment id, the entry's secret / token / amount / endpoint agree,
+ * then the secret and our side's endpoint.
+ */
+export const persistVerifiedPaymentSecret = (
+  paybook: Paybook,
+  selfIsLeft: boolean,
+  counterparty: string,
+  lock: PaidLock,
+  secret: string,
+  timestamp: number,
+): Result<Paybook, EntityError> => {
+  const { hashlock, amount } = lock;
+  const tokenId = Number(lock.tokenId);
+  const localSent = lock.senderIsLeft === selfIsLeft;
+  const entry: PaybookEntry = paybook.entries.get(hashlock) ?? {
+    hashlock,
+    tokenId,
+    amount,
+    createdTimestamp: timestamp,
+  };
+  const endpoint = localSent ? entry.outboundEntity : entry.inboundEntity;
+  const clashes = (held: string | undefined, next: string): boolean =>
+    !!held && held.toLowerCase() !== next.toLowerCase();
+  switch (true) {
+    case lock.lockId.toLowerCase() !== hashlock.toLowerCase():
+      return invariant(`PAYBOOK_LOCK_ID_MUST_EQUAL_HASHLOCK:${lock.lockId}:${hashlock}`);
+    case clashes(entry.secret, secret):
+      return invariant(`PAYBOOK_SECRET_CONFLICT:${hashlock}`);
+    case entry.tokenId !== undefined && entry.tokenId !== tokenId:
+      return invariant(`PAYBOOK_TOKEN_CONFLICT:${hashlock}`);
+    case entry.amount !== undefined && entry.amount !== amount:
+      return invariant(`PAYBOOK_AMOUNT_CONFLICT:${hashlock}`);
+    case clashes(endpoint, counterparty):
+      return invariant(`PAYBOOK_ENTITY_CONFLICT:${hashlock}`);
+    default: {
+      const paid: PaybookEntry = localSent
+        ? { ...entry, secret, outboundEntity: counterparty }
+        : { ...entry, secret, inboundEntity: counterparty };
+      return ok({ ...paybook, entries: mapSet(paybook.entries, hashlock, paid) });
+    }
+  }
 };
-/** og deadline-policy.ts evidenceSecrets: the `secret_window` violation's preimage, from the first frame resolve that opens the lock (committed, else opened in the frame). */
-const unsafeEvidenceSecrets = (s: AccountBody, e: FrameEvidence): readonly { readonly hashlock: string; readonly secret: string }[] => {
+type EvidenceSecret = { readonly hashlock: string; readonly secret: string };
+/**
+ * og deadline-policy.ts evidenceSecrets: the `secret_window` violation's preimage, from the first frame resolve that
+ * opens the lock (committed, else opened in the frame).
+ */
+const unsafeEvidenceSecrets = (s: AccountBody, e: FrameEvidence): readonly EvidenceSecret[] => {
   const cause = e.cause;
   if (cause._tag !== "frame_deadline" || cause.reason !== "secret_window") return [];
-  const opened = e.frame.txs.find((t) => t.type === "htlc_lock" && t.lockId === cause.lockId);
-  const hashlock = s.locks.get(cause.lockId)?.hashlock ?? (opened !== undefined && opened.type === "htlc_lock" ? opened.hashlock : undefined);
-  const resolve = e.frame.txs.find((t) => t.type === "htlc_resolve" && t.lockId === cause.lockId && t.outcome === "secret" && hashlock !== undefined && hashHtlcSecret(t.secret) === hashlock);
-  return hashlock !== undefined && resolve !== undefined && resolve.type === "htlc_resolve" && resolve.outcome === "secret" ? [{ hashlock, secret: resolve.secret }] : [];
+  const opened = e.frame.txs.flatMap((t) => (t.type === "htlc_lock" && t.lockId === cause.lockId ? [t.hashlock] : []));
+  const hashlock = s.locks.get(cause.lockId)?.hashlock ?? opened[0];
+  if (hashlock === undefined) return [];
+  const opens = e.frame.txs.flatMap((t) =>
+    t.type === "htlc_resolve" &&
+    t.lockId === cause.lockId &&
+    t.outcome === "secret" &&
+    hashHtlcSecret(t.secret) === hashlock
+      ? [{ hashlock, secret: t.secret }]
+      : [],
+  );
+  return opens.slice(0, 1);
 };
 /**
- * og AccountInputDisputeRequired.reason: the deadline scan's text for a secret-window violation, else og's replay failureMessage where the
- * rewrite reproduces it (the state root mismatch, the dispute Hanko requirement, og's per-tx `Frame application failed: <handler text>` from
- * accountTxFailure). Only a cause with no og replay text (none is known) falls back to its tag.
+ * og AccountInputDisputeRequired.reason: the deadline scan's text for a secret-window violation, else og's replay
+ * failureMessage where the rewrite reproduces it (the state root mismatch, the dispute Hanko requirement, og's per-tx
+ * `Frame application failed: <handler text>` from accountTxFailure). Only a cause with no og replay text (none is
+ * known) falls back to its tag.
  */
-const unsafeReason = (e: FrameEvidence, timestamp: bigint): string => e.cause._tag === "frame_deadline" && e.cause.reason === "secret_window"
-  ? `HTLC_SECRET_ENFORCEMENT_WINDOW_TOO_SHORT: lock=${e.cause.lockId} reserve=${HTLC_ENFORCEMENT_RESERVE_MS}ms localTimestamp=${timestamp}` : e.reason ?? `ACCOUNT_FRAME_DISPUTE_REQUIRED:${e.cause._tag}`;
+const unsafeReason = (e: FrameEvidence, timestamp: bigint): string => {
+  const cause = e.cause;
+  if (cause._tag !== "frame_deadline" || cause.reason !== "secret_window")
+    return e.reason ?? `ACCOUNT_FRAME_DISPUTE_REQUIRED:${cause._tag}`;
+  const window = `lock=${cause.lockId} reserve=${HTLC_ENFORCEMENT_RESERVE_MS}ms localTimestamp=${timestamp}`;
+  return `HTLC_SECRET_ENFORCEMENT_WINDOW_TOO_SHORT: ${window}`;
+};
+/** og armPaymentSecretAckTimeout: the upstream resolve now waits for its ACK. */
+const armSecretAck = (entry: PaybookEntry, timestamp: number): PaybookEntry => ({
+  ...entry,
+  secretAckPending: true,
+  secretAckStartedAt: timestamp,
+  secretAckDeadlineAt: timestamp + HTLC_SECRET_ACK_TIMEOUT_MS,
+});
+/** Evidence secrets written into the paybook, and the resolves they owe upstream. */
+type SecretFallout = { readonly paybook: Paybook; readonly resolves: readonly AccountTxTarget[] };
+/** What persisting one evidence secret needs to know about the disputed Account. */
+type SecretContext = {
+  readonly child: AccountReplica;
+  readonly selfIsLeft: boolean;
+  readonly peer: EntityId;
+  readonly timestamp: number;
+};
 /**
- * og dispute-input.ts handleUnsafeAccountFrame (input-phases finishDisputedAccountInput): an Account input og answers with disposition 'dispute'.
- * A just-created inbound Account is dropped with og's message. Otherwise the frame evidence is kept, each evidence secret is persisted
- * (og persistVerifiedPaymentSecret) and, for a lock we sent with an inbound route, resolved upstream with its ACK deadline armed; then og
- * handlePrepareDispute, the autoBroadcastDraft latch and a self j_broadcast when a start was queued and no batch is in flight.
- * `undefined` when the refusal is not a dispute.
+ * og persistVerifiedPaymentSecret for one evidence secret; a lock we sent on an inbound route also resolves upstream,
+ * its ACK deadline armed.
  */
-export const unsafeAccountFrame = (held: Folded, at: Folded, peer: EntityId, error: AccountReplicaError, created: boolean, ctx: FoldContext): Result<Draft, EntityError> | undefined => {
-  const after = error._tag === "rejected_after_ack" ? error : undefined, evidence = evidenceOf(after?.cause ?? error);
+const persistEvidenceSecret =
+  (c: SecretContext) =>
+  (acc: SecretFallout, { hashlock, secret }: EvidenceSecret): Result<SecretFallout, EntityError> => {
+    const lock = [...c.child.state.locks.values()].find((l) => l.hashlock.toLowerCase() === hashlock.toLowerCase());
+    if (lock === undefined) return invariant(`HTLC_DISPUTE_EVIDENCE_LOCK_MISSING:${hashlock}`);
+    const persisted = persistVerifiedPaymentSecret(acc.paybook, c.selfIsLeft, c.peer, lock, secret, c.timestamp);
+    return map(persisted, (paybook): SecretFallout => {
+      const route = paybook.entries.get(lock.hashlock);
+      if (route === undefined || lock.senderIsLeft !== c.selfIsLeft || !hasInbound(route)) return { ...acc, paybook };
+      const upstream: AccountTxTarget = {
+        accountId: route.inboundEntity as EntityId,
+        tx: { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret },
+      };
+      const armed = mapSet(paybook.entries, lock.hashlock, armSecretAck(route, c.timestamp));
+      return { paybook: { ...paybook, entries: armed }, resolves: [...acc.resolves, upstream] };
+    });
+  };
+/**
+ * og handleUnsafeAccountFrame's shadow.rejectedFrameEvidence: every phase keeps the rejected frame; a frozen replica
+ * also keeps the evidence.
+ */
+const withRejectedFrame = (d: Draft, peer: EntityId, evidence: FrameEvidence, rejectedFrame: RejectedFrame): Draft => {
+  const frozen = d.accountReplicas.get(peer);
+  const recorded = (child: AccountReplica): AccountReplica => {
+    switch (child._tag) {
+      case "preparing":
+      case "disputed":
+        return { ...child, evidence, rejectedFrame };
+      default:
+        return { ...child, rejectedFrame };
+    }
+  };
+  return frozen === undefined ? d : { ...d, ...putChild(d.state, d.accountReplicas, peer, recorded(frozen)) };
+};
+const disputeStartCount = (state: EntityState): number => committedJBatch(state)?.batch["disputeStarts"]?.length ?? 0;
+/**
+ * og effects.accountTxs: each returned resolve is admitted after the Entity tx, so one on the just-frozen Account is
+ * suppressed.
+ */
+const queueResolves = (d: Draft, resolves: readonly AccountTxTarget[]): Draft => {
+  const queued = resolves.reduce(queueReturned, d);
+  return resolves.length === 0
+    ? queued
+    : { ...queued, touched: [...(queued.touched ?? []), ...resolves.map((t) => t.accountId as EntityId)] };
+};
+/**
+ * og dispute-input.ts handleUnsafeAccountFrame (input-phases finishDisputedAccountInput): an Account input og answers
+ * with disposition 'dispute'. A just-created inbound Account is dropped with og's message. Otherwise the frame evidence
+ * is kept, each evidence secret is persisted and resolved upstream where owed; then og handlePrepareDispute, the
+ * autoBroadcastDraft latch and a self j_broadcast when a start was queued and no batch is in flight. `undefined` when
+ * the refusal is not a dispute.
+ */
+export const unsafeAccountFrame = (
+  held: Folded,
+  at: Folded,
+  peer: EntityId,
+  error: AccountReplicaError,
+  created: boolean,
+  ctx: FoldContext,
+): Result<Draft, EntityError> | undefined => {
+  const after = error._tag === "rejected_after_ack" ? error : undefined;
+  const evidence = evidenceOf(after?.cause ?? error);
   if (evidence === null) return undefined;
-  const say = (x: Draft, message: string): Draft => ({ ...x, events: [...(x.events ?? []), status(message)] });
-  if (created) return ok(say({ ...held, outputs: [] }, `⚠️ Rejected uncommitted account genesis from ${peer.slice(-8)}`));
+  if (created)
+    return ok(withStatus({ ...held, outputs: [] }, `⚠️ Rejected uncommitted account genesis from ${peer.slice(-8)}`));
   const live = at.accountReplicas.get(peer);
   if (live === undefined) return err({ _tag: "no_such_account", target: peer });
-  const child = after?.committed.replica ?? live, timestamp = Number(ctx.timestamp), selfIsLeft = sameHex(child.state.account.id.left, at.state.id);
+  const child = after?.committed.replica ?? live;
+  const selfIsLeft = sameHex(child.state.account.id.left, at.state.id);
   const secrets = unsafeEvidenceSecrets(child.state, evidence);
-  type Persisted = { readonly paybook: Paybook; readonly resolves: readonly AccountTxTarget[] };
-  const persisted = foldResult<Persisted, (typeof secrets)[number], EntityError>(secrets, { paybook: at.state.paybook ?? EMPTY_PAYBOOK, resolves: [] }, (acc, { hashlock, secret }) => {
-    const lock = [...child.state.locks.values()].find((l) => l.hashlock.toLowerCase() === hashlock.toLowerCase());
-    if (lock === undefined) return invariant(`HTLC_DISPUTE_EVIDENCE_LOCK_MISSING:${hashlock}`);
-    return map(persistVerifiedPaymentSecret(acc.paybook, selfIsLeft, peer, lock, secret, timestamp), (paybook): Persisted => {
-      const route = paybook.entries.get(lock.hashlock);
-      if (route === undefined || lock.senderIsLeft !== selfIsLeft || !hasInbound(route)) return { ...acc, paybook };
-      // og armPaymentSecretAckTimeout
-      const armed: PaybookEntry = { ...route, secretAckPending: true, secretAckStartedAt: timestamp, secretAckDeadlineAt: timestamp + HTLC_SECRET_ACK_TIMEOUT_MS };
-      return { paybook: { ...paybook, entries: mapSet(paybook.entries, lock.hashlock, armed) }, resolves: [...acc.resolves, { accountId: route.inboundEntity as EntityId, tx: { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret } }] };
-    });
-  });
-  return chain(persisted, ({ paybook, resolves }) => {
-    const base: Draft = { ...putChild(secrets.length === 0 ? at.state : { ...at.state, paybook }, at.accountReplicas, peer, child), outputs: [] };
-    const startsBefore = committedJBatch(base.state)?.batch["disputeStarts"]?.length ?? 0;
-    const reason = unsafeReason(evidence, ctx.timestamp), rejectedFrame: RejectedFrame = { reason, frameHash: evidence.frame.stateHash, frameHanko: evidence.frameHanko };
+  const context: SecretContext = { child, selfIsLeft, peer, timestamp: Number(ctx.timestamp) };
+  const fallout = foldResult<SecretFallout, EvidenceSecret, EntityError>(
+    secrets,
+    { paybook: at.state.paybook ?? EMPTY_PAYBOOK, resolves: [] },
+    persistEvidenceSecret(context),
+  );
+  return chain(fallout, ({ paybook, resolves }) => {
+    const state = secrets.length === 0 ? at.state : { ...at.state, paybook };
+    const base: Draft = { ...putChild(state, at.accountReplicas, peer, child), outputs: [] };
+    const startsBefore = disputeStartCount(base.state);
+    const reason = unsafeReason(evidence, ctx.timestamp);
+    const rejectedFrame: RejectedFrame = {
+      reason,
+      frameHash: evidence.frame.stateHash,
+      frameHanko: evidence.frameHanko,
+    };
     return map(prepareDispute(base, { counterpartyEntityId: peer, description: reason }, ctx), (prepared) => {
-      const jb = committedJBatch(prepared.state), started = jb !== undefined && (jb.batch["disputeStarts"]?.length ?? 0) > startsBefore, frozen = prepared.accountReplicas.get(peer);
-      // og handleUnsafeAccountFrame: shadow.rejectedFrameEvidence on the Account, whatever its phase; the frozen replica also keeps the evidence
-      const recorded: AccountReplica | undefined = frozen === undefined ? undefined : frozen._tag === "preparing" || frozen._tag === "disputed" ? { ...frozen, evidence, rejectedFrame } : { ...frozen, rejectedFrame };
-      const kept = recorded !== undefined ? { ...prepared, ...putChild(prepared.state, prepared.accountReplicas, peer, recorded) } : prepared;
-      const latched: Draft = started ? { ...kept, state: { ...kept.state, committed: { ...kept.state.committed, jBatchState: { ...jb, autoBroadcastDraft: true } as unknown as Binary } } } : kept;
-      const said = say(latched, started ? "⚠️ Unsafe account frame rejected; dispute start queued" : "⚠️ Unsafe account frame rejected; dispute preparation awaits Hanko");
-      const signer = rootConfig(said.state).validators[0];
-      const broadcast: readonly EntityOutput[] = started && jb.sentBatch === undefined && signer !== undefined ? [{ to: said.state.id, signerId: signer as Address, input: { kind: "txs", timestamp: ctx.timestamp, txs: [{ type: "j_broadcast", data: {} }] } }] : [];
-      // og effects.accountTxs: admitted after the Entity tx, so a resolve on the just-frozen Account is suppressed
-      const queued = resolves.reduce(queueReturned, { ...said, outputs: [...said.outputs, ...broadcast] });
-      return resolves.length === 0 ? queued : { ...queued, touched: [...(queued.touched ?? []), ...resolves.map((t) => t.accountId as EntityId)] };
+      const jb = committedJBatch(prepared.state);
+      const started = jb !== undefined && disputeStartCount(prepared.state) > startsBefore;
+      const kept = withRejectedFrame(prepared, peer, evidence, rejectedFrame);
+      const latched: Draft = started
+        ? { ...kept, state: withCommittedJBatch(kept.state, { ...jb, autoBroadcastDraft: true }) }
+        : kept;
+      const said = withStatus(
+        latched,
+        started
+          ? "⚠️ Unsafe account frame rejected; dispute start queued"
+          : "⚠️ Unsafe account frame rejected; dispute preparation awaits Hanko",
+      );
+      const signerId = rootConfig(said.state).validators[0];
+      const broadcast =
+        started && jb.sentBatch === undefined && signerId !== undefined
+          ? [selfJBroadcast(said.state, signerId, ctx.timestamp)]
+          : [];
+      return queueResolves({ ...said, outputs: [...said.outputs, ...broadcast] }, resolves);
     });
   });
 };
 type ResolveHtlcData = Extract<EntityTx, { type: "resolveHtlcLock" }>["data"];
-/** og handleResolveHtlcLockEntityTx: a verified preimage for one of the Account's locks; persist it, queue the secret resolve, wake the proposer. */
+/**
+ * og handleResolveHtlcLockEntityTx: a verified preimage for one of the Account's locks; persist it, queue the secret
+ * resolve, wake the proposer.
+ */
 const resolveHtlcLockTx = (d: Draft, x: ResolveHtlcData, ctx: FoldContext): Result<Draft, EntityError> => {
-  const { counterpartyEntityId, lockId, secret } = x, peer = lc(counterpartyEntityId) as EntityId, child = d.accountReplicas.get(peer);
+  const { counterpartyEntityId, lockId, secret } = x;
+  const peer = lc(counterpartyEntityId) as EntityId;
+  const child = d.accountReplicas.get(peer);
   if (child === undefined) return invariant(`HTLC_RESOLVE_ACCOUNT_MISSING:${counterpartyEntityId}`);
   if (!/^0x[0-9a-fA-F]{64}$/.test(lockId)) return invariant(`HTLC_RESOLVE_LOCK_ID_INVALID:${lockId}`);
   const expected = hashHtlcSecret(secret);
@@ -15624,149 +15844,346 @@ const resolveHtlcLockTx = (d: Draft, x: ResolveHtlcData, ctx: FoldContext): Resu
   const lock = child.state.locks.get(lockId);
   if (lock === undefined) return invariant(`HTLC_RESOLVE_LOCK_MISSING:${peer}:${lockId}`);
   if (lock.hashlock !== expected) return invariant(`HTLC_RESOLVE_HASHLOCK_MISMATCH:${lockId}`);
-  return map(persistVerifiedPaymentSecret(d.state.paybook ?? EMPTY_PAYBOOK, sameHex(child.state.account.id.left, d.state.id), peer, lock, secret, Number(ctx.timestamp)), (paybook) => {
-    const queued = queueReturned({ ...d, state: { ...d.state, paybook } }, { accountId: peer, tx: { type: "htlc_resolve", lockId, outcome: "secret", secret } });
-    return { ...queued, events: [...(queued.events ?? []), status(`🔓 HTLC resolve queued for ${peer}`)], outputs: [...queued.outputs, ...(rootConfig(d.state).validators[0] ? [wake(d.state, ctx.timestamp)] : [])], touched: [...(queued.touched ?? []), peer] };
+  const selfIsLeft = sameHex(child.state.account.id.left, d.state.id);
+  const persisted = persistVerifiedPaymentSecret(
+    d.state.paybook ?? EMPTY_PAYBOOK,
+    selfIsLeft,
+    peer,
+    lock,
+    secret,
+    Number(ctx.timestamp),
+  );
+  return map(persisted, (paybook) => {
+    const resolve: AccountTxTarget = {
+      accountId: peer,
+      tx: { type: "htlc_resolve", lockId, outcome: "secret", secret },
+    };
+    const queued = withStatus(
+      queueReturned({ ...d, state: { ...d.state, paybook } }, resolve),
+      `🔓 HTLC resolve queued for ${peer}`,
+    );
+    const woken = rootConfig(d.state).validators[0] ? [wake(d.state, ctx.timestamp)] : [];
+    return { ...queued, outputs: [...queued.outputs, ...woken], touched: [...(queued.touched ?? []), peer] };
   });
 };
 // ---- og entity/scheduler/{index,types,hook-state,derived-deadlines,due-hooks,dispute-deadline-hook}.ts, scheduler/wake, runtime/mempool/scheduled-wake.ts ----
-/** og ScheduledHook (scheduler/types.ts): a deterministic one-shot hook, replaced by id, fired at the Entity's logical time (the frame timestamp). */
+/** A one-shot deadline: an id, when it fires, and what it is about. */
+type Timed<Type extends string, Data> = {
+  readonly id: string;
+  readonly triggerAt: number;
+  readonly type: Type;
+  readonly data: Data;
+};
+/**
+ * og ScheduledHook (scheduler/types.ts): a deterministic one-shot hook, replaced by id, fired at the Entity's logical
+ * time (the frame timestamp).
+ */
 export type ScheduledHook =
-  | { readonly id: string; readonly triggerAt: number; readonly type: "dispute_deadline"; readonly data: { readonly accountId: string } }
-  | { readonly id: string; readonly triggerAt: number; readonly type: "settlement_window" | "watchdog"; readonly data: { readonly [k: string]: never } }
-  | { readonly id: string; readonly triggerAt: number; readonly type: "hub_rebalance_kick"; readonly data: { readonly reason: string; readonly counterpartyId: string } }
-  | { readonly id: string; readonly triggerAt: number; readonly type: "board_hanko_refresh"; readonly data: { readonly activationJHeight: number; readonly activationLogIndex: number; readonly afterCounterpartyId: string } }
-  | { readonly id: string; readonly triggerAt: number; readonly type: "counterparty_board_hanko_refresh_deadline"; readonly data: { readonly accountId: string; readonly activationJHeight: number; readonly activationLogIndex: number } }
-  | { readonly id: string; readonly triggerAt: number; readonly type: "cross_j_orderbook_sweep"; readonly data: { readonly reason: string } };
+  | Timed<"dispute_deadline", { readonly accountId: string }>
+  | Timed<"settlement_window" | "watchdog", { readonly [k: string]: never }>
+  | Timed<"hub_rebalance_kick", { readonly reason: string; readonly counterpartyId: string }>
+  | Timed<"board_hanko_refresh", {
+    readonly activationJHeight: number;
+    readonly activationLogIndex: number;
+    readonly afterCounterpartyId: string;
+  }>
+  | Timed<"counterparty_board_hanko_refresh_deadline", {
+    readonly accountId: string;
+    readonly activationJHeight: number;
+    readonly activationLogIndex: number;
+  }>
+  | Timed<"cross_j_orderbook_sweep", { readonly reason: string }>;
 /** og CrontabTaskState: the one periodic task, hubRebalance. */
-export type CrontabTask = { readonly method: "hubRebalance"; readonly intervalMs: number; readonly lastRun: number; readonly enabled: boolean; readonly params: { readonly [k: string]: string | number | boolean } };
+export type CrontabTask = {
+  readonly method: "hubRebalance";
+  readonly intervalMs: number;
+  readonly lastRun: number;
+  readonly enabled: boolean;
+  readonly params: { readonly [k: string]: string | number | boolean };
+};
 /** og CrontabState: committed as `crontabState`, its hooks as an Entity collection commitment. */
-export type Crontab = { readonly tasks: ReadonlyMap<"hubRebalance", CrontabTask>; readonly hooks: ReadonlyMap<string, ScheduledHook> };
+export type Crontab = {
+  readonly tasks: ReadonlyMap<"hubRebalance", CrontabTask>;
+  readonly hooks: ReadonlyMap<string, ScheduledHook>;
+};
 export const HUB_REBALANCE_INTERVAL_MS = 1000;
 /** og initCrontab. */
-export const initCrontab = (): Crontab => ({ tasks: new Map([["hubRebalance", { method: "hubRebalance", intervalMs: HUB_REBALANCE_INTERVAL_MS, lastRun: 0, enabled: true, params: {} }]]), hooks: new Map() });
+export const initCrontab = (): Crontab => {
+  const hubRebalance: CrontabTask =
+    { method: "hubRebalance", intervalMs: HUB_REBALANCE_INTERVAL_MS, lastRun: 0, enabled: true, params: {} };
+  return { tasks: new Map([["hubRebalance", hubRebalance]]), hooks: new Map() };
+};
 /** og scheduleHook: replace or create by id. */
-export const scheduleHook = (c: Crontab, hook: ScheduledHook): Crontab => ({ ...c, hooks: mapSet(c.hooks, hook.id, hook) });
+export const scheduleHook = (c: Crontab, hook: ScheduledHook): Crontab => ({
+  ...c,
+  hooks: mapSet(c.hooks, hook.id, hook),
+});
 /** og cancelHook. */
-export const cancelHook = (c: Crontab, id: string): Crontab => (c.hooks.has(id) ? { ...c, hooks: mapDelete(c.hooks, id) } : c);
+export const cancelHook = (c: Crontab, id: string): Crontab =>
+  c.hooks.has(id) ? { ...c, hooks: mapDelete(c.hooks, id) } : c;
 /** og crontabTaskDueAt. */
 export const crontabTaskDueAt = (t: Pick<CrontabTask, "lastRun" | "intervalMs">): number => t.lastRun + t.intervalMs;
-const emptyCollection = (v: unknown): boolean => typeof v === "object" && v !== null && !(v instanceof Map) && (v as { readonly leafCount?: unknown }).leafCount === 0;
-/** The Entity's crontab (og `state.crontabState ??= initCrontab()` before the frame's txs). A hook set held only as a non-empty commitment cannot be read back. */
+const emptyCollection = (v: unknown): boolean =>
+  typeof v === "object" && v !== null && !(v instanceof Map) && (v as { readonly leafCount?: unknown }).leafCount === 0;
+/** The hooks as held: a map, or an empty collection commitment; a non-empty commitment cannot be read back. */
+const heldHooks = (hooks: unknown): ReadonlyMap<string, ScheduledHook> | undefined => {
+  switch (true) {
+    case hooks instanceof Map: return hooks as ReadonlyMap<string, ScheduledHook>;
+    case emptyCollection(hooks): return new Map();
+    default: return undefined;
+  }
+};
+/** The Entity's crontab (og `state.crontabState ??= initCrontab()` before the frame's txs). */
 export const crontabOf = (state: EntityState): Result<Crontab, EntityError> => {
   const raw = state.committed["crontabState"] as { readonly tasks?: unknown; readonly hooks?: unknown } | undefined;
   if (raw === undefined) return ok(initCrontab());
-  const hooks = raw.hooks instanceof Map ? (raw.hooks as ReadonlyMap<string, ScheduledHook>) : emptyCollection(raw.hooks) ? new Map<string, ScheduledHook>() : undefined;
-  return hooks === undefined || !(raw.tasks instanceof Map) ? invariant("SCHEDULED_WAKE_CRONTAB_MISSING") : ok({ tasks: raw.tasks as ReadonlyMap<"hubRebalance", CrontabTask>, hooks });
+  const hooks = heldHooks(raw.hooks);
+  if (hooks === undefined || !(raw.tasks instanceof Map)) return invariant("SCHEDULED_WAKE_CRONTAB_MISSING");
+  return ok({ tasks: raw.tasks as ReadonlyMap<"hubRebalance", CrontabTask>, hooks });
 };
-export const withCrontab = (state: EntityState, c: Crontab): EntityState => ({ ...state, committed: { ...state.committed, crontabState: { tasks: c.tasks, hooks: c.hooks } as unknown as Binary } });
-/** og projectEntityConsensusState `crontabState`: the tasks as held, the hooks as their Entity collection commitment. */
+export const withCrontab = (state: EntityState, c: Crontab): EntityState => ({
+  ...state,
+  committed: { ...state.committed, crontabState: { tasks: c.tasks, hooks: c.hooks } as unknown as Binary },
+});
+/**
+ * og projectEntityConsensusState `crontabState`: the tasks as held, the hooks as their Entity collection commitment.
+ */
 const crontabSection = (committed: EntityCommitted): Result<EntityCommitted, EntityRootError> => {
   const raw = committed["crontabState"] as { readonly tasks?: Binary; readonly hooks?: unknown } | undefined;
   if (raw === undefined || !(raw.hooks instanceof Map)) return ok(committed);
-  return map(entityCollectionCommitment(raw.hooks as ReadonlyMap<string, Binary>), (hooks) => ({ ...committed, crontabState: { tasks: raw.tasks ?? new Map(), hooks } as unknown as Binary }));
+  return map(entityCollectionCommitment(raw.hooks as ReadonlyMap<string, Binary>), (hooks) =>
+    ({ ...committed, crontabState: { tasks: raw.tasks ?? new Map(), hooks } as unknown as Binary }));
 };
 /** og DerivedDeadline: per-payment deadlines read from Account locks and paybook entries, never stored as hooks. */
 export type DerivedDeadline =
-  | { readonly id: string; readonly triggerAt: number; readonly type: "htlc_timeout"; readonly data: { readonly accountId: string; readonly lockId: string } }
-  | { readonly id: string; readonly triggerAt: number; readonly type: "htlc_secret_ack_timeout"; readonly data: { readonly hashlock: string; readonly counterpartyEntityId: string } }
-  | { readonly id: string; readonly triggerAt: number; readonly type: "lending_overdue"; readonly data: { readonly loanId: string } };
+  | Timed<"htlc_timeout", { readonly accountId: string; readonly lockId: string }>
+  | Timed<"htlc_secret_ack_timeout", { readonly hashlock: string; readonly counterpartyEntityId: string }>
+  | Timed<"lending_overdue", { readonly loanId: string }>;
 /** og LendingState (types/finance/lending.ts): the hub's committed `lending` book of pools and loans. */
-export type LendingPool = { readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string; readonly tokenId: number; readonly principalAmount: bigint; readonly availableAmount: bigint; readonly borrowedAmount: bigint;
-  readonly interestBps: number; readonly termId: string; readonly termMs: number; readonly createdAt: number; readonly updatedAt: number; readonly status: "open" | "closing" | "closed" };
-export type LendingLoan = { readonly requestId: string; readonly loanId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly lenderEntityId: string; readonly positionId: string; readonly tokenId: number;
-  readonly principalAmount: bigint; readonly interestAmount: bigint; readonly repaymentAmount: bigint; readonly repaidAmount: bigint; readonly interestBps: number; readonly termId: string; readonly termMs: number;
-  readonly openedAt: number; readonly dueAt: number; readonly updatedAt: number; readonly status: "opening" | "active" | "closing" | "repaid" | "defaulted" };
-export type LendingBook = { readonly pools: ReadonlyMap<string, LendingPool>; readonly loans: ReadonlyMap<string, LendingLoan> };
+export type LendingPool = {
+  readonly positionId: string;
+  readonly hubEntityId: string;
+  readonly lenderEntityId: string;
+  readonly tokenId: number;
+  readonly principalAmount: bigint;
+  readonly availableAmount: bigint;
+  readonly borrowedAmount: bigint;
+  readonly interestBps: number;
+  readonly termId: string;
+  readonly termMs: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly status: "open" | "closing" | "closed";
+};
+export type LendingLoan = {
+  readonly requestId: string;
+  readonly loanId: string;
+  readonly hubEntityId: string;
+  readonly borrowerEntityId: string;
+  readonly lenderEntityId: string;
+  readonly positionId: string;
+  readonly tokenId: number;
+  readonly principalAmount: bigint;
+  readonly interestAmount: bigint;
+  readonly repaymentAmount: bigint;
+  readonly repaidAmount: bigint;
+  readonly interestBps: number;
+  readonly termId: string;
+  readonly termMs: number;
+  readonly openedAt: number;
+  readonly dueAt: number;
+  readonly updatedAt: number;
+  readonly status: "opening" | "active" | "closing" | "repaid" | "defaulted";
+};
+export type LendingBook = {
+  readonly pools: ReadonlyMap<string, LendingPool>;
+  readonly loans: ReadonlyMap<string, LendingLoan>;
+};
 const lendingBook = (state: EntityState): LendingBook | undefined => {
   const raw = state.committed["lending"] as Partial<LendingBook> | undefined;
   return raw?.pools instanceof Map && raw.loans instanceof Map ? (raw as LendingBook) : undefined;
 };
 export type DueHook = ScheduledHook | DerivedDeadline;
+type Deadline = { readonly triggerAt: number; readonly id: string };
 /** og compareDeadlines: triggerAt, then the id text. */
-export const compareDeadlines = (a: { readonly triggerAt: number; readonly id: string }, b: { readonly triggerAt: number; readonly id: string }): number => a.triggerAt - b.triggerAt || asc(a.id, b.id);
+export const compareDeadlines = (a: Deadline, b: Deadline): number => a.triggerAt - b.triggerAt || asc(a.id, b.id);
 /** og canProcessAccountTxForDisputeStatus: only an active Account has an Account-tx consumer. */
-const activeAccount = (c: AccountReplica): boolean => c._tag === "open" || c._tag === "proposed" || c._tag === "received";
+const activeAccount = (c: AccountReplica): boolean =>
+  c._tag === "open" || c._tag === "proposed" || c._tag === "received";
 /** og isSecretAckPendingPayment. */
-const secretAckPending = (e: PaybookEntry): boolean => (e.inboundEntity ?? "") !== "" && (e.secret ?? "") !== "" && e.secretAckPending === true
-  && Number.isSafeInteger(e.secretAckStartedAt) && Number.isSafeInteger(e.secretAckDeadlineAt) && (e.secretAckDeadlineAt ?? 0) >= (e.secretAckStartedAt ?? 0);
-/** og collectDerivedDeadlines, optionally only those due by `now`: HTLC lock timeouts, secret-ack deadlines and active loans' due times. */
-export const derivedDeadlines = (state: EntityState, replicas: Replicas, now?: number): readonly DerivedDeadline[] => {
-  const due = (t: number): boolean => now === undefined || t <= now;
-  const timeouts = [...replicas].flatMap(([accountId, c]): DerivedDeadline[] => (!activeAccount(c) ? [] : [...c.state.locks.values()].flatMap((l): DerivedDeadline[] => {
-    const t = Number(l.timelock);
-    return Number.isSafeInteger(t) && t > 0 && due(t) ? [{ id: `htlc-timeout:${l.lockId}`, triggerAt: t, type: "htlc_timeout", data: { accountId, lockId: l.lockId } }] : [];
-  })));
-  const acks = [...(state.paybook?.entries.values() ?? [])].flatMap((e): DerivedDeadline[] => (secretAckPending(e) && due(e.secretAckDeadlineAt ?? 0)
-    ? [{ id: `htlc-secret-ack:${e.hashlock}`, triggerAt: e.secretAckDeadlineAt ?? 0, type: "htlc_secret_ack_timeout", data: { hashlock: e.hashlock, counterpartyEntityId: e.inboundEntity ?? "" } }] : []));
-  const loans = [...(lendingBook(state)?.loans.values() ?? [])].flatMap((l): DerivedDeadline[] => (l.status === "active" && due(l.dueAt) ? [{ id: `lending-overdue:${l.loanId}`, triggerAt: l.dueAt, type: "lending_overdue", data: { loanId: l.loanId } }] : []));
-  return [...timeouts, ...acks, ...loans].sort(compareDeadlines);
+const secretAckPending = (e: PaybookEntry): boolean => {
+  const started = e.secretAckStartedAt, deadline = e.secretAckDeadlineAt;
+  const owed = (e.inboundEntity ?? "") !== "" && (e.secret ?? "") !== "" && e.secretAckPending === true;
+  return owed && Number.isSafeInteger(started) && Number.isSafeInteger(deadline) && (deadline ?? 0) >= (started ?? 0);
 };
-/** og ScheduledWakeJob: advisory diagnostics; execution recomputes the full due set from EntityState at the frame timestamp. */
+/** og HTLC lock timeouts: each positive safe-integer timelock of an active Account. */
+const lockTimeouts = (replicas: Replicas): readonly DerivedDeadline[] =>
+  [...replicas]
+    .filter(([, c]) => activeAccount(c))
+    .flatMap(([accountId, c]) =>
+      [...c.state.locks.values()].flatMap((l): DerivedDeadline[] => {
+        const t = Number(l.timelock);
+        if (!Number.isSafeInteger(t) || t <= 0) return [];
+        return [
+          { id: `htlc-timeout:${l.lockId}`, triggerAt: t, type: "htlc_timeout", data: { accountId, lockId: l.lockId } },
+        ];
+      }),
+    );
+/** og secret-ack deadlines: each paybook entry whose upstream secret resolve waits for its ACK. */
+const secretAckDeadlines = (state: EntityState): readonly DerivedDeadline[] =>
+  [...(state.paybook?.entries.values() ?? [])].filter(secretAckPending).map((e): DerivedDeadline => ({
+    id: `htlc-secret-ack:${e.hashlock}`,
+    triggerAt: e.secretAckDeadlineAt ?? 0,
+    type: "htlc_secret_ack_timeout",
+    data: { hashlock: e.hashlock, counterpartyEntityId: e.inboundEntity ?? "" },
+  }));
+/** og lending overdue deadlines: each active loan's due time. */
+const loanDeadlines = (state: EntityState): readonly DerivedDeadline[] =>
+  [...(lendingBook(state)?.loans.values() ?? [])].filter((l) => l.status === "active").map((l): DerivedDeadline =>
+    ({ id: `lending-overdue:${l.loanId}`, triggerAt: l.dueAt, type: "lending_overdue", data: { loanId: l.loanId } }));
+/**
+ * og collectDerivedDeadlines, optionally only those due by `now`: HTLC lock timeouts, secret-ack deadlines and active
+ * loans' due times.
+ */
+export const derivedDeadlines = (state: EntityState, replicas: Replicas, now?: number): readonly DerivedDeadline[] =>
+  [...lockTimeouts(replicas), ...secretAckDeadlines(state), ...loanDeadlines(state)]
+    .filter((d) => now === undefined || d.triggerAt <= now)
+    .toSorted(compareDeadlines);
+/**
+ * og ScheduledWakeJob: advisory diagnostics; execution recomputes the full due set from EntityState at the frame
+ * timestamp.
+ */
 export type ScheduledWakeJob = { readonly kind: "hook" | "task"; readonly id: string; readonly dueAt: number };
 export const MAX_SCHEDULED_WAKE_JOBS = 1_000;
-const compareJobs = (a: ScheduledWakeJob, b: ScheduledWakeJob): number => a.dueAt - b.dueAt || asc(a.kind, b.kind) || asc(a.id, b.id);
-/** og crontabTaskHasPendingWork: periodic hub work needs a hub config and either a sent batch or an Account with rebalance work (og getRebalanceAccountIds). */
+const compareJobs = (a: ScheduledWakeJob, b: ScheduledWakeJob): number =>
+  a.dueAt - b.dueAt || asc(a.kind, b.kind) || asc(a.id, b.id);
+/**
+ * og crontabTaskHasPendingWork: periodic hub work needs a hub config and either a sent batch or an Account with
+ * rebalance work (og getRebalanceAccountIds).
+ */
 export const crontabTaskHasPendingWork = (state: EntityState, replicas: Replicas): boolean => {
   if (state.committed["hubRebalanceConfig"] === undefined) return false;
   if (committedJBatch(state)?.sentBatch !== undefined) return true;
   const ids = rebalanceAccountIds(state, replicas);
   return !ids.ok || ids.value.length > 0;
 };
-/** og collectDueScheduledWakeJobs. */
-export const dueWakeJobs = (state: EntityState, replicas: Replicas, crontab: Crontab, now: number, includePeriodic: boolean): readonly ScheduledWakeJob[] => [
-  ...derivedDeadlines(state, replicas, now).map((d): ScheduledWakeJob => ({ kind: "hook", id: d.id, dueAt: d.triggerAt })),
-  ...[...crontab.hooks.values()].flatMap((h): ScheduledWakeJob[] => (h.triggerAt <= now ? [{ kind: "hook", id: h.id, dueAt: h.triggerAt }] : [])),
-  ...(includePeriodic ? [...crontab.tasks.values()].flatMap((t): ScheduledWakeJob[] => (t.enabled && crontabTaskHasPendingWork(state, replicas) && crontabTaskDueAt(t) <= now ? [{ kind: "task", id: t.method, dueAt: crontabTaskDueAt(t) }] : [])) : []),
-].sort(compareJobs);
-/** og nextReplicaDeadline (active-leader branch; the other branch is leaderTimeoutDue): the earliest derived deadline, hook or pending periodic task. */
+/** The enabled periodic tasks, while there is periodic work for them at all. */
+const pendingTasks = (state: EntityState, replicas: Replicas, crontab: Crontab): readonly CrontabTask[] => {
+  const enabled = [...crontab.tasks.values()].filter((t) => t.enabled);
+  return enabled.length > 0 && crontabTaskHasPendingWork(state, replicas) ? enabled : [];
+};
+const hookJob = (d: Deadline): ScheduledWakeJob => ({ kind: "hook", id: d.id, dueAt: d.triggerAt });
+const taskJob = (t: CrontabTask): ScheduledWakeJob => ({ kind: "task", id: t.method, dueAt: crontabTaskDueAt(t) });
+/**
+ * og collectDueScheduledWakeJobs: derived deadlines and stored hooks due by `now`, and, when periodic work is asked
+ * for, the pending periodic tasks due by then.
+ */
+export const dueWakeJobs = (
+  state: EntityState, replicas: Replicas, crontab: Crontab, now: number, includePeriodic: boolean,
+): readonly ScheduledWakeJob[] => {
+  const periodic = includePeriodic ? pendingTasks(state, replicas, crontab) : [];
+  return [
+    ...derivedDeadlines(state, replicas, now).map(hookJob),
+    ...[...crontab.hooks.values()].filter((h) => h.triggerAt <= now).map(hookJob),
+    ...periodic.map(taskJob).filter((j) => j.dueAt <= now),
+  ].toSorted(compareJobs);
+};
+/**
+ * og nextReplicaDeadline (active-leader branch; the other branch is leaderTimeoutDue): the earliest derived deadline,
+ * hook or pending periodic task.
+ */
 export const nextWakeAt = (r: EntityReplica): number | undefined => {
   const c = crontabOf(r.state);
   if (!isActiveLeader(r) || !c.ok) return undefined;
-  const periodic = crontabTaskHasPendingWork(r.state, r.accountReplicas) ? [...c.value.tasks.values()].filter((t) => t.enabled).map(crontabTaskDueAt) : [];
-  const all = [...derivedDeadlines(r.state, r.accountReplicas).map((d) => d.triggerAt), ...[...c.value.hooks.values()].map((h) => h.triggerAt), ...periodic];
-  return all.length === 0 ? undefined : all.reduce((a, b) => Math.min(a, b));
+  const times = [
+    ...derivedDeadlines(r.state, r.accountReplicas).map((d) => d.triggerAt),
+    ...[...c.value.hooks.values()].map((h) => h.triggerAt),
+    ...pendingTasks(r.state, r.accountReplicas, c.value).map(crontabTaskDueAt),
+  ];
+  return times.length === 0 ? undefined : times.reduce((a, b) => Math.min(a, b));
 };
-/** og createDueScheduledWakeInputs (active-leader branch): the advisory due jobs as the local input's one scheduledWake tx (none while a wake is queued). */
+/**
+ * og createDueScheduledWakeInputs (active-leader branch): the advisory due jobs as the local input's one scheduledWake
+ * tx (none while a wake is queued).
+ */
 export const localScheduledWake = (r: EntityReplica, now: bigint): EntityInput | undefined => {
   const c = crontabOf(r.state);
   if (!isActiveLeader(r) || !c.ok || r.mempool.some((tx) => tx.type === "scheduledWake")) return undefined;
-  const jobs = dueWakeJobs(r.state, r.accountReplicas, c.value, Number(now), crontabTaskHasPendingWork(r.state, r.accountReplicas)).slice(0, MAX_SCHEDULED_WAKE_JOBS), first = jobs[0];
-  return first === undefined ? undefined : { kind: "txs", timestamp: now, txs: [{ type: "scheduledWake", data: { version: 1, proposerSignerId: signerId(r.signerId), dueAt: first.dueAt, jobs } }] };
+  const jobs = dueWakeJobs(r.state, r.accountReplicas, c.value, Number(now), true).slice(0, MAX_SCHEDULED_WAKE_JOBS);
+  const first = jobs[0];
+  if (first === undefined) return undefined;
+  const wake: WakeData = { version: 1, proposerSignerId: signerId(r.signerId), dueAt: first.dueAt, jobs };
+  return { kind: "txs", timestamp: now, txs: [{ type: "scheduledWake", data: wake }] };
 };
-/** og assertScheduledWakeMatchesState: the frame leader's wake with a canonical, unique, structurally valid job list whose first job is `dueAt`, nothing due after the frame time. */
-const checkWake = (state: EntityState, w: Extract<EntityTx, { type: "scheduledWake" }>["data"], now: number): Result<void, EntityError> => {
+type WakeData = Extract<EntityTx, { type: "scheduledWake" }>["data"];
+/** og's job shape: a known kind, a bounded non-empty id, a safe due time no later than the frame. */
+const validJob = (now: number) => (j: ScheduledWakeJob): boolean =>
+  (j.kind === "hook" || j.kind === "task") && typeof j.id === "string" && j.id.length > 0 && j.id.length <= 256
+  && Number.isSafeInteger(j.dueAt) && j.dueAt >= 0 && j.dueAt <= now;
+/**
+ * og assertScheduledWakeMatchesState: the frame leader's wake with a canonical, unique, structurally valid job list
+ * whose first job is `dueAt`, nothing due after the frame time.
+ */
+const checkWake = (state: EntityState, w: WakeData, now: number): Result<void, EntityError> => {
   const leader = signerId(leaderStateOf(state).activeValidatorId);
-  if (leader === "" || leader !== signerId(String(w.proposerSignerId))) return invariant("SCHEDULED_WAKE_PROPOSER_MISMATCH");
-  if (w.version !== 1 || !Number.isSafeInteger(w.dueAt) || w.dueAt < 0 || w.dueAt > now || !Array.isArray(w.jobs) || w.jobs.length === 0 || w.jobs.length > MAX_SCHEDULED_WAKE_JOBS) return invariant("SCHEDULED_WAKE_INVALID_PAYLOAD");
-  const sorted = [...w.jobs].sort(compareJobs), keys = sorted.map((j) => stableJson(j));
-  const valid = sorted.every((j) => (j.kind === "hook" || j.kind === "task") && typeof j.id === "string" && j.id.length > 0 && j.id.length <= 256 && Number.isSafeInteger(j.dueAt) && j.dueAt >= 0 && j.dueAt <= now);
-  return sorted[0]?.dueAt !== w.dueAt || stableJson(sorted) !== stableJson(w.jobs) || new Set(keys).size !== keys.length || !valid ? invariant(`SCHEDULED_WAKE_INVALID_PAYLOAD: jobs=${stableJson(w.jobs)}`) : ok(undefined);
+  const dueOk = Number.isSafeInteger(w.dueAt) && w.dueAt >= 0 && w.dueAt <= now;
+  const sized = Array.isArray(w.jobs) && w.jobs.length > 0 && w.jobs.length <= MAX_SCHEDULED_WAKE_JOBS;
+  if (leader === "" || leader !== signerId(String(w.proposerSignerId)))
+    return invariant("SCHEDULED_WAKE_PROPOSER_MISMATCH");
+  if (w.version !== 1 || !dueOk || !sized) return invariant("SCHEDULED_WAKE_INVALID_PAYLOAD");
+  const sorted = w.jobs.toSorted(compareJobs);
+  const unique = new Set(sorted.map((j) => stableJson(j))).size === sorted.length;
+  const canonical = sorted[0]?.dueAt === w.dueAt && stableJson(sorted) === stableJson(w.jobs) && unique;
+  return canonical && sorted.every(validJob(now))
+    ? ok(undefined)
+    : invariant(`SCHEDULED_WAKE_INVALID_PAYLOAD: jobs=${stableJson(w.jobs)}`);
 };
-/** og assertScheduledWakeFrameOrder: a wake is the unique first tx of its frame (a plain Error: the whole input is refused). */
+/**
+ * og assertScheduledWakeFrameOrder: a wake is the unique first tx of its frame (a plain Error: the whole input is
+ * refused).
+ */
 const wakeOrderIssue = (txs: readonly EntityTx[]): EntityError | undefined => {
   const at = txs.flatMap((tx, i) => (tx.type === "scheduledWake" ? [i] : []));
-  return at.length === 0 || (at.length === 1 && at[0] === 0) ? undefined : { _tag: "entity_invariant", reason: `SCHEDULED_WAKE_FRAME_ORDER_INVALID: indexes=${at.join(",")}` };
+  if (at.length === 0 || (at.length === 1 && at[0] === 0)) return undefined;
+  return { _tag: "entity_invariant", reason: `SCHEDULED_WAKE_FRAME_ORDER_INVALID: indexes=${at.join(",")}` };
 };
-/** og prioritizeScheduledWakeTransactions: the (identical) wake runs first, before the txs that could replace its hooks. */
+/**
+ * og prioritizeScheduledWakeTransactions: the (identical) wake runs first, before the txs that could replace its hooks.
+ */
 export const prioritizeWake = (txs: readonly EntityTx[]): Result<readonly EntityTx[], EntityError> => {
   const wakes = txs.filter((tx) => tx.type === "scheduledWake"), first = wakes[0];
   if (first === undefined) return ok(txs);
-  return wakes.some((w) => stableJson(wireEntityTx(w)) !== stableJson(wireEntityTx(first))) ? invariant("SCHEDULED_WAKE_CONFLICTING_INPUTS") : ok([first, ...txs.filter((tx) => tx.type !== "scheduledWake")]);
+  const wire = stableJson(wireEntityTx(first));
+  if (wakes.some((w) => stableJson(wireEntityTx(w)) !== wire)) return invariant("SCHEDULED_WAKE_CONFLICTING_INPUTS");
+  return ok([first, ...txs.filter((tx) => tx.type !== "scheduledWake")]);
 };
-/** A wake output's tx: an Entity tx, or og's j_broadcast / j_abort_sent_batch continuation, which the rewrite's Entity does not carry. */
-export type WakeTx = EntityTx | { readonly type: "j_broadcast"; readonly data: { readonly [k: string]: never } }
-  | { readonly type: "j_abort_sent_batch"; readonly data: { readonly reason: string; readonly requeueToCurrent: boolean } };
+/**
+ * A wake output's tx: an Entity tx, or og's j_broadcast / j_abort_sent_batch continuation, which the rewrite's Entity
+ * does not carry.
+ */
+export type WakeTx =
+  | EntityTx
+  | { readonly type: "j_broadcast"; readonly data: { readonly [k: string]: never } }
+  | {
+      readonly type: "j_abort_sent_batch";
+      readonly data: { readonly reason: string; readonly requeueToCurrent: boolean };
+    };
 /** og processDueHooks outputs: each is an EntityInput to this Entity's validators[0]. */
 export type WakeOutput = { readonly signerId: string; readonly txs: readonly WakeTx[] };
 /**
- * og DueHookPlan plus the state the due hooks rewrite (re-armed hooks, finalizeQueued latches, paybook entries, the kicked task). `sent`: og's
- * outputs to other Entities (the board Hanko refreshes); `hashes`: og context.hashesToSign.
+ * og DueHookPlan plus the state the due hooks rewrite (re-armed hooks, finalizeQueued latches, paybook entries, the
+ * kicked task). `sent`: og's outputs to other Entities (the board Hanko refreshes); `hashes`: og context.hashesToSign.
  */
 type HookRun = Folded & {
-  readonly crontab: Crontab; readonly outputs: readonly WakeOutput[]; readonly timeouts: readonly { readonly accountId: string; readonly lockId: string }[];
-  readonly prepare: ReadonlyMap<string, string>; readonly finalize: readonly string[]; readonly broadcast: boolean;
-  readonly sent: readonly EntityOutput[]; readonly hashes: readonly HashToSign[]; readonly accountTxs: readonly AccountTxTarget[];
+  readonly crontab: Crontab;
+  readonly outputs: readonly WakeOutput[];
+  readonly timeouts: readonly { readonly accountId: string; readonly lockId: string }[];
+  readonly prepare: ReadonlyMap<string, string>;
+  readonly finalize: readonly string[];
+  readonly broadcast: boolean;
+  readonly sent: readonly EntityOutput[];
+  readonly hashes: readonly HashToSign[];
+  readonly accountTxs: readonly AccountTxTarget[];
 };
 // ---- og entity/tx/state-effects/board-rotation-hanko-refresh.ts, scheduler/board-hanko-refresh-hook.ts, tx/j-events-board.ts (BoardActivated),
 // ---- entity/account/account-counterparty-route.ts: our board rotation re-Hankos every certified Account frame for the peer ----
@@ -15774,13 +16191,32 @@ export const BOARD_HANKO_REFRESH_HOOK_ID = "board-hanko-refresh";
 export const BOARD_HANKO_REFRESH_RETRY_MS = 60_000;
 export const MAX_BOARD_HANKO_REFRESHES_PER_FRAME = 32;
 export const COUNTERPARTY_BOARD_HANKO_REFRESH_DEADLINE_MS = 24 * 60 * 60 * 1_000;
+/** A board activation's place on its J chain: the block and the log within it. */
 type Activation = { readonly jHeight: number; readonly logIndex: number };
 const isWord = (v: string): boolean => /^0x[0-9a-f]{64}$/.test(v.toLowerCase());
+/** og RefreshMigration for an activation: why its refresh stands where it does, and the frame it was issued for. */
+const refreshMarker = (
+  a: Activation, reason: RefreshMigration["reason"], issued?: { readonly height: number; readonly frameHash: string },
+): RefreshMigration => ({
+  activationJHeight: a.jHeight,
+  activationLogIndex: a.logIndex,
+  reason,
+  ...(issued === undefined ? {} : { issuedFrameHeight: issued.height, issuedFrameHash: issued.frameHash }),
+});
+/** The board Hanko refresh hook for an activation, resuming after `afterCounterpartyId`. */
+const refreshHookFor = (a: Activation, triggerAt: number, afterCounterpartyId: string): ScheduledHook => ({
+  id: BOARD_HANKO_REFRESH_HOOK_ID,
+  triggerAt,
+  type: "board_hanko_refresh",
+  data: { activationJHeight: a.jHeight, activationLogIndex: a.logIndex, afterCounterpartyId },
+});
 /** og accountNeedsBoardHankoRefreshForActivation: this activation's marker, not yet issued for the current frame. */
 export const needsBoardRefresh = (c: AccountReplica, a: Activation): boolean => {
   const m = c.refreshMigration, cur = currentFrameOf(c);
   if (m === undefined || m.activationJHeight !== a.jHeight || m.activationLogIndex !== a.logIndex) return false;
-  return m.reason !== "issued" || m.issuedFrameHeight !== Number(cur.height) || (m.issuedFrameHash ?? "").toLowerCase() !== cur.hash.toLowerCase();
+  const issuedForHead = m.reason === "issued" && m.issuedFrameHeight === Number(cur.height)
+    && (m.issuedFrameHash ?? "").toLowerCase() === cur.hash.toLowerCase();
+  return !issuedForHead;
 };
 const withMarker = (c: AccountReplica, marker: RefreshMigration | undefined): AccountReplica => {
   const { refreshMigration: _m, ...rest } = c;
@@ -15791,177 +16227,464 @@ const headHankos = (c: AccountReplica, self: EntityId): { readonly own: Hanko; r
   const party = partyOf(replicaId(c), self);
   return c.head._tag !== "installed" || !party.ok ? undefined : certifiedBy(c.head.certificate, party.value);
 };
+/** A registry fault met while authorizing a Hanko's boards: it aborts the check instead of refusing the Hanko. */
+type RegistryFault = { readonly _tag: "registry_fault"; readonly fault: EntityError };
 /**
- * og resolveObserverCertifiedAccountCounterpartyProposer: verify the peer's frame Hanko on our committed frame against the observer's certified
- * board records (every claim that is not self-hashed) and route to the target claim's first member. A Hanko refusal is og's retryable
- * HankoValidationError (no route); a malformed frame hash or a registry fault is a plain Error.
+ * og resolveObserverCertifiedAccountCounterpartyProposer: verify the peer's frame Hanko on our committed frame against
+ * the observer's certified board records (every claim that is not self-hashed) and route to the target claim's first
+ * member. A Hanko refusal is og's retryable HankoValidationError (no route); a malformed frame hash or a registry fault
+ * is a plain Error.
  */
-export const counterpartyProposer = (state: EntityState, c: AccountReplica, peer: EntityId): Result<string | null, EntityError> => {
+export const counterpartyProposer = (
+  state: EntityState,
+  c: AccountReplica,
+  peer: EntityId,
+): Result<string | null, EntityError> => {
   const hankos = headHankos(c, state.id);
   if (hankos === undefined || !hankos.peer) return ok(null);
   const frameHash = lower(currentFrameOf(c).hash);
   if (!isWord(frameHash)) return invariant(`ACCOUNT_COUNTERPARTY_ROUTE_FRAME_HASH_INVALID:${frameHash || "missing"}`);
-  const faults: EntityError[] = [];
-  const verdict = checkAccountHanko(hankos.peer, frameHash, peer, (entityId, boardHash) => {
+  const certified = (entityId: string, boardHash: string): Result<boolean, RegistryFault> => {
     const record = observerBoardRecord(state, entityId);
-    if (!record.ok) { faults.push(record.error); return false; }
-    return record.value !== null && lower(record.value.boardHash) === lower(boardHash);
-  });
-  if (faults[0] !== undefined) return err(faults[0]);
-  const first = verdict.ok ? lower(verdict.value.firstMember) : "";
+    if (!record.ok) return err({ _tag: "registry_fault", fault: record.error });
+    return ok(record.value !== null && lower(record.value.boardHash) === lower(boardHash));
+  };
+  const verdict = checkAccountHanko(hankos.peer, frameHash, peer, certified);
+  if (!verdict.ok) return verdict.error._tag === "registry_fault" ? err(verdict.error.fault) : ok(null);
+  const first = lower(verdict.value.firstMember);
   return ok(/^0x0{24}[0-9a-f]{40}$/.test(first) ? `0x${first.slice(-40)}` : null);
 };
-type RefreshDraft = { readonly output?: EntityOutput | undefined; readonly hashes: readonly HashToSign[]; readonly marker: RefreshMigration | undefined };
-/** og buildAccountHankoRefreshDraft: a certified frame (and exact bilateral dispute proof) becomes the refresh AccountInput and its Hankos, else a marker reason. */
-const refreshDraft = (state: EntityState, peer: EntityId, c: AccountReplica, a: Activation): Result<RefreshDraft, EntityError> => {
-  const cur = currentFrameOf(c), marker = (reason: RefreshMigration["reason"], issued?: { readonly height: number; readonly frameHash: string }): RefreshMigration =>
-    ({ activationJHeight: a.jHeight, activationLogIndex: a.logIndex, reason, ...(issued === undefined ? {} : { issuedFrameHeight: issued.height, issuedFrameHash: issued.frameHash }) });
-  if (cur.height < 1n) return ok({ hashes: [], marker: undefined });
-  const hankos = headHankos(c, state.id), frameHash = cur.hash.toLowerCase();
-  if (hankos === undefined || !hankos.own || !hankos.peer) return ok({ hashes: [], marker: marker("bilateral-frame-uncertified") });
-  if (!isWord(frameHash)) return ok({ hashes: [], marker: marker("certified-frame-invalid") });
-  // og exactBilateralDisputeHanko: any dispute evidence must be one certified tuple on both sides
-  const own = c.dispute.current, theirs = c.dispute.counterparty;
-  const dispute = own === undefined && theirs === undefined ? undefined
-    : own === undefined || theirs === undefined || !own.hanko || !theirs.hanko || !own.hash || !own.proofBodyHash || lower(own.hash) !== lower(theirs.hash) || lower(own.proofBodyHash) !== lower(theirs.proofBodyHash)
-      || own.proofNonce !== theirs.proofNonce || own.proposerIsLeft !== theirs.proposerIsLeft || typeof own.proposerIsLeft !== "boolean" ? ("bilateral-dispute-uncertified" as const)
-      : !isWord(own.hash) || !isWord(own.proofBodyHash) || !Number.isSafeInteger(own.proofNonce) || own.proofNonce < 0 ? ("certified-dispute-invalid" as const)
-        : { hash: lower(own.hash), proofBodyHash: lower(own.proofBodyHash), proofNonce: own.proofNonce, proposerIsLeft: own.proposerIsLeft };
-  if (typeof dispute === "string") return ok({ hashes: [], marker: marker(dispute) });
-  return map(counterpartyProposer(state, c, peer), (route): RefreshDraft => {
-    if (route === null) return { hashes: [], marker: marker("output-route-unavailable") };
-    const context = `board-hanko-refresh:${a.jHeight}:${a.logIndex}:${peer}`, { domain, disputeConfig } = c.state.terms;
-    const data: AccountPeerInput = {
-      kind: "board_hanko_refresh", fromEntityId: state.id, toEntityId: peer, domain, disputeConfig, height: cur.height, frameHash, frameHanko: pendingHanko(frameHash),
-      boardActivationJHeight: a.jHeight, boardActivationLogIndex: a.logIndex, ...opt("disputeHanko", dispute === undefined ? undefined : { ...dispute, hanko: pendingHanko(dispute.hash) }),
-    };
-    return {
-      output: { to: peer, tx: { type: "accountInput", data } },
-      hashes: [{ hash: frameHash, type: "accountFrame", context: `${context}:frame` }, ...(dispute === undefined ? [] : [{ hash: dispute.hash, type: "dispute", context: `${context}:dispute` } as const])],
-      marker: marker("issued", { height: Number(cur.height), frameHash }),
-    };
-  });
+type DisputeProof = Omit<DisputeHanko, "hanko">;
+/** og exactBilateralDisputeHanko: no dispute evidence, one certified tuple on both sides, or why it is neither. */
+type BilateralDispute =
+  | { readonly kind: "none" }
+  | { readonly kind: "exact"; readonly proof: DisputeProof }
+  | { readonly kind: "refused"; readonly reason: "bilateral-dispute-uncertified" | "certified-dispute-invalid" };
+const sameProof = (a: DisputeHanko, b: DisputeHanko): boolean =>
+  lower(a.hash) === lower(b.hash) && lower(a.proofBodyHash) === lower(b.proofBodyHash)
+  && a.proofNonce === b.proofNonce && a.proposerIsLeft === b.proposerIsLeft;
+const bilateralDispute = (w: DisputeWitnesses): BilateralDispute => {
+  const own = w.current;
+  const theirs = w.counterparty;
+  if (own === undefined && theirs === undefined) return { kind: "none" };
+  if (
+    own === undefined ||
+    theirs === undefined ||
+    !own.hanko ||
+    !theirs.hanko ||
+    !own.hash ||
+    !own.proofBodyHash ||
+    !sameProof(own, theirs) ||
+    typeof own.proposerIsLeft !== "boolean"
+  )
+    return { kind: "refused", reason: "bilateral-dispute-uncertified" };
+  if (!isWord(own.hash) || !isWord(own.proofBodyHash) || !Number.isSafeInteger(own.proofNonce) || own.proofNonce < 0)
+    return { kind: "refused", reason: "certified-dispute-invalid" };
+  const { hash, proofBodyHash, proofNonce, proposerIsLeft } = own;
+  return {
+    kind: "exact",
+    proof: { hash: lower(hash), proofBodyHash: lower(proofBodyHash), proofNonce, proposerIsLeft },
+  };
+};
+type RefreshDraft = {
+  readonly output?: EntityOutput | undefined;
+  readonly hashes: readonly HashToSign[];
+  readonly marker: RefreshMigration | undefined;
+};
+/** The refresh AccountInput for a certified head (and its exact dispute proof), with the Hankos it asks us to sign. */
+const issuedRefresh = (
+  state: EntityState,
+  peer: EntityId,
+  c: AccountReplica,
+  a: Activation,
+  frameHash: string,
+  proof: DisputeProof | undefined,
+): RefreshDraft => {
+  const height = currentFrameOf(c).height;
+  const { domain, disputeConfig } = c.state.terms;
+  const context = `board-hanko-refresh:${a.jHeight}:${a.logIndex}:${peer}`;
+  const data: AccountPeerInput = {
+    kind: "board_hanko_refresh",
+    fromEntityId: state.id,
+    toEntityId: peer,
+    domain,
+    disputeConfig,
+    height,
+    frameHash,
+    frameHanko: pendingHanko(frameHash),
+    boardActivationJHeight: a.jHeight,
+    boardActivationLogIndex: a.logIndex,
+    ...opt("disputeHanko", proof === undefined ? undefined : { ...proof, hanko: pendingHanko(proof.hash) }),
+  };
+  const frameSign: HashToSign = { hash: frameHash, type: "accountFrame", context: `${context}:frame` };
+  const disputeSign =
+    proof === undefined ? [] : [{ hash: proof.hash, type: "dispute", context: `${context}:dispute` } as const];
+  return {
+    output: { to: peer, tx: { type: "accountInput", data } },
+    hashes: [frameSign, ...disputeSign],
+    marker: refreshMarker(a, "issued", { height: Number(height), frameHash }),
+  };
 };
 /**
- * og processBoardHankoRefreshHook: at most MAX_BOARD_HANKO_REFRESHES_PER_FRAME Accounts still needing this activation's refresh, after the cursor
- * in id order, each re-marked; the hook re-arms now for the next batch, or in BOARD_HANKO_REFRESH_RETRY_MS while a route is unavailable.
+ * og buildAccountHankoRefreshDraft: a certified frame (and exact bilateral dispute proof) becomes the refresh
+ * AccountInput and its Hankos, else a marker reason.
  */
-const boardRefreshHook = (run: HookRun, hook: Extract<ScheduledHook, { type: "board_hanko_refresh" }>, now: number): Result<HookRun, EntityError> => {
-  const a: Activation = { jHeight: hook.data.activationJHeight, logIndex: hook.data.activationLogIndex }, after = lower(hook.data.afterCounterpartyId);
-  const pending = [...run.accountReplicas].map(([peer, c]) => [lower(peer), peer, c] as const).filter(([id, , c]) => id > after && needsBoardRefresh(c, a)).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
+const refreshDraft = (
+  state: EntityState,
+  peer: EntityId,
+  c: AccountReplica,
+  a: Activation,
+): Result<RefreshDraft, EntityError> => {
+  const cur = currentFrameOf(c);
+  const frameHash = cur.hash.toLowerCase();
+  const hankos = headHankos(c, state.id);
+  const markedOnly = (reason: RefreshMigration["reason"]): RefreshDraft => ({
+    hashes: [],
+    marker: refreshMarker(a, reason),
+  });
+  if (cur.height < 1n) return ok({ hashes: [], marker: undefined });
+  if (hankos === undefined || !hankos.own || !hankos.peer) return ok(markedOnly("bilateral-frame-uncertified"));
+  if (!isWord(frameHash)) return ok(markedOnly("certified-frame-invalid"));
+  const dispute = bilateralDispute(c.dispute);
+  if (dispute.kind === "refused") return ok(markedOnly(dispute.reason));
+  const proof = dispute.kind === "exact" ? dispute.proof : undefined;
+  return map(counterpartyProposer(state, c, peer), (route) =>
+    route === null ? markedOnly("output-route-unavailable") : issuedRefresh(state, peer, c, a, frameHash, proof),
+  );
+};
+const activationOf = (d: { readonly activationJHeight: number; readonly activationLogIndex: number }): Activation =>
+  ({ jHeight: d.activationJHeight, logIndex: d.activationLogIndex });
+/**
+ * og processBoardHankoRefreshHook: at most MAX_BOARD_HANKO_REFRESHES_PER_FRAME Accounts still needing this
+ * activation's refresh, after the cursor in id order, each re-marked; the hook re-arms now for the next batch, or in
+ * BOARD_HANKO_REFRESH_RETRY_MS while a route is unavailable.
+ */
+const boardRefreshHook = (
+  run: HookRun,
+  hook: Extract<ScheduledHook, { type: "board_hanko_refresh" }>,
+  now: number,
+): Result<HookRun, EntityError> => {
+  const a = activationOf(hook.data);
+  const after = lower(hook.data.afterCounterpartyId);
+  const pending = [...run.accountReplicas]
+    .map(([peer, c]) => ({ id: lower(peer), peer, c }))
+    .filter(({ id, c }) => id > after && needsBoardRefresh(c, a))
+    .toSorted((x, y) => asc(x.id, y.id));
   const batch = pending.slice(0, MAX_BOARD_HANKO_REFRESHES_PER_FRAME);
-  return map(traverse(batch, ([, peer, c]) => map(refreshDraft(run.state, peer, c, a), (draft) => ({ peer, c, draft }))), (drafts): HookRun => {
-    const replicas = drafts.reduce((m, { peer, c, draft }) => mapSet(m, peer, withMarker(c, draft.marker)), run.accountReplicas);
-    const hasMore = pending.length > batch.length, retry = drafts.some(({ draft }) => draft.marker?.reason === "output-route-unavailable"), next = batch[batch.length - 1]?.[0] ?? after;
-    const crontab = !hasMore && !retry ? run.crontab : scheduleHook(run.crontab, { id: BOARD_HANKO_REFRESH_HOOK_ID, triggerAt: hasMore ? now : now + BOARD_HANKO_REFRESH_RETRY_MS, type: "board_hanko_refresh",
-      data: { activationJHeight: a.jHeight, activationLogIndex: a.logIndex, afterCounterpartyId: hasMore ? next : "" } });
-    return { ...run, accountReplicas: replicas, crontab, sent: [...run.sent, ...drafts.flatMap(({ draft }) => (draft.output === undefined ? [] : [draft.output]))], hashes: [...run.hashes, ...drafts.flatMap(({ draft }) => draft.hashes)] };
+  const drafted = traverse(batch, ({ peer, c }) =>
+    map(refreshDraft(run.state, peer, c, a), (draft) => ({ peer, c, draft })),
+  );
+  return map(drafted, (drafts): HookRun => {
+    const hasMore = pending.length > batch.length;
+    const retry = drafts.some(({ draft }) => draft.marker?.reason === "output-route-unavailable");
+    const cursor = batch.at(-1)?.id ?? after;
+    const crontab =
+      hasMore || retry
+        ? scheduleHook(
+            run.crontab,
+            refreshHookFor(a, hasMore ? now : now + BOARD_HANKO_REFRESH_RETRY_MS, hasMore ? cursor : ""),
+          )
+        : run.crontab;
+    const remarked = drafts.map(({ peer, c, draft }) => [peer, withMarker(c, draft.marker)] as const);
+    return {
+      ...run,
+      accountReplicas: new Map([...run.accountReplicas, ...remarked]),
+      crontab,
+      sent: [...run.sent, ...drafts.flatMap(({ draft }) => (draft.output === undefined ? [] : [draft.output]))],
+      hashes: [...run.hashes, ...drafts.flatMap(({ draft }) => draft.hashes)],
+    };
   });
 };
-/** og boardHankoRefreshEvidence without our own Hankos, which og attaches only after the frame certifies (never inside one frame). */
-const refreshEvidence = (c: AccountReplica, self: EntityId): string => {
-  const cur = currentFrameOf(c), w = c.dispute;
-  return stableJson([String(cur.height), cur.hash, headHankos(c, self)?.peer ?? null, w.counterparty?.hanko ?? null, w.current?.hash ?? null, w.counterparty?.hash ?? null, w.current?.proofBodyHash ?? null,
-    w.counterparty?.proofBodyHash ?? null, w.current?.proofNonce ?? null, w.counterparty?.proofNonce ?? null, w.current?.proposerIsLeft ?? null, w.counterparty?.proposerIsLeft ?? null]);
-};
 /**
- * og scheduleChangedAccountBoardHankoRefreshes (end of the Entity frame): an Account whose certified frame evidence changed and still needs its
- * marker's refresh re-arms the refresh hook now, for the latest such activation. A marker-only change never re-arms.
+ * og boardHankoRefreshEvidence without our own Hankos, which og attaches only after the frame certifies (never inside
+ * one frame).
+ */
+const refreshEvidence = (c: AccountReplica, self: EntityId): string => {
+  const cur = currentFrameOf(c);
+  const w = c.dispute;
+  const both = (k: keyof DisputeProof) => [w.current?.[k] ?? null, w.counterparty?.[k] ?? null];
+  const peerHankos = [headHankos(c, self)?.peer ?? null, w.counterparty?.hanko ?? null];
+  return stableJson([
+    String(cur.height),
+    cur.hash,
+    ...peerHankos,
+    ...both("hash"),
+    ...both("proofBodyHash"),
+    ...both("proofNonce"),
+    ...both("proposerIsLeft"),
+  ]);
+};
+/** The later of two activations on the J chain; a tie keeps the first. */
+const laterActivation = (x: Activation, y: Activation): Activation =>
+  (y.jHeight > x.jHeight || (y.jHeight === x.jHeight && y.logIndex > x.logIndex) ? y : x);
+/**
+ * og scheduleChangedAccountBoardHankoRefreshes (end of the Entity frame): an Account whose certified frame evidence
+ * changed and still needs its marker's refresh re-arms the refresh hook now, for the latest such activation. A
+ * marker-only change never re-arms.
  */
 export const rearmBoardRefreshes = <D extends Folded>(before: Replicas, d: D, now: number): Result<D, EntityError> => {
+  const self = d.state.id;
+  const changed = (peer: EntityId, c: AccountReplica): boolean => {
+    const prev = before.get(peer);
+    return prev === undefined || refreshEvidence(prev, self) !== refreshEvidence(c, self);
+  };
   const due = [...d.accountReplicas].flatMap(([peer, c]): Activation[] => {
-    const m = c.refreshMigration, prev = before.get(peer), a = m === undefined ? undefined : { jHeight: m.activationJHeight, logIndex: m.activationLogIndex };
-    return a === undefined || (prev !== undefined && refreshEvidence(prev, d.state.id) === refreshEvidence(c, d.state.id)) || !needsBoardRefresh(c, a) ? [] : [a];
+    const m = c.refreshMigration;
+    const a = m === undefined ? undefined : activationOf(m);
+    return a !== undefined && changed(peer, c) && needsBoardRefresh(c, a) ? [a] : [];
   });
-  const latest = due.reduce<Activation | undefined>((best, a) => (best === undefined || a.jHeight > best.jHeight || (a.jHeight === best.jHeight && a.logIndex > best.logIndex) ? a : best), undefined);
-  return latest === undefined ? ok(d) : map(crontabOf(d.state), (c) => ({ ...d, state: withCrontab(d.state, scheduleHook(c, { id: BOARD_HANKO_REFRESH_HOOK_ID, triggerAt: now, type: "board_hanko_refresh",
-    data: { activationJHeight: latest.jHeight, activationLogIndex: latest.logIndex, afterCounterpartyId: "" } })) }));
+  const latest = due.reduce<Activation | undefined>(
+    (best, a) => (best === undefined ? a : laterActivation(best, a)),
+    undefined,
+  );
+  if (latest === undefined) return ok(d);
+  return map(crontabOf(d.state), (c) => ({
+    ...d,
+    state: withCrontab(d.state, scheduleHook(c, refreshHookFor(latest, now, ""))),
+  }));
+};
+type ActivationStep = BoardJEventStep & { readonly accountReplicas: Replicas };
+/** A peer's activation: a certified Account with it arms the 24h counterparty refresh deadline hook. */
+const peerActivation = (
+  step: BoardJEventStep,
+  replicas: Replicas,
+  crontab: Crontab,
+  activated: string,
+  a: Activation,
+  now: number,
+): ActivationStep => {
+  const child = replicas.get(activated as EntityId);
+  if (child === undefined || currentFrameOf(child).height < 1n) return { ...step, accountReplicas: replicas };
+  const hook: ScheduledHook = {
+    id: `counterparty-board-hanko-refresh:${activated}:${a.jHeight}:${a.logIndex}`,
+    triggerAt: now + COUNTERPARTY_BOARD_HANKO_REFRESH_DEADLINE_MS,
+    type: "counterparty_board_hanko_refresh_deadline",
+    data: { accountId: activated, activationJHeight: a.jHeight, activationLogIndex: a.logIndex },
+  };
+  const awaiting = status(`⏳ Awaiting current-board Account Hanko refresh from ${activated.slice(-4)} within 24h`);
+  return {
+    state: withCrontab(step.state, scheduleHook(crontab, hook)),
+    events: [...step.events, awaiting],
+    accountReplicas: replicas,
+  };
 };
 /**
- * og applyCertifiedBoardJEvent's BoardActivated tail (markBoardRotationHankoRefreshesPending): our own activation marks every certified Account
- * `pending` (clearing a genesis Account's marker) and arms the refresh hook now (cancels it with nothing to refresh); a peer's activation arms
- * its 24h counterparty deadline hook.
+ * Our own activation: every certified Account is marked `pending` (a genesis Account's marker cleared) and the refresh
+ * hook arms now, or is cancelled with nothing to refresh.
  */
-const boardActivation = (step: BoardJEventStep, replicas: Replicas, event: Extract<JEvent, { type: "BoardActivated" }>, blockNumber: number, now: number): Result<BoardJEventStep & { readonly accountReplicas: Replicas }, EntityError> => {
-  const state = step.state, jHeight = Number(event.meta?.blockNumber ?? blockNumber), logIndex = Number(event.meta?.logIndex);
-  if (!Number.isSafeInteger(jHeight) || jHeight < 1) return invariant(`BOARD_HANKO_REFRESH_ACTIVATION_HEIGHT_INVALID:${String(event.meta?.blockNumber ?? blockNumber)}`);
-  if (!Number.isSafeInteger(logIndex) || logIndex < 0) return invariant(`BOARD_HANKO_REFRESH_ACTIVATION_LOG_INDEX_INVALID:${String(event.meta?.logIndex)}`);
-  const activated = lower(event.entityId);
-  return chain(crontabOf(state), (crontab) => {
-    if (activated !== lower(state.id)) {
-      const child = replicas.get(activated as EntityId);
-      if (child === undefined || currentFrameOf(child).height < 1n) return ok({ ...step, accountReplicas: replicas });
-      const hook: ScheduledHook = { id: `counterparty-board-hanko-refresh:${activated}:${jHeight}:${logIndex}`, triggerAt: now + COUNTERPARTY_BOARD_HANKO_REFRESH_DEADLINE_MS, type: "counterparty_board_hanko_refresh_deadline",
-        data: { accountId: activated, activationJHeight: jHeight, activationLogIndex: logIndex } };
-      return ok({ state: withCrontab(state, scheduleHook(crontab, hook)), events: [...step.events, status(`⏳ Awaiting current-board Account Hanko refresh from ${activated.slice(-4)} within 24h`)], accountReplicas: replicas });
-    }
-    const marked = [...replicas].flatMap(([peer, c]): [EntityId, AccountReplica][] => (currentFrameOf(c).height >= 1n ? [[peer, withMarker(c, { activationJHeight: jHeight, activationLogIndex: logIndex, reason: "pending" })]]
-      : c.refreshMigration !== undefined ? [[peer, withMarker(c, undefined)]] : []));
-    const accountReplicas = marked.reduce((m, [peer, c]) => mapSet(m, peer, c), replicas);
-    const next = marked.length === 0 ? cancelHook(crontab, BOARD_HANKO_REFRESH_HOOK_ID)
-      : scheduleHook(crontab, { id: BOARD_HANKO_REFRESH_HOOK_ID, triggerAt: now, type: "board_hanko_refresh", data: { activationJHeight: jHeight, activationLogIndex: logIndex, afterCounterpartyId: "" } });
-    return ok({ ...step, state: next === crontab ? state : withCrontab(state, next), accountReplicas });
+const ownActivation = (
+  step: BoardJEventStep,
+  replicas: Replicas,
+  crontab: Crontab,
+  a: Activation,
+  now: number,
+): ActivationStep => {
+  const remarked = [...replicas].flatMap(([peer, c]): (readonly [EntityId, AccountReplica])[] => {
+    if (currentFrameOf(c).height >= 1n) return [[peer, withMarker(c, refreshMarker(a, "pending"))]];
+    return c.refreshMigration === undefined ? [] : [[peer, withMarker(c, undefined)]];
   });
+  const next =
+    remarked.length === 0
+      ? cancelHook(crontab, BOARD_HANKO_REFRESH_HOOK_ID)
+      : scheduleHook(crontab, refreshHookFor(a, now, ""));
+  const state = next === crontab ? step.state : withCrontab(step.state, next);
+  return { ...step, state, accountReplicas: remarked.length === 0 ? replicas : new Map([...replicas, ...remarked]) };
 };
-const retryDeadline = (run: HookRun, hook: Extract<ScheduledHook, { type: "dispute_deadline" }>, ms: number, now: number): HookRun =>
-  ({ ...run, crontab: scheduleHook(run.crontab, { id: hook.id, triggerAt: now + ms, type: "dispute_deadline", data: { accountId: hook.data.accountId } }) });
-const latchRun = (run: HookRun, peer: string, child: DisputedAccount, active: ActiveDispute, queued: boolean): HookRun => ({ ...run, ...latchFinalize(run, peer, child, active, queued) });
-/** og processDisputeDeadlineHook: wait for the observed start and its timeout, defer behind a sent batch, latch an already drafted finalization, else finalize (one per batch). */
-const disputeDeadline = (run: HookRun, hook: Extract<ScheduledHook, { type: "dispute_deadline" }>, now: number): HookRun => {
-  const accountId = hook.data.accountId, child = run.accountReplicas.get(accountId as EntityId), active = child === undefined ? undefined : activeOf(child);
-  if (child === undefined || active === undefined) return run;
-  if ((run.state.committed["hubRebalanceConfig"] as { readonly disputeAutoFinalizeMode?: string } | undefined)?.disputeAutoFinalizeMode === "ignore") return run;
-  const timeoutSec = Number(active.disputeTimeout || 0), nowSec = Math.floor(now / 1000);
+/**
+ * og applyCertifiedBoardJEvent's BoardActivated tail (markBoardRotationHankoRefreshesPending): our own activation
+ * re-marks our certified Accounts; a peer's activation arms its 24h counterparty deadline hook.
+ */
+const boardActivation = (
+  step: BoardJEventStep,
+  replicas: Replicas,
+  event: Extract<JEvent, { type: "BoardActivated" }>,
+  blockNumber: number,
+  now: number,
+): Result<ActivationStep, EntityError> => {
+  const height = event.meta?.blockNumber ?? blockNumber;
+  const jHeight = Number(height);
+  const logIndex = Number(event.meta?.logIndex);
+  if (!Number.isSafeInteger(jHeight) || jHeight < 1)
+    return invariant(`BOARD_HANKO_REFRESH_ACTIVATION_HEIGHT_INVALID:${String(height)}`);
+  if (!Number.isSafeInteger(logIndex) || logIndex < 0)
+    return invariant(`BOARD_HANKO_REFRESH_ACTIVATION_LOG_INDEX_INVALID:${String(event.meta?.logIndex)}`);
+  const a: Activation = { jHeight, logIndex };
+  const activated = lower(event.entityId);
+  return map(crontabOf(step.state), (crontab) =>
+    activated === lower(step.state.id)
+      ? ownActivation(step, replicas, crontab, a, now)
+      : peerActivation(step, replicas, crontab, activated, a, now),
+  );
+};
+const retryDeadline = (
+  run: HookRun,
+  hook: Extract<ScheduledHook, { type: "dispute_deadline" }>,
+  ms: number,
+  now: number,
+): HookRun => ({
+  ...run,
+  crontab: scheduleHook(run.crontab, {
+    id: hook.id,
+    triggerAt: now + ms,
+    type: "dispute_deadline",
+    data: { accountId: hook.data.accountId },
+  }),
+});
+const latchRun = (
+  run: HookRun,
+  peer: string,
+  child: DisputedAccount,
+  active: ActiveDispute,
+  queued: boolean,
+): HookRun => ({ ...run, ...latchFinalize(run, peer, child, active, queued) });
+/** Where an Account's dispute finalization already sits in the J batch, and whether a batch is in flight. */
+type FinalizeQueue = {
+  readonly draft: boolean;
+  readonly sent: boolean;
+  readonly recovery: boolean;
+  readonly inFlight: boolean;
+};
+const finalizeQueue = (jb: CommittedJBatch | undefined, accountId: string): FinalizeQueue => {
+  const target = lower(accountId);
+  const has = (rows: readonly Binary[] | undefined): boolean =>
+    (rows ?? []).some((r) => lower((r as { readonly counterentity?: string }).counterentity) === target);
+  return {
+    draft: has(jb?.batch["disputeFinalizations"]),
+    sent: has(jb?.sentBatch?.batch["disputeFinalizations"]),
+    recovery: (jb?.recoveryBatches ?? []).some((b) => has(b["disputeFinalizations"])),
+    inFlight: jb?.sentBatch !== undefined,
+  };
+};
+const autoFinalizeMode = (state: EntityState): string | undefined =>
+  (state.committed["hubRebalanceConfig"] as { readonly disputeAutoFinalizeMode?: string } | undefined)
+    ?.disputeAutoFinalizeMode;
+/**
+ * og processDisputeDeadlineHook: wait for the observed start and its timeout, defer behind a sent batch, latch an
+ * already drafted finalization, else finalize (one per batch).
+ */
+const disputeDeadline = (
+  run: HookRun,
+  hook: Extract<ScheduledHook, { type: "dispute_deadline" }>,
+  now: number,
+): HookRun => {
+  const accountId = hook.data.accountId;
+  const child = run.accountReplicas.get(accountId as EntityId);
+  const active = child === undefined ? undefined : activeOf(child);
+  if (child === undefined || active === undefined || autoFinalizeMode(run.state) === "ignore") return run;
+  const timeoutSec = Number(active.disputeTimeout || 0);
+  const nowSec = Math.floor(now / 1000);
   if (active.observedOnChain !== true) return retryDeadline(run, hook, 5000, now);
   if (!timeoutSec || nowSec < timeoutSec) return retryDeadline(run, hook, 1000, now);
-  const jb = committedJBatch(run.state), target = lower(accountId), has = (rows: readonly Binary[] | undefined): boolean => (rows ?? []).some((r) => lower((r as { readonly counterentity?: string }).counterentity) === target);
-  const draftHas = has(jb?.batch["disputeFinalizations"]), sentHas = has(jb?.sentBatch?.batch["disputeFinalizations"]), recoveryHas = (jb?.recoveryBatches ?? []).some((b) => has(b["disputeFinalizations"]));
+  const queue = finalizeQueue(committedJBatch(run.state), accountId);
   const disputed = child as DisputedAccount;
-  if (sentHas || jb?.sentBatch !== undefined) return retryDeadline(latchRun(run, accountId, disputed, active, sentHas || active.finalizeQueued), hook, 1000, now);
-  if (draftHas || recoveryHas) return { ...latchRun(run, accountId, disputed, active, true), broadcast: true };
+  if (queue.sent || queue.inFlight) {
+    const latched = latchRun(run, accountId, disputed, active, queue.sent || active.finalizeQueued);
+    return retryDeadline(latched, hook, 1000, now);
+  }
+  if (queue.draft || queue.recovery) return { ...latchRun(run, accountId, disputed, active, true), broadcast: true };
   const reset = active.finalizeQueued ? latchRun(run, accountId, disputed, active, false) : run;
-  return reset.finalize.length > 0 ? retryDeadline(reset, hook, 1, now) : { ...reset, finalize: [...reset.finalize, accountId] };
+  return reset.finalize.length > 0
+    ? retryDeadline(reset, hook, 1, now)
+    : { ...reset, finalize: [...reset.finalize, accountId] };
 };
 const withPaybook = (run: HookRun, paybook: Paybook): HookRun => ({ ...run, state: { ...run.state, paybook } });
-/** og processSecretAckTimeout: an unacknowledged revealed secret whose lock still stands prepares a dispute; a full J batch re-arms the deadline. */
-const secretAckTimeout = (run: HookRun, hook: Extract<DerivedDeadline, { type: "htlc_secret_ack_timeout" }>, now: number): Result<HookRun, EntityError> => {
-  const { hashlock, counterpartyEntityId: cp } = hook.data, paybook = run.state.paybook ?? EMPTY_PAYBOOK, route = paybook.entries.get(hashlock);
+/**
+ * og processSecretAckTimeout: an unacknowledged revealed secret whose lock still stands prepares a dispute; a full J
+ * batch re-arms the deadline.
+ */
+const secretAckTimeout = (
+  run: HookRun,
+  hook: Extract<DerivedDeadline, { type: "htlc_secret_ack_timeout" }>,
+  now: number,
+): Result<HookRun, EntityError> => {
+  const { hashlock, counterpartyEntityId: cp } = hook.data;
+  const paybook = run.state.paybook ?? EMPTY_PAYBOOK;
+  const route = paybook.entries.get(hashlock);
   if (route === undefined) return ok(run);
-  if (!secretAckPending(route) || now < (route.secretAckDeadlineAt ?? 0)) return route.secretAckPending ? invariant(`HTLC_SECRET_ACK_ROUTE_INVALID:${hashlock}`) : ok(run);
+  if (!secretAckPending(route) || now < (route.secretAckDeadlineAt ?? 0))
+    return route.secretAckPending ? invariant(`HTLC_SECRET_ACK_ROUTE_INVALID:${hashlock}`) : ok(run);
   const child = run.accountReplicas.get(cp as EntityId);
   if (child === undefined) return ok(run);
-  if (!child.state.locks.has(hashlock)) return ok(withPaybook(run, { ...paybook, entries: mapDelete(paybook.entries, hashlock) }));
+  if (!child.state.locks.has(hashlock))
+    return ok(withPaybook(run, { ...paybook, entries: mapDelete(paybook.entries, hashlock) }));
   if (activeOf(child) !== undefined) return ok(run);
   const queued = (committedJBatch(run.state)?.batch["disputeStarts"] ?? []).length;
-  if (queued + run.prepare.size >= J_BATCH_LIMITS.maxDisputeStarts && !run.prepare.has(cp)) return ok(withPaybook(run, { ...paybook, entries: mapSet(paybook.entries, hashlock, { ...route, secretAckDeadlineAt: now + HTLC_SECRET_ACK_TIMEOUT_MS }) }));
+  if (queued + run.prepare.size >= J_BATCH_LIMITS.maxDisputeStarts && !run.prepare.has(cp)) {
+    const rearmed: PaybookEntry = { ...route, secretAckDeadlineAt: now + HTLC_SECRET_ACK_TIMEOUT_MS };
+    return ok(withPaybook(run, { ...paybook, entries: mapSet(paybook.entries, hashlock, rearmed) }));
+  }
   return ok({ ...run, prepare: mapSet(run.prepare, cp, "auto-prepare-dispute-after-secret-ack-timeout") });
 };
-/** og processDueHook. */
 /**
- * og extensions/lending.ts projectedHubCreditLimit: the credit we grant the borrower (our peerCreditLimit) once our pending frame, the mempool
- * and the Account txs this wake already returned land.
+ * og extensions/lending.ts projectedHubCreditLimit: the credit we grant the borrower (our peerCreditLimit) once our
+ * pending frame, the mempool and the Account txs this wake already returned land.
  */
-const projectedHubCredit = (c: AccountReplica, self: EntityId, borrower: string, queued: readonly AccountTxTarget[], tk: TokenId): bigint => {
-  const d = c.state.account.deltas.get(tk), party = partyOf(replicaId(c), self), selfIsLeft = party.ok && party.value.left;
-  const target = (tx: AccountTx): bigint | undefined => (tx.type === "set_credit_limit" && tx.tokenId === tk ? tx.limit : tx.type === "lending_credit" && tx.tokenId === tk ? tx.creditLimit : undefined);
-  const txs = [...(c._tag === "proposed" ? c.candidate.frame.txs : []), ...c.mempool, ...queued.filter((q) => lower(q.accountId) === borrower).map((q) => q.tx)];
-  return txs.reduce((p, tx) => target(tx) ?? p, d === undefined ? 0n : selfIsLeft ? d.rightCreditLimit : d.leftCreditLimit);
+const projectedHubCredit = (
+  c: AccountReplica,
+  self: EntityId,
+  borrower: string,
+  queued: readonly AccountTxTarget[],
+  tk: TokenId,
+): bigint => {
+  const d = c.state.account.deltas.get(tk);
+  const party = partyOf(replicaId(c), self);
+  const selfIsLeft = party.ok && party.value.left;
+  const limitSet = (tx: AccountTx): bigint | undefined => {
+    switch (tx.type) {
+      case "set_credit_limit":
+        return tx.tokenId === tk ? tx.limit : undefined;
+      case "lending_credit":
+        return tx.tokenId === tk ? tx.creditLimit : undefined;
+      default:
+        return undefined;
+    }
+  };
+  const pending = c._tag === "proposed" ? c.candidate.frame.txs : [];
+  const returned = queued.filter((q) => lower(q.accountId) === borrower).map((q) => q.tx);
+  const committed = d === undefined ? 0n : selfIsLeft ? d.rightCreditLimit : d.leftCreditLimit;
+  return [...pending, ...c.mempool, ...returned].reduce((limit, tx) => limitSet(tx) ?? limit, committed);
 };
 /**
- * og settleOverdueLendingLoan (tx/handlers/account/committed-lending-close.ts): an active loan past due defaults, its principal returns to the
- * pool and the borrower's credit line is called in by a `lending_credit` revoke; a loan without its pool or Account is dropped.
+ * og settleOverdueLendingLoan (tx/handlers/account/committed-lending-close.ts): an active loan past due defaults, its
+ * principal returns to the pool and the borrower's credit line is called in by a `lending_credit` revoke; a loan
+ * without its pool or Account is dropped.
  */
 const lendingOverdue = (run: HookRun, loanId: string, now: number): HookRun => {
-  const book = lendingBook(run.state), loan = book?.loans.get(loanId);
+  const book = lendingBook(run.state);
+  const loan = book?.loans.get(loanId);
   if (book === undefined || loan === undefined || loan.status !== "active" || loan.dueAt > now) return run;
-  const pool = book.pools.get(loan.positionId), borrower = lower(loan.borrowerEntityId), child = run.accountReplicas.get(borrower as EntityId);
-  if (pool === undefined || child === undefined || pool.borrowedAmount < loan.principalAmount) return run;
-  const hub = lower(run.state.id), tk = String(loan.tokenId) as TokenId, current = projectedHubCredit(child, run.state.id, borrower, run.accountTxs, tk);
-  const lending = { ...book, loans: mapSet(book.loans, loanId, { ...loan, status: "defaulted", updatedAt: now }),
-    pools: mapSet(book.pools, loan.positionId, { ...pool, borrowedAmount: pool.borrowedAmount - loan.principalAmount, availableAmount: pool.availableAmount + loan.principalAmount, updatedAt: now }) };
-  const revoke: AccountTxTarget = { accountId: loan.borrowerEntityId, tx: { type: "lending_credit", action: "revoke", loanId, hubEntityId: hub, borrowerEntityId: loan.borrowerEntityId, tokenId: tk,
-    creditLimit: current > loan.principalAmount ? current - loan.principalAmount : 0n } };
-  return { ...run, state: { ...run.state, committed: { ...run.state.committed, lending: lending as unknown as Binary } }, accountTxs: [...run.accountTxs, revoke] };
+  const pool = book.pools.get(loan.positionId);
+  const borrower = lower(loan.borrowerEntityId);
+  const child = run.accountReplicas.get(borrower as EntityId);
+  const principal = loan.principalAmount;
+  if (pool === undefined || child === undefined || pool.borrowedAmount < principal) return run;
+  const tk = String(loan.tokenId) as TokenId;
+  const current = projectedHubCredit(child, run.state.id, borrower, run.accountTxs, tk);
+  const returnedPool: LendingPool = {
+    ...pool,
+    borrowedAmount: pool.borrowedAmount - principal,
+    availableAmount: pool.availableAmount + principal,
+    updatedAt: now,
+  };
+  const lending: LendingBook = {
+    ...book,
+    loans: mapSet(book.loans, loanId, { ...loan, status: "defaulted", updatedAt: now }),
+    pools: mapSet(book.pools, loan.positionId, returnedPool),
+  };
+  const revoke: AccountTxTarget = {
+    accountId: loan.borrowerEntityId,
+    tx: {
+      type: "lending_credit",
+      action: "revoke",
+      loanId,
+      hubEntityId: lower(run.state.id),
+      borrowerEntityId: loan.borrowerEntityId,
+      tokenId: tk,
+      creditLimit: current > principal ? current - principal : 0n,
+    },
+  };
+  const state = { ...run.state, committed: { ...run.state.committed, lending: lending as unknown as Binary } };
+  return { ...run, state, accountTxs: [...run.accountTxs, revoke] };
 };
 // ---- og tx/handlers/account/committed-lending-followup.ts + committed-lending-close.ts + extensions/lending.ts: the hub's lending book producer ----
 /** og LENDING_TERM_MS. */
@@ -16066,7 +16789,8 @@ export const lendingFollowups = (state: EntityState, replicas: Replicas, peerRaw
     }
   }), (run): LendingFollowup => ({ state: run.book === before ? state : { ...state, committed: { ...state.committed, lending: run.book as unknown as Binary } }, accountTxs: run.accountTxs }));
 };
-const dueHook =(run: HookRun, hook: DueHook, now: number, first: string): Result<HookRun, EntityError> => {
+/** og processDueHook. */
+const dueHook = (run: HookRun, hook: DueHook, now: number, first: string): Result<HookRun, EntityError> => {
   switch (hook.type) {
     case "htlc_timeout": return ok(run.accountReplicas.get(hook.data.accountId as EntityId)?.state.locks.has(hook.data.lockId) ? { ...run, timeouts: [...run.timeouts, hook.data] } : run);
     case "dispute_deadline": return ok(disputeDeadline(run, hook, now));
@@ -25171,7 +25895,7 @@ const certifiedCounterpartySigner = (rt: Runtime, from: string, to: EntityId): s
   if (source === undefined || account === undefined || account.head._tag !== "installed") return undefined;
   const head = account.head, hanko = at(head.certificate.right, head.certificate.left, isLeft(source.state.id, replicaId(account)));
   if (!hanko) return undefined;
-  const checked = checkAccountHanko(hanko, head.prevFrameHash, to, (entityId, boardHash) => { const rec = observerBoardRecord(source.state, entityId); return rec.ok && rec.value !== null && rec.value.boardHash === boardHash; });
+  const checked = checkAccountHanko(hanko, head.prevFrameHash, to, (entityId, boardHash) => { const rec = observerBoardRecord(source.state, entityId); return ok(rec.ok && rec.value !== null && rec.value.boardHash === boardHash); });
   const first = checked.ok ? checked.value.firstMember.toLowerCase() : "";
   return /^0x0{24}[0-9a-f]{40}$/.test(first) ? `0x${first.slice(-40)}` : undefined;
 };
