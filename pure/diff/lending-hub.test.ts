@@ -162,12 +162,12 @@ describe("lending-hub: end-to-end lending lifecycle through the Runtime", () => 
   let rt: Runtime, now = NOW;
   const replica = (e: EntityId) => { const r = rt.entities.get(replicaKey(e, signers.get(e) as string)); if (r === undefined) throw new Error("no replica"); return r; };
   const book = (): LendingBook => replica(BOB).state.committed["lending"] as unknown as LendingBook;
-  const pump = (first: readonly RoutedEntityInput[]): void => {
+  const pump = (first: readonly RoutedEntityInput[], local?: ReadonlySet<EntityTx>): void => {
     let inputs = first;
     for (let round = 0; inputs.length > 0; round++) {
       if (round > 40) throw new Error("runtime did not settle");
       now += 1n;
-      const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: inputs.map((i) => (i.input.kind === "txs" ? { ...i, input: { ...i.input, timestamp: now } } : i)) }, verifiers));
+      const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: inputs.map((i) => (i.input.kind === "txs" ? { ...i, input: { ...i.input, timestamp: now } } : i)) }, round === 0 && local !== undefined ? { ...verifiers, local } : verifiers));
       expect(out.rejected).toEqual([]);
       rt = out.runtime;
       inputs = out.outbox.map((o: EntityOutput) => unwrap(convertOutput(rt, o, ("tx" in o ? (o.tx.data as { fromEntityId: EntityId }).fromEntityId : o.to), now)));
@@ -218,7 +218,8 @@ describe("lending-hub: end-to-end lending lifecycle through the Runtime", () => 
     now = BigInt(unpaid.dueAt);
     const wake = localScheduledWake(replica(BOB), now);
     expect(wake?.kind === "txs" ? wake.txs.map((t) => (t.type === "scheduledWake" ? t.data.jobs.map((j) => j.id) : [])) : []).toEqual([[`lending-overdue:${unpaid.loanId}`]]);
-    pump([{ entityId: BOB, signerId: bobAddr, input: wake as never }]);
+    // og runtime tick: the wake is this Runtime's own marked scheduledWake (external ingress is refused)
+    pump([{ entityId: BOB, signerId: bobAddr, input: wake as never }], new Set(wake?.kind === "txs" ? wake.txs : []));
     expect(book().loans.get(unpaid.loanId)).toMatchObject({ status: "defaulted", repaidAmount: 0n });
     expect(book().pools.get(second)).toMatchObject({ availableAmount: 300n, borrowedAmount: 0n, status: "open" });
     expect([credit(BOB, CAROL), credit(BOB, CAROL, CAROL)]).toEqual([creditBefore, creditBefore]);

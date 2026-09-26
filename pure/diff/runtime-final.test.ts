@@ -18,6 +18,10 @@ import {
 import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, unwrap, verifiers, genesisAB, proposeInput, offerOf, ackInput, hankoVerify } from "../xln_run.ts";
 import { admit, applyAccountInput, type AccountReplica, type AccountInput, type OpenAccount, type WireAccountTx } from "../xln.ts";
 import { runPostFrameAutoRebalanceCheck } from "../../core/account/consensus/helpers.ts";
+import { runtimeWake, crontabOf, initCrontab, scheduleHook, withCrontab, ZERO_WORD, type Crontab, type EntityReplica, type ScheduledHook } from "../xln.ts";
+import { createDueScheduledWakeInputs, assertScheduledWakeTxAuthorized } from "../../core/runtime/mempool/scheduled-wake.ts";
+import { EntityAccountCandidateMap, PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
+import { initJBatch as ogInitJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
 
 let seed = 71;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -269,5 +273,71 @@ describe("runtime-final: Account frame messages and the post-commit auto-rebalan
     }
     expect(queued).toBeGreaterThan(5);
     expect(quiet).toBeGreaterThan(5);
+  });
+});
+
+// ---- og runtime/mempool/wake.ts generateHookPings: the Runtime tick (scheduled-wake.ts createDueScheduledWakeInputs) ----
+describe("runtime-final: the Runtime tick's due wakes and leader timeout votes (og runtime/mempool/scheduled-wake.ts)", () => {
+  type Rep = { readonly entity: EntityId; readonly leader: boolean; readonly hooks: readonly ScheduledHook[]; readonly lastRun: number; readonly hub: boolean; readonly timestamp: number; readonly progress: number | undefined; readonly work: boolean; readonly queuedWake: boolean };
+  const JUR = TERMS.domain;
+  const crontabFor = (r: Rep): Crontab => r.hooks.reduce(scheduleHook, { ...initCrontab(), tasks: new Map([["hubRebalance", { method: "hubRebalance", intervalMs: 1000, lastRun: r.lastRun, enabled: true, params: {} }]]) });
+  const CHAT = { type: "chat", data: { message: "hi" } } as unknown as EntityTx;
+  const wakeTx = (signer: string) => ({ type: "scheduledWake", data: { version: 1, proposerSignerId: signer, dueAt: 1, jobs: [{ kind: "hook", id: "x", dueAt: 1 }] } }) as unknown as EntityTx;
+  const rwReplica = (r: Rep): EntityReplica => {
+    const jBatch = ogInitJBatch();
+    const e = unwrap(createEntity({ id: r.entity, jurisdiction: JUR, threshold: 1n, members: new Map([[aliceAddr as never, { shares: 1n }], [bobAddr as never, { shares: 1n }]]), signerId: r.leader ? aliceAddr : bobAddr, timestamp: BigInt(r.timestamp),
+      committed: { jBatchState: jBatch, ...(r.hub ? { hubRebalanceConfig: { disputeAutoFinalizeMode: "auto" } } : {}) } as never }));
+    return { ...e, state: withCrontab(e.state, crontabFor(r)), mempool: [...(r.work ? [CHAT] : []), ...(r.queuedWake ? [wakeTx(r.leader ? aliceAddr : bobAddr)] : [])] } as EntityReplica;
+  };
+  const ogReplica = (r: Rep): any => {
+    const c = crontabFor(r), signer = r.leader ? aliceAddr : bobAddr;
+    return { entityId: r.entity, signerId: signer, mempool: [...(r.work ? [CHAT] : []), ...(r.queuedWake ? [wakeTx(signer)] : [])], ...(r.progress === undefined ? {} : { lastConsensusProgressAt: r.progress }),
+      state: { entityId: r.entity, height: 0, timestamp: r.timestamp, prevFrameHash: "", lastFinalizedJHeight: 0, config: { mode: "proposer-based", threshold: 1n, validators: [aliceAddr.toLowerCase(), bobAddr.toLowerCase()], shares: { [aliceAddr.toLowerCase()]: 1n, [bobAddr.toLowerCase()]: 1n } },
+        accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries([], r.entity, () => ZERO_WORD as never)), paybook: { entries: new Map(), feesEarned: 0n }, crontabState: { tasks: c.tasks, hooks: new Map(c.hooks) }, jBatchState: ogInitJBatch(),
+        ...(r.hub ? { hubRebalanceConfig: { disputeAutoFinalizeMode: "auto" } } : {}) } };
+  };
+  const shape = (entityId: string, signer: string, wake: unknown, vote: Record<string, unknown> | undefined) => ({ entity: entityId.toLowerCase(), signer: signer.toLowerCase(), wake,
+    vote: vote === undefined ? undefined : { entityId: String(vote["entityId"]).toLowerCase(), targetHeight: Number(vote["targetHeight"]), previousFrameHash: vote["previousFrameHash"], fromView: vote["fromView"], toView: vote["toView"],
+      previousLeaderId: String(vote["previousLeaderId"]).toLowerCase(), nextLeaderId: String(vote["nextLeaderId"]).toLowerCase(), voterId: String(vote["voterId"]).toLowerCase(), signature: vote["signature"] } });
+
+  test("MATCH (randomized): 300 random Runtimes (leaders with due hooks and the hubRebalance task, validators with leader work and last progress, queued wakes and votes) -- og createDueScheduledWakeInputs, in og's (dueAt, entityId, signerId) order", () => {
+    let wakes = 0, votes = 0, skipped = 0;
+    for (let run = 0; run < 300; run++) {
+      const reps: Rep[] = [ALICE, BOB, CAROL].flatMap((entity) => (rng() < 0.3 ? [] : [true, false].filter(() => rng() < 0.6).map((leader): Rep => ({
+        entity, leader, hooks: Array.from({ length: ri(3) }, (_, j) => ({ id: `hub-kick:${j}`, triggerAt: 900 + ri(20_000), type: "hub_rebalance_kick", data: { reason: "r", counterpartyId: BOB } }) as ScheduledHook),
+        lastRun: pick([0, 5_000, 30_000]), hub: rng() < 0.3, timestamp: ri(8_000), progress: rng() < 0.5 ? undefined : ri(12_000), work: rng() < 0.7, queuedWake: rng() < 0.1,
+      }))));
+      const now = ri(26_000);
+      const queuedVotes = reps.filter(() => rng() < 0.1).map((r) => ({ entityId: r.entity, signerId: r.leader ? aliceAddr : bobAddr }));
+      const rt: Runtime = { ...reps.map(rwReplica).reduce(spawn, createRuntime()), replicaLocal: new Map(reps.flatMap((r) => (r.progress === undefined ? [] : [[replicaKey(r.entity, r.leader ? aliceAddr : bobAddr), { lastConsensusProgressAt: r.progress }] as const]))) };
+      const queued = { runtimeTxs: [], entityInputs: queuedVotes.map((q) => ({ ...q, input: { kind: "leaderTimeoutVote" } })) } as never;
+      const mine = runtimeWake(rt, now, queued).input.entityInputs.map((i) => shape(i.entityId, i.signerId, i.input.kind === "txs" ? (i.input.txs[0] as { data: unknown }).data : undefined, i.input.kind === "leaderTimeoutVote" ? { ...(i.input as { vote: Record<string, unknown> }).vote } : undefined));
+      const env: any = { state: { eReplicas: new Map(reps.map((r) => [`${r.entity}:${r.leader ? aliceAddr : bobAddr}`, ogReplica(r)])) }, runtimeMempool: { entityInputs: queuedVotes.map((q) => ({ ...q, leaderTimeoutVote: {} })) } };
+      const og = (createDueScheduledWakeInputs(env, now) as any[]).map((i) => shape(i.entityId, i.signerId, i.entityTxs?.[0]?.data, i.leaderTimeoutVote));
+      expect(mine).toEqual(og as never);
+      wakes += og.filter((i) => i.wake !== undefined).length; votes += og.filter((i) => i.vote !== undefined).length; skipped += queuedVotes.length;
+    }
+    expect([wakes > 80, votes > 80, skipped > 10]).toEqual([true, true, true]);
+  });
+
+  test("MATCH: a scheduledWake enters only as the tick's own marked tx -- og assertScheduledWakeTxAuthorized (SCHEDULED_WAKE_EXTERNAL_INGRESS_REJECTED); the tick's wake runs the due hook", () => {
+    const rep: Rep = { entity: ALICE, leader: true, hooks: [{ id: "hub-kick:0", triggerAt: 1_000, type: "hub_rebalance_kick", data: { reason: "r", counterpartyId: BOB } } as ScheduledHook], lastRun: 0, hub: false, timestamp: 0, progress: undefined, work: false, queuedWake: false };
+    // a single-member ALICE (its id is the board's), so the wake's frame commits
+    const solo = unwrap(createEntity({ id: ALICE, jurisdiction: JUR, threshold: 1n, members: new Map([[aliceAddr as never, { shares: 1n }]]) }));
+    const rt = spawn(createRuntime(), { ...solo, state: withCrontab(solo.state, crontabFor(rep)) } as EntityReplica);
+    const tick = runtimeWake(rt, 2_000);
+    expect(tick.input.entityInputs.length).toBe(1);
+    const forged = applyRuntime(rt, { ...tick.input, entityInputs: tick.input.entityInputs.map((i) => ({ ...i, input: i.input.kind === "txs" ? { ...i.input, txs: i.input.txs.map((tx) => ({ ...tx })) } : i.input })) }, verifiers);
+    const ogTx = { type: "scheduledWake", data: { version: 1, proposerSignerId: aliceAddr, dueAt: 1_000, jobs: [] } };
+    let ogReason = "";
+    try { assertScheduledWakeTxAuthorized(ogTx as never, false); } catch (e) { ogReason = ogCode(e); }
+    expect([(forged as { error?: { _tag?: string } }).error?._tag, rwCode(forged as never)]).toEqual(["runtime_frame", ogReason]);
+    const ogMarked = (createDueScheduledWakeInputs({ state: { eReplicas: new Map([["k", ogReplica(rep)]]) }, runtimeMempool: { entityInputs: [] } } as never, 2_000) as any[])[0].entityTxs[0];
+    expect(() => assertScheduledWakeTxAuthorized(ogMarked, false)).not.toThrow();
+    expect(() => assertScheduledWakeTxAuthorized(ogTx as never, true)).not.toThrow();
+    expect(applyRuntime(rt, tick.input, { ...verifiers, replay: true }).ok).toBe(true);
+    const step = unwrap(applyRuntime(rt, tick.input, { ...verifiers, local: tick.local }));
+    expect(step.rejected).toEqual([]);
+    expect([...unwrap(crontabOf((step.runtime.entities.get(replicaKey(ALICE, aliceAddr)) as EntityReplica).state)).hooks.keys()]).not.toContain("hub-kick:0");
   });
 });

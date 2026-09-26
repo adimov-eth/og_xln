@@ -9865,8 +9865,9 @@ export type JSubmitState = SubmitJournal & { readonly jurisdictionName: string; 
 export type EntityProviderActionSubmitState = SubmitJournal & { readonly jurisdictionName: string; readonly actionHash: string; readonly actionNonce: bigint; readonly generation: number };
 /** og EntityReplica validator-local fields the Runtime owns (never in the Entity root): J submit ledgers, quorum Hanko witnesses, J history. */
 export type ReplicaPosition = { readonly x: number; readonly y: number; readonly z: number; readonly jurisdiction?: string | undefined };
+/** `lastConsensusProgressAt`: og EntityReplica.lastConsensusProgressAt (Runtime clock of this validator's last consensus progress; RAM and snapshot only, never in the replica-meta commitment). */
 export type ReplicaLocal = {
-  readonly position?: ReplicaPosition | undefined;
+  readonly position?: ReplicaPosition | undefined; readonly lastConsensusProgressAt?: number | undefined;
   readonly jSubmitState?: JSubmitState | undefined; readonly entityProviderActionSubmitState?: EntityProviderActionSubmitState | undefined;
   readonly hankoWitness?: ReadonlyMap<string, HankoWitness> | undefined; readonly jHistory?: ValidatorJHistory | undefined;
 };
@@ -12255,6 +12256,95 @@ const resolveNumberedRegistrationIntent = (rt: Runtime, resolution: RuntimeData)
     return ok({ ...rt, numberedRegistrationIntents: mapSet(rt.numberedRegistrationIntents, key, { status: "completed", ...completed }) });
   });
 
+// ---- og runtime/mempool/wake.ts generateHookPings: the Runtime tick's due Entity wakes, leader timeout votes and J submit / EntityProvider action retries ----
+/** og scheduled-wake.ts nextReplicaDeadline: the leader's earliest wake, or a validator's leader-timeout deadline from its last consensus progress. */
+const replicaDeadline = (r: EntityReplica, local: ReplicaLocal | undefined): number | undefined => {
+  if (isActiveLeader(r)) return nextWakeAt(r);
+  const due = leaderTimeoutDue(r, BigInt(local?.lastConsensusProgressAt ?? Number(r.state.timestamp)));
+  return due === undefined ? undefined : Number(due);
+};
+/** og isBatchEmpty over the committed sent batch. */
+const sentBatchEmpty = (sent: SentJBatch): boolean => batchOpCount(sent.batch) === 0;
+/**
+ * og generateHookPingsWithDeps (createDueScheduledWakeInputs, collectDueJSubmitRuntimeTxs, collectDueEntityProviderActionRuntimeTxs) at Runtime time `now`:
+ * `queued` is the Runtime mempool not yet applied; `canSubmit` is og canSubmitLocally (this Runtime holds the signer's key; default: the Runtime id).
+ * The returned `local` set is og's process-local markers: pass it as RuntimeCtx.local so the frame admits exactly these wakes and retries.
+ */
+export const runtimeWake = (rt: Runtime, now: number, queued: RuntimeInput = { runtimeTxs: [], entityInputs: [] }, canSubmit: (signer: string) => boolean = (signer) => submitId(signer) === submitId(rt.runtimeId)):
+  { readonly input: RuntimeInput; readonly local: ReadonlySet<RuntimeTx | EntityTx> } => {
+  const replicas = [...rt.entities];
+  // og createDueScheduledWakeInputs: the deadline heap in (dueAt, entityId, signerId) order; one wake or vote per replica, none while one is queued
+  const busy = new Set([
+    ...queued.entityInputs.filter((i) => i.input.kind === "leaderTimeoutVote" || (i.input.kind === "txs" && i.input.txs.some((tx) => tx.type === "scheduledWake"))).map((i) => replicaKey(i.entityId, i.signerId)),
+    ...replicas.filter(([, r]) => r.mempool.some((tx) => tx.type === "scheduledWake")).map(([key]) => key),
+  ]);
+  const due = replicas.flatMap(([key, r]): { readonly key: string; readonly r: EntityReplica; readonly dueAt: number }[] => {
+    const dueAt = replicaDeadline(r, rt.replicaLocal.get(key));
+    return dueAt === undefined || dueAt > now ? [] : [{ key, r, dueAt }];
+  }).sort((a, b) => a.dueAt - b.dueAt || compareText(lower(a.r.state.id), lower(b.r.state.id)) || compareText(signerId(a.r.signerId), signerId(b.r.signerId)));
+  const at = BigInt(now);
+  const entityInputs = due.flatMap(({ key, r }): RoutedEntityInput[] => {
+    if (busy.has(key)) return [];
+    const input = isActiveLeader(r) ? localScheduledWake(r, at) : localTimeoutVote(r, at);
+    return input === undefined ? [] : [{ entityId: r.state.id, signerId: r.signerId, input }];
+  });
+  // og collectDueJSubmitRuntimeTxs: the active leader's sealed batch, once per retry window, unless an abort, a retry or a committed attempt is pending
+  const queuedRetry = (d: Extract<RuntimeTx, { type: "retryJSubmit" }>["data"]): boolean => queued.runtimeTxs.some((tx) => tx.type === "retryJSubmit" && submitId(tx.data.jurisdictionName) === submitId(d.jurisdictionName)
+    && submitId(tx.data.entityId) === submitId(d.entityId) && submitId(tx.data.signerId) === submitId(d.signerId) && submitId(tx.data.batchHash) === submitId(d.batchHash) && Number(tx.data.entityNonce) === Number(d.entityNonce) && tx.data.batchGeneration === d.batchGeneration);
+  const aborting = (entity: EntityId): boolean => queued.entityInputs.some((i) => submitId(i.entityId) === submitId(entity) && i.input.kind === "txs" && i.input.txs.some((tx) => (tx.type as string) === "j_abort_sent_batch"));
+  const jRetries = replicas.flatMap(([key, r]): RuntimeTx[] => {
+    const jb = jBatchOf(r.state), sent = jb?.sentBatch;
+    if (!isActiveLeader(r) || !canSubmit(r.signerId) || sent === undefined || sent.terminalFailure || sentBatchEmpty(sent) || aborting(r.state.id)) return [];
+    const data = { entityId: r.state.id, signerId: r.signerId, jurisdictionName: String(r.state.jurisdictionConfig?.name || ""), batchHash: sent.batchHash, entityNonce: sent.entityNonce, batchGeneration: jb?.broadcastCount ?? 0, ...(sent.feeOverrides ? { feeOverrides: { ...sent.feeOverrides } as unknown as Binary } : {}) };
+    const local = matchingJSubmitState(r.state, rt.replicaLocal.get(key)?.jSubmitState);
+    if (local?.terminalFailure || local?.lastResultOutcome === "reconciled" || queuedRetry(data)) return [];
+    const pending = rt.pendingCommittedJOutbox.some((input) => input.jTxs.some((raw) => {
+      const t = rowOf(raw);
+      return t.type === "batch" && submitId(input.jurisdictionName) === submitId(data.jurisdictionName) && submitId(t.entityId) === submitId(data.entityId) && submitId(t.data["signerId"]) === submitId(data.signerId)
+        && submitId(t.data["batchHash"]) === submitId(data.batchHash) && Number(t.data["entityNonce"]) === Number(data.entityNonce) && Number(t.data["batchGeneration"]) === Number(data.batchGeneration);
+    }));
+    const dueAt = local === undefined || local.submitAttempts <= 0 ? 0 : local.lastResultOutcome === "eventBarrier" ? local.lastResultAt ?? local.lastSubmittedAt : local.lastSubmittedAt + ENTITY_J_SUBMIT_RETRY_MS;
+    return pending || dueAt > now ? [] : [{ type: "retryJSubmit", data }];
+  });
+  // og collectDueEntityProviderActionRuntimeTxs: the committed pending action, once per retry window
+  const epRetries = replicas.flatMap(([key, r]): RuntimeTx[] => {
+    const pending = epActionState(r.state).pending, name = jurisdictionNameOf(r.state);
+    if (!isActiveLeader(r) || !canSubmit(r.signerId) || pending === undefined || !name) return [];
+    const data = { entityId: r.state.id, signerId: r.signerId, jurisdictionName: name, actionHash: pending.actionHash, actionNonce: pending.actionNonce, generation: pending.generation };
+    const local = matchingEpSubmitState(r.state, rt.replicaLocal.get(key)?.entityProviderActionSubmitState);
+    if (local?.terminalFailure) return [];
+    const held = rt.pendingCommittedJOutbox.some((input) => input.jTxs.some((raw) => {
+      const t = rowOf(raw), intent = t.data?.["intent"] as EntityProviderActionIntent | undefined;
+      return isEpActionJTx(t.type) && intent !== undefined && submitId(input.jurisdictionName) === submitId(data.jurisdictionName) && submitId(t.entityId) === submitId(data.entityId)
+        && submitId(t.data["signerId"]) === submitId(data.signerId) && submitId(intent.actionHash) === submitId(data.actionHash) && intent.actionNonce === data.actionNonce && intent.generation === data.generation;
+    }));
+    const queuedEp = queued.runtimeTxs.some((tx) => tx.type === "retryEntityProviderAction" && submitId(tx.data.jurisdictionName) === submitId(data.jurisdictionName) && submitId(tx.data.entityId) === submitId(data.entityId)
+      && submitId(tx.data.signerId) === submitId(data.signerId) && submitId(tx.data.actionHash) === submitId(data.actionHash) && tx.data.actionNonce === data.actionNonce && tx.data.generation === data.generation);
+    const dueAt = local === undefined || local.submitAttempts <= 0 ? 0 : local.lastSubmittedAt + ENTITY_J_SUBMIT_RETRY_MS;
+    return held || queuedEp || dueAt > now ? [] : [{ type: "retryEntityProviderAction", data }];
+  });
+  const runtimeTxs = [...jRetries, ...epRetries];
+  const local = new Set<RuntimeTx | EntityTx>([...runtimeTxs, ...entityInputs.flatMap((i) => (i.input.kind === "txs" ? i.input.txs : []))]);
+  return { input: { runtimeTxs, entityInputs, timestamp: at }, local };
+};
+/** og assertScheduledWakeTxAuthorized, then assertProposeAccountsNowTxAuthorized, per Entity tx in ingress order: outside replay only this Runtime's own marked txs enter. */
+const forgedIngress = (input: RuntimeInput, ctx: RuntimeCtx): string | undefined => {
+  if (ctx.replay === true) return undefined;
+  for (const i of input.entityInputs) {
+    if (i.input.kind !== "txs") continue;
+    for (const tx of i.input.txs) {
+      if (tx.type === "scheduledWake" && ctx.local?.has(tx) !== true) return "SCHEDULED_WAKE_EXTERNAL_INGRESS_REJECTED";
+      if (tx.type === "proposeAccountsNow" && ctx.local?.has(tx) !== true) return "PROPOSE_ACCOUNTS_NOW_EXTERNAL_INGRESS_REJECTED";
+    }
+  }
+  return undefined;
+};
+/** og lastConsensusProgressAt writes: commit (finalization.ts), an accepted proposal's precommit (proposal/input.ts), a signed local timeout vote or a new leader certificate (timeout-input.ts), and a non-proposer's first admitted txs (input/admission.ts). */
+const consensusProgressed = (before: EntityReplica, after: EntityReplica, input: EntityInput, local: ReplicaLocal | undefined): boolean =>
+  after.head.height > before.head.height
+  || (input.kind === "proposal" && after._tag === "locked" && (before._tag !== "locked" || before.frame !== after.frame))
+  || (input.kind === "leaderTimeoutVote" && (input.local === true || (after.pendingLeaderCertificate !== undefined && after.pendingLeaderCertificate !== before.pendingLeaderCertificate)))
+  || (input.kind === "txs" && local?.lastConsensusProgressAt === undefined && !isProposalLeader(before) && after.mempool.length > before.mempool.length);
 /** og applyRuntimeTx. */
 export const applyRuntimeTxStep = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<TxStep, RuntimeError> => chain(runtimeTxAuthorized(tx, ctx), (): Result<TxStep, RuntimeError> => {
   const state = (r: Result<Runtime, RuntimeError>): Result<TxStep, RuntimeError> => map(r, noJ);
@@ -12297,17 +12387,15 @@ const runtimeHtlcInfra = (ctx: RuntimeCtx, rt: Runtime, entityId: EntityId): Htl
   const given = ctx.htlcInfra?.(entityId), seed = rt.encryptionSeeds.get(entityId);
   return given?.encryptionPrivateKey !== undefined || seed === undefined ? given : { profiles: [], ...given, encryptionPrivateKey: entityEncryptionPrivateKey(seed, entityId) };
 };
-/** og assertProposeAccountsNowTxAuthorized (mempool/propose-accounts-now.ts): outside replay, only this Runtime's own marked proposeAccountsNow enters. */
-const proposeAccountsNowForged = (input: RuntimeInput, ctx: RuntimeCtx): boolean =>
-  ctx.replay !== true && input.entityInputs.some((i) => i.input.kind === "txs" && i.input.txs.some((tx) => tx.type === "proposeAccountsNow" && ctx.local?.has(tx) !== true));
 export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx): Result<RuntimeStep, RuntimeError> => chain(validateRuntimeInput(rt, input), (jOutbox) => {
-  if (proposeAccountsNowForged(input, ctx)) return frameErr("PROPOSE_ACCOUNTS_NOW_EXTERNAL_INGRESS_REJECTED");
+  const forged = forgedIngress(input, ctx);
+  if (forged !== undefined) return frameErr(forged);
   const seeds = input.entityInputs.flatMap((i) => (i.input.kind === "txs" ? [i.input.timestamp] : []));
   const timestamp = [input.timestamp ?? rt.timestamp, ...(input.timestamp === undefined ? seeds : [])].reduce((a, b) => (b > a ? b : a), rt.timestamp);
   type TxFold = { readonly runtime: Runtime; readonly jOutputs: readonly JInput[] };
   const txFold = foldResult(input.runtimeTxs, { runtime: { ...rt, timestamp }, jOutputs: [] } as TxFold, (at, tx) => map(applyRuntimeTxStep(at.runtime, tx, ctx), (s): TxFold => ({ runtime: s.runtime, jOutputs: [...at.jOutputs, ...s.jOutputs] })));
   return chain(txFold, ({ runtime: afterTxs, jOutputs: txJOutputs }) => chain(mergeEntityInputs(input.entityInputs), (merged) => {
-    type Out = { readonly outputs: readonly EntityOutput[]; readonly rejected: readonly RuntimeError[]; readonly applied: readonly RoutedEntityInput[]; readonly committed: boolean; readonly effects?: readonly [string, CommitEffects] | undefined };
+    type Out = { readonly outputs: readonly EntityOutput[]; readonly rejected: readonly RuntimeError[]; readonly applied: readonly RoutedEntityInput[]; readonly committed: boolean; readonly progressed?: string | undefined; readonly effects?: readonly [string, CommitEffects] | undefined };
     const refused = (error: RuntimeError): StoreStep<string, EntityReplica, Out> => ({ writes: [], out: { outputs: [], rejected: [error], applied: [], committed: false }, stop: false });
     const { store, outs } = foldStore(afterTxs.entities, merged, (read, routed): StoreStep<string, EntityReplica, Out> => {
       const key = replicaKey(routed.entityId, routed.signerId), r = read(key);
@@ -12315,12 +12403,13 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
       const stamped: RoutedEntityInput = routed.input.kind === "txs" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
       const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, afterTxs, routed.entityId), ...opt("activeJurisdiction", afterTxs.activeJurisdiction) });
       if (!applied.ok) return refused(applied.error);
-      const effects = applied.value.committed;
-      return { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [], applied: [stamped], committed: applied.value.replica.head.height > r.head.height, ...(effects === undefined ? {} : { effects: [key, effects] as const }) }, stop: false };
+      const effects = applied.value.committed, progressed = consensusProgressed(r, applied.value.replica, stamped.input, afterTxs.replicaLocal.get(key));
+      return { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [], applied: [stamped], committed: applied.value.replica.head.height > r.head.height, progressed: progressed ? key : undefined, ...(effects === undefined ? {} : { effects: [key, effects] as const }) }, stop: false };
     });
     const applied = outs.flatMap((o) => o.applied), outbox = outs.flatMap((o) => o.outputs);
     // og attachCommitProofsAndOutputs: each committed frame's witnesses (stamped with the Runtime clock), pruned to what stays reachable.
     let replicaLocal = afterTxs.replicaLocal;
+    for (const key of outs.flatMap((o) => (o.progressed === undefined ? [] : [o.progressed]))) replicaLocal = mapSet(replicaLocal, key, { ...(replicaLocal.get(key) ?? {}), lastConsensusProgressAt: Number(timestamp) });
     for (const [key, effects] of outs.flatMap((o) => (o.effects === undefined ? [] : [o.effects]))) {
       const current = replicaLocal.get(key) ?? {}, witness = new Map(current.hankoWitness ?? []), state = store.get(key)?.state;
       for (const [hash, w] of effects.witnesses) witness.set(hash, { ...w, createdAt: Number(timestamp) });
