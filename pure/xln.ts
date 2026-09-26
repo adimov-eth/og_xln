@@ -1,5 +1,3 @@
-
-
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { x25519 } from "@noble/curves/ed25519";
 import { gcm } from "@noble/ciphers/aes.js";
@@ -10,251 +8,510 @@ import { bytesToHex as nobleHex } from "@noble/hashes/utils";
 import { Packr, addExtension } from "msgpackr";
 
 
+// ---- vocabulary: brands, tagged unions, Result ----
+
 declare const __brand: unique symbol;
 export type Brand<T, B extends string> = T & { readonly [__brand]: { readonly [K in B]: B } };
 export type Flat<T> = { readonly [K in keyof T]: T[K] } & {};
-export type Tagged<Tag extends string, Extra extends object = {}> = Tag extends unknown ? Flat<{ readonly _tag: Tag } & Extra> : never;
-export type Of<T extends { readonly _tag: string }, K extends T["_tag"]> = Extract<T, { readonly _tag: K }>;
+export type Tagged<Tag extends string, Extra extends object = {}> =
+  Tag extends unknown ? Flat<{ readonly _tag: Tag } & Extra> : never;
+export type Of<T extends { readonly _tag: string }, K extends T["_tag"]> =
+  Extract<T, { readonly _tag: K }>;
 export type Eq<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
-export const tag = <T extends string>(_tag: T) => <X extends object = {}>(x: X = {} as X): Tagged<T, X> => ({ _tag, ...x }) as Tagged<T, X>;
+export const tag = <T extends string>(_tag: T) =>
+  <X extends object = {}>(x: X = {} as X): Tagged<T, X> => ({ _tag, ...x }) as Tagged<T, X>;
 /** `{k: v}` when defined, `{}` otherwise — absence and undefined are one value (§4.2). */
 export const opt = <K extends string, V>(k: K, v: V | undefined): { readonly [P in K]?: V } =>
   (v === undefined ? {} : { [k]: v }) as { readonly [P in K]?: V };
 
 
-export type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+export type Result<T, E> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: E };
 export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
 export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
 export const assertNever = (x: never): never => { throw new Error(`unreachable: ${String(x)}`); };
-export const map = <T, U, E>(r: Result<T, E>, f: (t: T) => U): Result<U, E> => (r.ok ? ok(f(r.value)) : r);
-export const chain = <T, U, E, F>(r: Result<T, E>, f: (t: T) => Result<U, F>): Result<U, E | F> => (r.ok ? f(r.value) : r);
-export const mapErr = <T, E, F>(r: Result<T, E>, f: (e: E) => F): Result<T, F> => (r.ok ? r : err(f(r.error)));
+export const map = <T, U, E>(r: Result<T, E>, f: (t: T) => U): Result<U, E> =>
+  (r.ok ? ok(f(r.value)) : r);
+export const chain = <T, U, E, F>(r: Result<T, E>, f: (t: T) => Result<U, F>): Result<U, E | F> =>
+  (r.ok ? f(r.value) : r);
+export const mapErr = <T, E, F>(r: Result<T, E>, f: (e: E) => F): Result<T, F> =>
+  (r.ok ? r : err(f(r.error)));
 export const guard = <E>(pass: boolean, e: E): Result<void, E> => (pass ? ok(undefined) : err(e));
 export const unwrapOr = <T, E>(r: Result<T, E>, f: (e: E) => T): T => (r.ok ? r.value : f(r.error));
-export const foldResult = <S, X, E>(xs: Iterable<X>, init: S, f: (s: S, x: X, i: number) => Result<S, E>): Result<S, E> => {
-  let s = init, i = 0;
-  for (const x of xs) { const n = f(s, x, i++); if (!n.ok) return n; s = n.value; }
-  return ok(s);
+/** Folds left to right; the first refusal is the answer and later items are not visited. */
+export const foldResult = <S, X, E>(
+  xs: Iterable<X>, init: S, f: (s: S, x: X, i: number) => Result<S, E>,
+): Result<S, E> =>
+  [...xs].reduce<Result<S, E>>((acc, x, i) => (acc.ok ? f(acc.value, x, i) : acc), ok(init));
+export const mapAccumResult = <S, X, Y, E>(
+  xs: Iterable<X>, init: S, f: (s: S, x: X, i: number) => Result<readonly [S, Y], E>,
+): Result<readonly [S, readonly Y[]], E> => {
+  type Acc = readonly [S, readonly Y[]];
+  const stepOnce = ([s, ys]: Acc, x: X, i: number): Result<Acc, E> =>
+    map(f(s, x, i), ([next, y]) => [next, [...ys, y]] as const);
+  return foldResult<Acc, X, E>(xs, [init, []], stepOnce);
 };
-export const mapAccumResult = <S, X, Y, E>(xs: Iterable<X>, init: S, f: (s: S, x: X, i: number) => Result<readonly [S, Y], E>): Result<readonly [S, readonly Y[]], E> =>
-  foldResult<readonly [S, readonly Y[]], X, E>(xs, [init, []], ([s, ys], x, i) => map(f(s, x, i), ([n, y]) => [n, [...ys, y]] as const));
-export const mapAccum = <S, X, Y>(xs: Iterable<X>, init: S, f: (s: S, x: X, i: number) => readonly [S, Y]): readonly [S, readonly Y[]] =>
+export const mapAccum = <S, X, Y>(
+  xs: Iterable<X>, init: S, f: (s: S, x: X, i: number) => readonly [S, Y],
+): readonly [S, readonly Y[]] =>
   unwrapOr(mapAccumResult(xs, init, (s, x, i) => ok(f(s, x, i))), assertNever);
-export const traverse = <X, Y, E>(xs: Iterable<X>, f: (x: X, i: number) => Result<Y, E>): Result<readonly Y[], E> =>
-  map(mapAccumResult(xs, undefined, (_, x, i) => map(f(x, i), (y) => [undefined, y] as const)), ([, ys]) => ys);
+export const traverse = <X, Y, E>(
+  xs: Iterable<X>, f: (x: X, i: number) => Result<Y, E>,
+): Result<readonly Y[], E> => {
+  const collect = (_: undefined, x: X, i: number) => map(f(x, i), (y) => [undefined, y] as const);
+  return map(mapAccumResult(xs, undefined, collect), ([, ys]) => ys);
+};
 /** First refusal among eagerly evaluated checks, in order. */
-export const checks = <E>(...rs: readonly Result<unknown, E>[]): Result<void, E> => foldResult(rs, undefined as void, (_, r) => map(r, () => undefined));
+export const checks = <E>(...rs: readonly Result<unknown, E>[]): Result<void, E> =>
+  foldResult(rs, undefined as void, (_, r) => map(r, () => undefined));
 type Values<R> = { readonly [K in keyof R]: R[K] extends Result<infer V, unknown> ? V : never };
 type Errors<R> = R[keyof R] extends Result<unknown, infer E> ? E : never;
-export const all = <R extends Record<string, Result<unknown, unknown>>>(cs: R): Result<Values<R>, Errors<R>> =>
-  foldResult(Object.entries(cs), {} as Record<string, unknown>, (acc, [k, r]) => map(r as Result<unknown, Errors<R>>, (v) => ({ ...acc, [k]: v }))) as Result<Values<R>, Errors<R>>;
+export const all = <R extends Record<string, Result<unknown, unknown>>>(
+  cs: R,
+): Result<Values<R>, Errors<R>> => {
+  const collect = (acc: Record<string, unknown>, [k, r]: readonly [string, unknown]) =>
+    map(r as Result<unknown, Errors<R>>, (v) => ({ ...acc, [k]: v }));
+  return foldResult(Object.entries(cs), {}, collect) as Result<Values<R>, Errors<R>>;
+};
 
 
-export const arm = <A extends object, K extends keyof A>(arms: A, k: K): A[K] => (Object.hasOwn(arms, k) ? arms[k] : assertNever(k as never));
+// ---- matching: exhaustive tables keyed by a discriminant ----
+
+export const arm = <A extends object, K extends keyof A>(arms: A, k: K): A[K] =>
+  (Object.hasOwn(arms, k) ? arms[k] : assertNever(k as never));
 export const matchBy = <Key extends string, T extends Record<Key, PropertyKey>, R>(
   key: Key, value: T, arms: { [K in T[Key]]: (v: Extract<T, Record<Key, K>>) => R },
 ): R => arm(arms, value[key] as T[Key])(value as never);
-export const match = <T extends { readonly _tag: string }, R>(value: T, arms: { [K in T["_tag"]]: (v: Of<T, K>) => R }): R => matchBy("_tag", value, arms);
-export const total = <K extends string, F>(names: readonly K[], f: F): { readonly [P in K]: F } => Object.fromEntries(names.map((n) => [n, f])) as { readonly [P in K]: F };
+export const match = <T extends { readonly _tag: string }, R>(
+  value: T, arms: { [K in T["_tag"]]: (v: Of<T, K>) => R },
+): R => matchBy("_tag", value, arms);
+export const total = <K extends string, F>(names: readonly K[], f: F): { readonly [P in K]: F } =>
+  Object.fromEntries(names.map((n) => [n, f])) as { readonly [P in K]: F };
 export type Kinds<K extends string, Row> = { readonly [T in K]: Row };
 
 
+// ---- replica grammars: which phase an event may move a replica to ----
+
 type Table = { readonly [event: string]: { readonly [phase: string]: readonly string[] } };
-export type Grammar = { readonly table: Table; readonly replica: Tagged<string>; readonly input: { readonly kind: string }; readonly ctx: { readonly [e: string]: unknown }; readonly output: unknown; readonly error: unknown };
+export type Grammar = {
+  readonly table: Table;
+  readonly replica: Tagged<string>;
+  readonly input: { readonly kind: string };
+  readonly ctx: { readonly [e: string]: unknown };
+  readonly output: unknown;
+  readonly error: unknown;
+};
 export type Phase<G extends Grammar> = G["replica"]["_tag"];
 export type Event<G extends Grammar> = keyof G["table"] & string;
 export type At<G extends Grammar, P extends string> = Of<G["replica"], P>;
 export type InputFor<G extends Grammar, E extends string> = Extract<G["input"], { readonly kind: E }>;
-export type Next<G extends Grammar, P extends Phase<G>, E extends Event<G>> = P extends keyof G["table"][E] ? Extract<G["table"][E][P], readonly Phase<G>[]>[number] : never;
+export type Next<G extends Grammar, P extends Phase<G>, E extends Event<G>> =
+  P extends keyof G["table"][E] ? Extract<G["table"][E][P], readonly Phase<G>[]>[number] : never;
 export type Apply<R, O> = { readonly replica: R; readonly outputs: readonly O[] };
-export type Handler<G extends Grammar, E extends Event<G>, P extends Phase<G>> =
-  (replica: At<G, P>, input: InputFor<G, E>, ctx: G["ctx"][E]) => Result<Apply<At<G, Next<G, P, E>>, G["output"]>, G["error"]>;
-export type Cases<G extends Grammar, E extends Event<G>> = { readonly [P in Phase<G>]: P extends keyof G["table"][E] ? Handler<G, E, P> : G["error"] };
-export const grammar = <G extends Grammar>(_table: G["table"]) => <E extends Event<G>, C extends Cases<G, E>>(_event: E, cases: C) =>
-  (replica: G["replica"], input: InputFor<G, E>, ctx: G["ctx"][E]): Result<Apply<G["replica"], G["output"]>, G["error"]> => {
-    const branch = arm(cases, replica._tag as keyof C) as unknown;
-    return typeof branch === "function" ? branch(replica, input, ctx) : err(branch as G["error"]);
-  };
-export const done = <R, O>(replica: R, outputs: readonly O[] = []): Apply<R, O> => ({ replica, outputs });
+export type Handler<G extends Grammar, E extends Event<G>, P extends Phase<G>> = (
+  replica: At<G, P>, input: InputFor<G, E>, ctx: G["ctx"][E],
+) => Result<Apply<At<G, Next<G, P, E>>, G["output"]>, G["error"]>;
+/** A phase the table allows gets a handler; a phase it forbids gets the refusal to return. */
+export type Cases<G extends Grammar, E extends Event<G>> = {
+  readonly [P in Phase<G>]: P extends keyof G["table"][E] ? Handler<G, E, P> : G["error"];
+};
+export const grammar = <G extends Grammar>(_table: G["table"]) =>
+  <E extends Event<G>, C extends Cases<G, E>>(_event: E, cases: C) =>
+    (
+      replica: G["replica"], input: InputFor<G, E>, ctx: G["ctx"][E],
+    ): Result<Apply<G["replica"], G["output"]>, G["error"]> => {
+      const branch = arm(cases, replica._tag as keyof C) as unknown;
+      return typeof branch === "function" ? branch(replica, input, ctx) : err(branch as G["error"]);
+    };
+export const done = <R, O>(replica: R, outputs: readonly O[] = []): Apply<R, O> =>
+  ({ replica, outputs });
 
+const everyPhaseStays = {
+  open: ["open"],
+  proposed: ["proposed"],
+  received: ["received"],
+  preparing: ["preparing"],
+  disputed: ["disputed"],
+} as const;
+const everyPhaseDisputes = {
+  open: ["disputed"],
+  proposed: ["disputed"],
+  received: ["disputed"],
+  preparing: ["disputed"],
+  disputed: ["disputed"],
+} as const;
 export const AccountTransition = {
   propose: { open: ["open", "proposed"] },
-  ack: { open: ["open"], proposed: ["open", "proposed"], received: ["open", "received"], preparing: ["preparing"], disputed: ["disputed"] },
-  ack_frame: { open: ["open", "received"], proposed: ["open", "proposed", "received"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
-  freeze: { open: ["preparing", "disputed"], proposed: ["preparing", "disputed"], received: ["preparing", "disputed"], preparing: ["preparing", "disputed"], disputed: ["disputed"] },
-  dispute: { open: ["open"], proposed: ["proposed"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
-  board_hanko_refresh: { open: ["open"], proposed: ["proposed"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
+  ack: {
+    open: ["open"],
+    proposed: ["open", "proposed"],
+    received: ["open", "received"],
+    preparing: ["preparing"],
+    disputed: ["disputed"],
+  },
+  ack_frame: {
+    open: ["open", "received"],
+    proposed: ["open", "proposed", "received"],
+    received: ["received"],
+    preparing: ["preparing"],
+    disputed: ["disputed"],
+  },
+  freeze: {
+    open: ["preparing", "disputed"],
+    proposed: ["preparing", "disputed"],
+    received: ["preparing", "disputed"],
+    preparing: ["preparing", "disputed"],
+    disputed: ["disputed"],
+  },
+  dispute: everyPhaseStays,
+  board_hanko_refresh: everyPhaseStays,
   resume: { preparing: ["open"] },
-  external_finality: { open: ["disputed"], proposed: ["disputed"], received: ["disputed"], preparing: ["disputed"], disputed: ["disputed"] },
+  external_finality: everyPhaseDisputes,
 } as const;
 export const EntityTransition = {
-  txs: { open: ["open", "proposed"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
-  proposal: { open: ["open", "locked"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
-  precommit: { open: ["open"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
-  leaderTimeoutVote: { open: ["open", "proposed", "locked"], proposed: ["open", "proposed"], locked: ["open", "proposed", "locked"] },
-  jPrefixAttestations: { open: ["open", "proposed"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
+  txs: {
+    open: ["open", "proposed"],
+    proposed: ["open", "proposed"],
+    locked: ["open", "locked"],
+  },
+  proposal: {
+    open: ["open", "locked"],
+    proposed: ["open", "proposed"],
+    locked: ["open", "locked"],
+  },
+  precommit: {
+    open: ["open"],
+    proposed: ["open", "proposed"],
+    locked: ["open", "locked"],
+  },
+  leaderTimeoutVote: {
+    open: ["open", "proposed", "locked"],
+    proposed: ["open", "proposed"],
+    locked: ["open", "proposed", "locked"],
+  },
+  jPrefixAttestations: {
+    open: ["open", "proposed"],
+    proposed: ["open", "proposed"],
+    locked: ["open", "locked"],
+  },
 } as const;
 
 
-export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "swap_offer", "swap_cancel_request", "swap_resolve", "settle_transition",
-  "j_event_claim", "cross_pull_lock", "cross_pull_close", "request_collateral", "rebalance_refund",
-  "rebalance_policy", "lending_fund", "lending_borrow_request", "lending_repay", "lending_credit", "lending_close_request", "lending_close_payout"] as const;
+export const AccountTxNames = [
+  "add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve",
+  "swap_offer", "swap_cancel_request", "swap_resolve", "settle_transition", "j_event_claim",
+  "cross_pull_lock", "cross_pull_close", "request_collateral", "rebalance_refund", "rebalance_policy",
+  "lending_fund", "lending_borrow_request", "lending_repay", "lending_credit",
+  "lending_close_request", "lending_close_payout",
+] as const;
 export const LendingTxNames = ["lendingOffer", "lendingBorrow", "lendingRepay", "lendingClosePosition"] as const;
 export const EntityTxNames = ["directPayment", "placeSwapOffer"] as const;
 export const AccountInputKinds = ["dispute", "board_hanko_refresh"] as const;
 export const EntityInputKinds = ["leaderTimeoutVote", "jPrefixAttestations"] as const;
 
 
+// ---- layers: one step of a state machine, folded strictly or leniently ----
+
 export type Step<S, Eff> = { readonly state: S; readonly effects: readonly Eff[] };
-export const step = <S, Eff = never>(state: S, effects: readonly Eff[] = []): Step<S, Eff> => ({ state, effects });
+export const step = <S, Eff = never>(state: S, effects: readonly Eff[] = []): Step<S, Eff> =>
+  ({ state, effects });
 export type Layer<S, X, C, Eff, E> = (s: S, x: X, c: C) => Result<Step<S, Eff>, E>;
 /** Strict fold: one refusal refuses the frame. */
-export const strictFold = <S, X, C, Eff, E>(apply: Layer<S, X, C, Eff, E>) => (s: S, xs: Iterable<X>, c: C): Result<Step<S, Eff>, E> =>
-  map(mapAccumResult(xs, s, (cur, x) => map(apply(cur, x, c), (r) => [r.state, r.effects] as const)), ([state, effects]) => step(state, effects.flat()));
-export type Lenient<S, X, Eff, E> = Step<S, Eff> & { readonly included: readonly X[]; readonly refused: readonly { readonly index: number; readonly error: E }[] };
+export const strictFold = <S, X, C, Eff, E>(apply: Layer<S, X, C, Eff, E>) =>
+  (s: S, xs: Iterable<X>, c: C): Result<Step<S, Eff>, E> => {
+    const applyOne = (cur: S, x: X) =>
+      map(apply(cur, x, c), (r) => [r.state, r.effects] as const);
+    return map(mapAccumResult(xs, s, applyOne), ([state, effects]) => step(state, effects.flat()));
+  };
+export type Lenient<S, X, Eff, E> = Step<S, Eff> & {
+  readonly included: readonly X[];
+  readonly refused: readonly { readonly index: number; readonly error: E }[];
+};
 type LenientItem<X, Eff, E> =
   | { readonly _tag: "folded"; readonly x: X; readonly effects: readonly Eff[] }
   | { readonly _tag: "refused"; readonly index: number; readonly error: E };
 /** Lenient fold: a refused item is skipped, the rest go on. */
-export const lenientFold = <S, X, C, Eff, E>(apply: Layer<S, X, C, Eff, E>) => (s: S, xs: Iterable<X>, c: C): Lenient<S, X, Eff, E> => {
-  const [state, outs] = mapAccum(xs, s, (cur, x, index): readonly [S, LenientItem<X, Eff, E>] => {
-    const r = apply(cur, x, c);
-    return r.ok ? [r.value.state, tag("folded")({ x, effects: r.value.effects })] : [cur, tag("refused")({ index, error: r.error })];
-  });
-  const folded = outs.flatMap((o) => (o._tag === "folded" ? [o] : []));
-  return { state, effects: folded.flatMap((f) => f.effects), included: folded.map((f) => f.x), refused: outs.flatMap((o) => (o._tag === "refused" ? [{ index: o.index, error: o.error }] : [])) };
+export const lenientFold = <S, X, C, Eff, E>(apply: Layer<S, X, C, Eff, E>) =>
+  (s: S, xs: Iterable<X>, c: C): Lenient<S, X, Eff, E> => {
+    const applyOne = (cur: S, x: X, index: number): readonly [S, LenientItem<X, Eff, E>] => {
+      const r = apply(cur, x, c);
+      return r.ok
+        ? [r.value.state, tag("folded")({ x, effects: r.value.effects })]
+        : [cur, tag("refused")({ index, error: r.error })];
+    };
+    const [state, items] = mapAccum(xs, s, applyOne);
+    const folded = items.flatMap((item) => (item._tag === "folded" ? [item] : []));
+    const refused = items.flatMap((item) => (item._tag === "refused" ? [item] : []));
+    return {
+      state,
+      effects: folded.flatMap((f) => f.effects),
+      included: folded.map((f) => f.x),
+      refused: refused.map(({ index, error }) => ({ index, error })),
+    };
+  };
+
+
+// ---- immutable collections ----
+
+export const mapSet = <K, V>(m: ReadonlyMap<K, V>, k: K, v: V): ReadonlyMap<K, V> =>
+  new Map([...m, [k, v]]);
+export const mapDelete = <K, V>(m: ReadonlyMap<K, V>, k: K): ReadonlyMap<K, V> =>
+  new Map([...m].filter(([key]) => key !== k));
+/** Adds d to the count at k; a count that reaches zero leaves the map. */
+export const bump = <K>(m: ReadonlyMap<K, bigint>, k: K, d: bigint): ReadonlyMap<K, bigint> => {
+  const v = (m.get(k) ?? 0n) + d;
+  return v === 0n ? mapDelete(m, k) : mapSet(m, k, v);
+};
+/** Keeps the first item for each key, drops keys already taken; keyless items always stay. */
+export const firstBy = <X, K>(
+  xs: Iterable<X>, key: (x: X) => K | undefined, taken: Iterable<K> = [],
+): readonly X[] => {
+  const items = [...xs];
+  const keys = items.map(key);
+  const blocked = new Set(taken);
+  const firstAt = new Map(keys.map((k, i) => [k, i] as const).reverse());
+  const kept = (i: number): boolean => {
+    const k = keys[i];
+    return k === undefined || (!blocked.has(k) && firstAt.get(k) === i);
+  };
+  return items.filter((_, i) => kept(i));
 };
 
 
-export const mapSet = <K, V>(m: ReadonlyMap<K, V>, k: K, v: V): ReadonlyMap<K, V> => new Map(m).set(k, v);
-export const mapDelete = <K, V>(m: ReadonlyMap<K, V>, k: K): ReadonlyMap<K, V> => { const n = new Map(m); n.delete(k); return n; };
-export const bump = <K>(m: ReadonlyMap<K, bigint>, k: K, d: bigint): ReadonlyMap<K, bigint> => { const v = (m.get(k) ?? 0n) + d; return v === 0n ? mapDelete(m, k) : mapSet(m, k, v); };
-export const firstBy = <X, K>(xs: Iterable<X>, key: (x: X) => K | undefined, taken: Iterable<K> = []): readonly X[] => {
-  const seen = new Set(taken), kept: X[] = [];
-  for (const x of xs) { const k = key(x); if (k !== undefined && seen.has(k)) continue; if (k !== undefined) seen.add(k); kept.push(x); }
-  return kept;
-};
-export type StoreStep<K, V, Y> = { readonly writes: readonly (readonly [K, V])[]; readonly out: Y; readonly stop: boolean };
-export const foldStore = <K, V, X, Y>(store: ReadonlyMap<K, V>, xs: Iterable<X>, f: (read: (k: K) => V | undefined, x: X) => StoreStep<K, V, Y>): { readonly store: ReadonlyMap<K, V>; readonly outs: readonly Y[] } => {
-  const copy = new Map(store), outs: Y[] = [];
-  for (const x of xs) { const { writes, out, stop } = f((k) => copy.get(k), x); for (const [k, v] of writes) copy.set(k, v); outs.push(out); if (stop) break; }
-  return { store: copy, outs };
-};
-
+// ---- canonical text: the deterministic spelling every hash in the rewrite is taken over ----
 
 export const asc = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-const sortedBy = <X>(xs: readonly X[], key: (x: X) => string): readonly X[] => xs.map((x) => [key(x), x] as const).sort(([a], [b]) => asc(a, b)).map(([, x]) => x);
-const sortWith = <X>(xs: Iterable<X>, cmp: (a: X, b: X) => number): readonly X[] => [...xs].sort(cmp);
-const len = (t: string, body: string): string => `${t}${body.length}:${body}`;
+const sortedBy = <X>(xs: readonly X[], key: (x: X) => string): readonly X[] =>
+  xs.map((x) => [key(x), x] as const).toSorted(([a], [b]) => asc(a, b)).map(([, x]) => x);
+const sortWith = <X>(xs: Iterable<X>, cmp: (a: X, b: X) => number): readonly X[] =>
+  [...xs].toSorted(cmp);
+const lengthPrefixed = (kind: string, body: string): string => `${kind}${body.length}:${body}`;
+const countOf = (n: number): string => lengthPrefixed("d", String(n));
+const canonMap = (m: ReadonlyMap<unknown, unknown>): string => {
+  const rows = sortedBy([...m].map(([k, v]) => [canon(k), v] as const), ([k]) => k);
+  return `m${countOf(rows.length)}${rows.map(([k, v]) => k + canon(v)).join("")}`;
+};
+const canonSet = (s: ReadonlySet<unknown>): string => {
+  const rows = [...s].map(canon).toSorted(asc);
+  return `S${countOf(rows.length)}${rows.join("")}`;
+};
+/** Undefined fields are absent, so `{a: undefined}` and `{}` spell the same. */
+const canonObject = (o: Record<string, unknown>): string => {
+  const keys = Object.keys(o).filter((k) => o[k] !== undefined).toSorted();
+  return `o${countOf(keys.length)}${keys.map((k) => lengthPrefixed("s", k) + canon(o[k])).join("")}`;
+};
+/** Every value gets a type letter and a length, so no two different values share a spelling. */
 export const canon = (v: unknown): string => {
-  if (v === undefined) return "u";
-  if (v === null) return "n";
-  if (typeof v === "boolean") return v ? "T" : "F";
-  if (typeof v === "bigint") return len("i", v.toString());
-  if (typeof v === "string") return len("s", v);
-  if (typeof v === "number") return len("d", String(v));
-  if (v instanceof Map) { const rows = sortedBy([...v].map(([k, x]) => [canon(k), x] as const), ([k]) => k); return `m${len("d", String(rows.length))}${rows.map(([k, x]) => k + canon(x)).join("")}`; }
-  if (Array.isArray(v)) return `a${len("d", String(v.length))}${v.map(canon).join("")}`;
-  if (v instanceof Set) { const rows = [...v].map(canon).sort(asc); return `S${len("d", String(rows.length))}${rows.join("")}`; }
-  if (v instanceof Uint8Array) return len("b", nobleHex(v));
-  if (typeof v === "object") { const r = v as Record<string, unknown>, keys = Object.keys(r).filter((k) => r[k] !== undefined).sort(); return `o${len("d", String(keys.length))}${keys.map((k) => len("s", k) + canon(r[k])).join("")}`; }
-  return "u";
+  switch (true) {
+    case v === undefined: return "u";
+    case v === null: return "n";
+    case typeof v === "boolean": return v ? "T" : "F";
+    case typeof v === "bigint": return lengthPrefixed("i", v.toString());
+    case typeof v === "string": return lengthPrefixed("s", v);
+    case typeof v === "number": return lengthPrefixed("d", String(v));
+    case v instanceof Map: return canonMap(v);
+    case Array.isArray(v): return `a${countOf(v.length)}${v.map(canon).join("")}`;
+    case v instanceof Set: return canonSet(v);
+    case v instanceof Uint8Array: return lengthPrefixed("b", nobleHex(v));
+    case typeof v === "object": return canonObject(v as Record<string, unknown>);
+    default: return "u";
+  }
 };
 
 
-const nib = (c: number): number => (c >= 48 && c <= 57 ? c - 48 : (c | 32) >= 97 && (c | 32) <= 102 ? (c | 32) - 87 : -1);
+// ---- hex, words and bytes ----
+
+const nibble = (code: number): number => {
+  const lower = code | 32;
+  switch (true) {
+    case code >= 48 && code <= 57: return code - 48;
+    case lower >= 97 && lower <= 102: return lower - 87;
+    default: return -1;
+  }
+};
 export const hexBody = (h: string): string => (/^0[xX]/.test(h) ? h.slice(2) : h);
 export const hexToBytes = (hex: string): Uint8Array => {
   const body = hexBody(hex);
   if (body.length % 2 !== 0) throw new Error(`odd hex length ${body.length}`);
-  const out = new Uint8Array(body.length / 2);
-  for (let i = 0; i < out.length; i++) { const hi = nib(body.charCodeAt(2 * i)), lo = nib(body.charCodeAt(2 * i + 1)); if (hi < 0 || lo < 0) throw new Error(`bad hex at ${i}`); out[i] = (hi << 4) | lo; }
-  return out;
+  const byteAt = (_: unknown, i: number): number => {
+    const hi = nibble(body.charCodeAt(2 * i));
+    const lo = nibble(body.charCodeAt(2 * i + 1));
+    if (hi < 0 || lo < 0) throw new Error(`bad hex at ${i}`);
+    return (hi << 4) | lo;
+  };
+  return Uint8Array.from({ length: body.length / 2 }, byteAt);
 };
 export const bytesToHex = (b: Uint8Array): string => `0x${nobleHex(b)}`;
-export const parseHex = (h: string): Uint8Array | null => { const b = hexBody(h); return b.length % 2 === 0 && /^[0-9a-fA-F]*$/.test(b) ? hexToBytes(h) : null; };
+export const parseHex = (h: string): Uint8Array | null => {
+  const body = hexBody(h);
+  return body.length % 2 === 0 && /^[0-9a-fA-F]*$/.test(body) ? hexToBytes(h) : null;
+};
 export const joinHex = (parts: readonly string[]): string => `0x${parts.map(hexBody).join("")}`;
 export const concat = (parts: readonly Uint8Array[]): Uint8Array => {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
-  return out;
+  const [size, starts] = mapAccum(parts, 0, (offset, p) => [offset + p.length, offset] as const);
+  const joined = new Uint8Array(size);
+  parts.forEach((p, i) => joined.set(p, starts[i]));
+  return joined;
 };
 export const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 export const keccak256 = (b: Uint8Array): Uint8Array => keccak_256(b);
 export const keccak256Hex = (b: Uint8Array): string => bytesToHex(keccak256(b));
 export const wordOf = (n: bigint): Uint8Array => {
   if (n < 0n || n >= 1n << 256n) throw new Error("uint256 out of range");
-  const out = new Uint8Array(32); for (let i = 31, r = n; i >= 0; i--, r >>= 8n) out[i] = Number(r & 0xffn);
-  return out;
+  return hexToBytes(n.toString(16).padStart(64, "0"));
 };
 const INT256_MIN = -(1n << 255n), INT256_MAX = (1n << 255n) - 1n;
-export const wordOfSigned = (n: bigint): Uint8Array => { if (n < INT256_MIN || n > INT256_MAX) throw new Error("int256 out of range"); return wordOf(n < 0n ? (1n << 256n) + n : n); };
-export const wordAt = (buf: Uint8Array, at: number): bigint => { let n = 0n; for (let i = 0; i < 32; i++) n = (n << 8n) | BigInt(buf[at + i] ?? 0); return n; };
-const sized = (n: number) => (hex: string): Uint8Array => { const b = hexToBytes(hex); if (b.length !== n) throw new Error(`${n}-byte value is ${b.length} bytes`); return b; };
+/** Two's complement: a negative n is written as 2^256 + n. */
+export const wordOfSigned = (n: bigint): Uint8Array => {
+  if (n < INT256_MIN || n > INT256_MAX) throw new Error("int256 out of range");
+  return wordOf(n < 0n ? (1n << 256n) + n : n);
+};
+/** The 32-byte word at `at`; bytes past the end of the buffer read as zero. */
+export const wordAt = (buf: Uint8Array, at: number): bigint =>
+  BigInt(bytesToHex(Uint8Array.from({ length: 32 }, (_, i) => buf[at + i] ?? 0)));
+const sized = (n: number) => (hex: string): Uint8Array => {
+  const b = hexToBytes(hex);
+  if (b.length !== n) throw new Error(`${n}-byte value is ${b.length} bytes`);
+  return b;
+};
 const addressBytes = sized(20);
 export const bytes32 = sized(32);
-export const addressWord = (a: string): Uint8Array => { const out = new Uint8Array(32); out.set(addressBytes(a), 12); return out; };
-const uint32Bytes = (n: number): Uint8Array => { if (!Number.isInteger(n) || n < 0 || n > 0xffff_ffff) throw new Error("uint32 out of range"); return Uint8Array.of(n >>> 24, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff); };
+export const addressWord = (a: string): Uint8Array => concat([new Uint8Array(12), addressBytes(a)]);
+const uint32Bytes = (n: number): Uint8Array => {
+  if (!Number.isInteger(n) || n < 0 || n > 0xffff_ffff) throw new Error("uint32 out of range");
+  return Uint8Array.of(n >>> 24, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff);
+};
 
-export type Abi = Tagged<"uint" | "int", { value: bigint }> | Tagged<"bool", { value: boolean }> | Tagged<"address" | "bytes32" | "bytes", { value: string }> | Tagged<"array" | "tuple", { value: readonly Abi[] }>;
+
+// ---- Solidity ABI: encoding, and typed cursors for decoding ----
+
+export type Abi =
+  | Tagged<"uint" | "int", { value: bigint }>
+  | Tagged<"bool", { value: boolean }>
+  | Tagged<"address" | "bytes32" | "bytes", { value: string }>
+  | Tagged<"array" | "tuple", { value: readonly Abi[] }>;
 export const A = {
-  uint: (value: bigint): Abi => ({ _tag: "uint", value }), int: (value: bigint): Abi => ({ _tag: "int", value }), bool: (value: boolean): Abi => ({ _tag: "bool", value }),
-  address: (value: string): Abi => ({ _tag: "address", value }), b32: (value: string): Abi => ({ _tag: "bytes32", value }), bytes: (value: string): Abi => ({ _tag: "bytes", value }),
-  array: (value: readonly Abi[]): Abi => ({ _tag: "array", value }), tuple: (value: readonly Abi[]): Abi => ({ _tag: "tuple", value }),
+  uint: (value: bigint): Abi => ({ _tag: "uint", value }),
+  int: (value: bigint): Abi => ({ _tag: "int", value }),
+  bool: (value: boolean): Abi => ({ _tag: "bool", value }),
+  address: (value: string): Abi => ({ _tag: "address", value }),
+  b32: (value: string): Abi => ({ _tag: "bytes32", value }),
+  bytes: (value: string): Abi => ({ _tag: "bytes", value }),
+  array: (value: readonly Abi[]): Abi => ({ _tag: "array", value }),
+  tuple: (value: readonly Abi[]): Abi => ({ _tag: "tuple", value }),
 } as const;
 const arr = <X>(xs: readonly X[], f: (x: X) => Abi): Abi => A.array(xs.map((x) => f(x)));
-const dynamic = (v: Abi): boolean => match(v, { uint: () => false, int: () => false, bool: () => false, address: () => false, bytes32: () => false, bytes: () => true, array: () => true, tuple: (t) => t.value.some(dynamic) });
-const padRight = (b: Uint8Array): Uint8Array => { const n = Math.ceil(b.length / 32) * 32; if (n === b.length) return b; const out = new Uint8Array(n); out.set(b); return out; };
+const dynamic = (v: Abi): boolean => {
+  switch (v._tag) {
+    case "bytes": case "array": return true;
+    case "tuple": return v.value.some(dynamic);
+    default: return false;
+  }
+};
+const padRight = (b: Uint8Array): Uint8Array => {
+  const padding = Math.ceil(b.length / 32) * 32 - b.length;
+  return padding === 0 ? b : concat([b, new Uint8Array(padding)]);
+};
+const uintWordHex = (n: bigint): string => nobleHex(wordOf(n));
 const encodeValue = (v: Abi): string => match(v, {
-  uint: (x) => nobleHex(wordOf(x.value)), int: (x) => nobleHex(wordOfSigned(x.value)), bool: (x) => nobleHex(wordOf(x.value ? 1n : 0n)), address: (x) => nobleHex(addressWord(x.value)),
-  bytes32: (x) => (bytes32(x.value), hexBody(x.value).toLowerCase()),
-  bytes: (x) => { const b = hexToBytes(x.value); return nobleHex(wordOf(BigInt(b.length))) + nobleHex(padRight(b)); },
-  array: (x) => nobleHex(wordOf(BigInt(x.value.length))) + encodeSequence(x.value), tuple: (x) => encodeSequence(x.value),
+  uint: (x) => uintWordHex(x.value),
+  int: (x) => nobleHex(wordOfSigned(x.value)),
+  bool: (x) => uintWordHex(x.value ? 1n : 0n),
+  address: (x) => nobleHex(addressWord(x.value)),
+  bytes32: (x) => nobleHex(bytes32(x.value)),
+  bytes: (x) => {
+    const b = hexToBytes(x.value);
+    return uintWordHex(BigInt(b.length)) + nobleHex(padRight(b));
+  },
+  array: (x) => uintWordHex(BigInt(x.value.length)) + encodeSequence(x.value),
+  tuple: (x) => encodeSequence(x.value),
 });
+/** Static values sit in the head; a dynamic value sits in the tail and its head holds the offset. */
 const encodeSequence = (vs: readonly Abi[]): string => {
-  const parts = vs.map((v) => ({ dyn: dynamic(v), hex: encodeValue(v) }));
-  let tail = parts.reduce((n, p) => n + (p.dyn ? 32 : p.hex.length / 2), 0);
-  const heads: string[] = [], tails: string[] = [];
-  for (const p of parts) { if (!p.dyn) { heads.push(p.hex); continue; } heads.push(nobleHex(wordOf(BigInt(tail)))); tails.push(p.hex); tail += p.hex.length / 2; }
+  const parts = vs.map((v) => ({ dynamic: dynamic(v), hex: encodeValue(v) }));
+  const headSize = parts.reduce((n, p) => n + (p.dynamic ? 32 : p.hex.length / 2), 0);
+  const [, heads] = mapAccum(parts, headSize, (tailAt, p) => p.dynamic
+    ? [tailAt + p.hex.length / 2, uintWordHex(BigInt(tailAt))] as const
+    : [tailAt, p.hex] as const);
+  const tails = parts.filter((p) => p.dynamic).map((p) => p.hex);
   return [...heads, ...tails].join("");
 };
 export const abiEncodeHex = (vs: readonly Abi[]): string => `0x${encodeSequence(vs)}`;
 export const abiEncode = (vs: readonly Abi[]): Uint8Array => hexToBytes(abiEncodeHex(vs));
-export type Packed = Tagged<"uint256", { value: bigint }> | Tagged<"uint32", { value: number }> | Tagged<"bool", { value: boolean }> | Tagged<"address" | "bytes32" | "bytes", { value: string }>;
-export const encodePacked = (parts: readonly Packed[]): Uint8Array => concat(parts.map((p) => match(p, {
-  uint256: (x) => wordOf(x.value), uint32: (x) => uint32Bytes(x.value), bool: (x) => Uint8Array.of(x.value ? 1 : 0), address: (x) => addressBytes(x.value), bytes32: (x) => bytes32(x.value), bytes: (x) => hexToBytes(x.value),
-})));
+export type Packed =
+  | Tagged<"uint256", { value: bigint }>
+  | Tagged<"uint32", { value: number }>
+  | Tagged<"bool", { value: boolean }>
+  | Tagged<"address" | "bytes32" | "bytes", { value: string }>;
+const packedBytes = (p: Packed): Uint8Array => match(p, {
+  uint256: (x) => wordOf(x.value),
+  uint32: (x) => uint32Bytes(x.value),
+  bool: (x) => Uint8Array.of(x.value ? 1 : 0),
+  address: (x) => addressBytes(x.value),
+  bytes32: (x) => bytes32(x.value),
+  bytes: (x) => hexToBytes(x.value),
+});
+export const encodePacked = (parts: readonly Packed[]): Uint8Array => concat(parts.map(packedBytes));
 
+/** A cursor at the head of a tuple. */
 export type AbiTuple = Brand<number, "AbiTuple">;
+/** A cursor at the length word of a dynamic array or byte string. */
 export type AbiLength = Brand<number, "AbiLength">;
 const T = (n: number): AbiTuple => n as AbiTuple, L = (n: number): AbiLength => n as AbiLength;
+const itemAt = (l: AbiLength, i: number): number => l + 32 + i * 32;
 export const abiRoot = (): AbiTuple => T(0);
 export const abiCursorOk = (h: AbiTuple): boolean => Number.isFinite(h) && h >= 0;
-export const abiTupleRef = (buf: Uint8Array, h: AbiTuple, slot: number): AbiTuple => T(h + Number(wordAt(buf, h + slot)));
-export const abiLengthRef = (buf: Uint8Array, h: AbiTuple, slot: number): AbiLength => L(h + Number(wordAt(buf, h + slot)));
+export const abiTupleRef = (buf: Uint8Array, h: AbiTuple, slot: number): AbiTuple =>
+  T(h + Number(wordAt(buf, h + slot)));
+export const abiLengthRef = (buf: Uint8Array, h: AbiTuple, slot: number): AbiLength =>
+  L(h + Number(wordAt(buf, h + slot)));
 export const abiWord = (buf: Uint8Array, h: AbiTuple, slot: number): bigint => wordAt(buf, h + slot);
-export const abiTupleBytes = (buf: Uint8Array, h: AbiTuple, slot: number): Uint8Array => buf.subarray(h + slot, h + slot + 32);
+export const abiTupleBytes = (buf: Uint8Array, h: AbiTuple, slot: number): Uint8Array =>
+  buf.subarray(h + slot, h + slot + 32);
 export const abiLengthWord = (buf: Uint8Array, l: AbiLength): bigint => wordAt(buf, l);
-export const abiBytes = (buf: Uint8Array, l: AbiLength): Uint8Array => buf.subarray(l + 32, l + 32 + Number(wordAt(buf, l)));
+export const abiBytes = (buf: Uint8Array, l: AbiLength): Uint8Array =>
+  buf.subarray(l + 32, l + 32 + Number(wordAt(buf, l)));
+/** Whether `count` items of `stride` bytes fit after the length word; none always fit. */
 export const abiFits = (buf: Uint8Array, l: AbiLength, count: bigint, stride: number): boolean => {
   if (!Number.isFinite(l) || l < 0) return false;
   const start = l + 32;
   return start > buf.length ? count === 0n : count * BigInt(stride) <= BigInt(buf.length - start);
 };
-export const abiBytesElement = (buf: Uint8Array, l: AbiLength, i: number): AbiLength => L(l + 32 + Number(wordAt(buf, l + 32 + i * 32)));
-export const abiTupleElement = (buf: Uint8Array, l: AbiLength, i: number): AbiTuple => T(l + 32 + Number(wordAt(buf, l + 32 + i * 32)));
-export const abiInlineTuple = (l: AbiLength, i: number, stride: number): AbiTuple => T(l + 32 + i * stride);
-export const abiStaticWord = (buf: Uint8Array, l: AbiLength, i: number): bigint => wordAt(buf, l + 32 + i * 32);
-export const abiStaticBytes = (buf: Uint8Array, l: AbiLength, i: number): Uint8Array => buf.subarray(l + 32 + i * 32, l + 64 + i * 32);
+export const abiBytesElement = (buf: Uint8Array, l: AbiLength, i: number): AbiLength =>
+  L(l + 32 + Number(wordAt(buf, itemAt(l, i))));
+export const abiTupleElement = (buf: Uint8Array, l: AbiLength, i: number): AbiTuple =>
+  T(l + 32 + Number(wordAt(buf, itemAt(l, i))));
+export const abiInlineTuple = (l: AbiLength, i: number, stride: number): AbiTuple =>
+  T(l + 32 + i * stride);
+export const abiStaticWord = (buf: Uint8Array, l: AbiLength, i: number): bigint =>
+  wordAt(buf, itemAt(l, i));
+export const abiStaticBytes = (buf: Uint8Array, l: AbiLength, i: number): Uint8Array =>
+  buf.subarray(itemAt(l, i), itemAt(l, i) + 32);
 
 
-export const signRaw = (h: Uint8Array, privateKey: Uint8Array): { readonly r: bigint; readonly s: bigint; readonly recovery: number; readonly publicKey: Uint8Array } => {
-  const s = secp256k1.sign(h, privateKey, { prehash: false, lowS: true });
-  return { r: s.r, s: s.s, recovery: s.recovery, publicKey: s.recoverPublicKey(h).toRawBytes(false) };
+// ---- signatures and identities ----
+
+export type RawSignature = {
+  readonly r: bigint;
+  readonly s: bigint;
+  readonly recovery: number;
+  readonly publicKey: Uint8Array;
 };
-export const recoverPublicKey = (h: Uint8Array, r: Uint8Array, s: Uint8Array, bit: number): Uint8Array | null => {
-
-  try { return secp256k1.Signature.fromCompact(concat([r, s])).addRecoveryBit(bit).recoverPublicKey(h).toRawBytes(false); } catch { return null; }
+export const signRaw = (h: Uint8Array, privateKey: Uint8Array): RawSignature => {
+  const s = secp256k1.sign(h, privateKey, { prehash: false, lowS: true });
+  const publicKey = s.recoverPublicKey(h).toRawBytes(false);
+  return { r: s.r, s: s.s, recovery: s.recovery, publicKey };
+};
+export const recoverPublicKey = (
+  h: Uint8Array, r: Uint8Array, s: Uint8Array, bit: number,
+): Uint8Array | null => {
+  try {
+    const signature = secp256k1.Signature.fromCompact(concat([r, s])).addRecoveryBit(bit);
+    return signature.recoverPublicKey(h).toRawBytes(false);
+  } catch {
+    return null;
+  }
 };
 export type EntityId = Brand<string, "EntityId">;
 export type TokenId = Brand<string, "TokenId">;
@@ -266,188 +523,396 @@ export type RuntimeFrameHash = Brand<Hash, "RuntimeFrameHash">;
 export type EntityStateHash = Brand<Hash, "EntityStateHash">;
 export type EntityFrameHash = Brand<Hash, "EntityFrameHash">;
 export type AccountId = Brand<{ readonly left: EntityId; readonly right: EntityId }, "AccountId">;
-const branded = <T extends string, E extends string>(s: string, e: E): Result<T, E> => (s.length === 0 || /[|;=,]/.test(s) ? err(e) : ok(s as T));
-export const entityId = (s: string): Result<EntityId, "invalid_entity_id"> => branded(s, "invalid_entity_id");
-export const address = (s: string): Result<Address, "invalid_address"> => branded(s, "invalid_address");
-export const tokenId = (s: unknown): Result<TokenId, "invalid_token_id"> => (typeof s === "string" && /^(0|[1-9][0-9]{0,4})$/.test(s) && Number(s) <= 65_535 ? ok(s as TokenId) : err("invalid_token_id"));
-export const hash = (s: string): Result<Hash, "invalid_hash"> => (/^[0-9a-f]{64}$/.test(s) ? ok(s as Hash) : err("invalid_hash"));
-export const signature = (s: string): Result<Signature, "invalid_signature"> => (/^[0-9a-f]+$/.test(s) && s.length >= 2 && s.length % 2 === 0 && !/^0+$/.test(s) ? ok(s as Signature) : err("invalid_signature"));
+/** Separator characters are refused because ids are joined into composite keys. */
+const branded = <T extends string, E extends string>(s: string, e: E): Result<T, E> =>
+  (s.length === 0 || /[|;=,]/.test(s) ? err(e) : ok(s as T));
+export const entityId = (s: string): Result<EntityId, "invalid_entity_id"> =>
+  branded(s, "invalid_entity_id");
+export const address = (s: string): Result<Address, "invalid_address"> =>
+  branded(s, "invalid_address");
+export const tokenId = (s: unknown): Result<TokenId, "invalid_token_id"> => {
+  const isUint16Text = typeof s === "string" && /^(0|[1-9][0-9]{0,4})$/.test(s) && Number(s) <= 65_535;
+  return isUint16Text ? ok(s as TokenId) : err("invalid_token_id");
+};
+export const hash = (s: string): Result<Hash, "invalid_hash"> =>
+  (/^[0-9a-f]{64}$/.test(s) ? ok(s as Hash) : err("invalid_hash"));
+export const signature = (s: string): Result<Signature, "invalid_signature"> => {
+  const evenHex = /^[0-9a-f]+$/.test(s) && s.length >= 2 && s.length % 2 === 0;
+  return evenHex && !/^0+$/.test(s) ? ok(s as Signature) : err("invalid_signature");
+};
 export const ZERO_HASH = "0".repeat(64) as Hash;
 export const ZERO_WORD = `0x${ZERO_HASH}`;
 export const WORD = /^0x[0-9a-fA-F]{64}$/;
 export const keccakUtf8 = (s: string): Hash => nobleHex(keccak_256(utf8(s))) as Hash;
-export const sameHex = (a: string | undefined, b: string | undefined): boolean => a !== undefined && b !== undefined && a.toLowerCase() === b.toLowerCase();
+export const sameHex = (a: string | undefined, b: string | undefined): boolean =>
+  a !== undefined && b !== undefined && a.toLowerCase() === b.toLowerCase();
 /** Lowercase, and pad a short hex word to 32 bytes. Equal-length hex then compares as an integer. */
 const normalizeId = (id: string): string => {
   const raw = id.toLowerCase();
-  if (!raw.startsWith("0x")) return raw;
   const hex = raw.slice(2);
-  if (!/^[0-9a-f]*$/.test(hex) || hex.length >= 64) return raw;
-  return `0x${hex.padStart(64, "0")}`;
+  const shortHexWord = raw.startsWith("0x") && /^[0-9a-f]*$/.test(hex) && hex.length < 64;
+  return shortHexWord ? `0x${hex.padStart(64, "0")}` : raw;
 };
 const before = (a: string, b: string): boolean => normalizeId(a) < normalizeId(b);
 const sameId = (a: string, b: string): boolean => normalizeId(a) === normalizeId(b);
-export const accountId = (a: EntityId, b: EntityId): Result<AccountId, Tagged<"same_entity">> =>
-  sameId(a, b) ? err({ _tag: "same_entity" }) : ok((before(a, b) ? { left: a, right: b } : { left: b, right: a }) as AccountId);
+/** The lower id is always the left side, so both parties name the Account the same way. */
+export const accountId = (a: EntityId, b: EntityId): Result<AccountId, Tagged<"same_entity">> => {
+  if (sameId(a, b)) return err({ _tag: "same_entity" });
+  const sides = before(a, b) ? { left: a, right: b } : { left: b, right: a };
+  return ok(sides as AccountId);
+};
 export const isLeft = (party: EntityId, id: AccountId): boolean => party === id.left;
 export const at = <T>(left: T, right: T, onLeft: boolean): T => (onLeft ? left : right);
 export const other = (onLeft: boolean): boolean => !onLeft;
 export type Party = { readonly self: EntityId; readonly peer: EntityId; readonly left: boolean };
-export const counterpartyOf = (id: AccountId, self: EntityId): EntityId | undefined => (self === id.left ? id.right : self === id.right ? id.left : undefined);
-export const partyOf = (id: AccountId, self: EntityId): Result<Party, Tagged<"unknown_signer", { entity: EntityId }>> => {
-  const peer = counterpartyOf(id, self);
-  return peer === undefined ? err({ _tag: "unknown_signer", entity: self }) : ok({ self, peer, left: isLeft(self, id) });
+export const counterpartyOf = (id: AccountId, self: EntityId): EntityId | undefined => {
+  switch (self) {
+    case id.left: return id.right;
+    case id.right: return id.left;
+    default: return undefined;
+  }
 };
-export const proposerIsLeft = (held: { readonly _tag: "proposed" | "received" }, party: Party): boolean => matchBy("_tag", held, { proposed: () => party.left, received: () => other(party.left) });
+export const partyOf = (
+  id: AccountId, self: EntityId,
+): Result<Party, Tagged<"unknown_signer", { entity: EntityId }>> => {
+  const peer = counterpartyOf(id, self);
+  if (peer === undefined) return err({ _tag: "unknown_signer", entity: self });
+  return ok({ self, peer, left: isLeft(self, id) });
+};
+/** Whoever holds a proposed frame proposed it; whoever holds a received frame did not. */
+export const proposerIsLeft = (
+  held: { readonly _tag: "proposed" | "received" }, party: Party,
+): boolean => (held._tag === "proposed" ? party.left : other(party.left));
 
+
+// ---- canonical value encoding: RLP over typed nodes, and the flat integrity digest ----
 
 export type CanonicalValueError = Tagged<"non_finite_number" | "unsupported_type" | "invalid_utf8">;
 type Rlp = Uint8Array | readonly Rlp[];
-const magnitude = (v: bigint): Uint8Array => { const h = v.toString(16); return hexToBytes(h.length % 2 === 0 ? h : `0${h}`); };
+const magnitude = (v: bigint): Uint8Array => {
+  const h = v.toString(16);
+  return hexToBytes(h.length % 2 === 0 ? h : `0${h}`);
+};
+/** RLP's three spellings: a lone low byte is itself, a short body gets one prefix, a long one its length. */
 const payload = (body: Uint8Array, list: boolean): Uint8Array => {
-  if (!list && body.length === 1 && (body[0] ?? 0x80) < 0x80) return body;
+  const loneLowByte = !list && body.length === 1 && (body[0] ?? 0x80) < 0x80;
+  if (loneLowByte) return body;
   if (body.length <= 55) return concat([Uint8Array.of((list ? 0xc0 : 0x80) + body.length), body]);
   const size = magnitude(BigInt(body.length));
   return concat([Uint8Array.of((list ? 0xf7 : 0xb7) + size.length), size, body]);
 };
-const rlp = (n: Rlp): Uint8Array => (n instanceof Uint8Array ? payload(n, false) : payload(concat(n.map(rlp)), true));
+const rlp = (n: Rlp): Uint8Array =>
+  (n instanceof Uint8Array ? payload(n, false) : payload(concat(n.map(rlp)), true));
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const text = (v: string): Result<Uint8Array, CanonicalValueError> =>
-  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(v) ? err({ _tag: "invalid_utf8" }) : ok(utf8(v));
-const cnode = (v: unknown): Result<Rlp, CanonicalValueError> => {
-  if (v === null) return ok([utf8("null")]);
-  if (typeof v === "boolean") return ok([utf8("bool"), Uint8Array.of(v ? 1 : 0)]);
-  if (typeof v === "number") return Number.isFinite(v) ? ok([utf8("number"), utf8(String(v))]) : err({ _tag: "non_finite_number" });
-  if (typeof v === "bigint") return ok([utf8("bigint"), Uint8Array.of(v < 0n ? 1 : 0), magnitude(v < 0n ? -v : v)]);
-  if (typeof v === "string") return map(text(v), (b) => [utf8("string"), b]);
-  if (Array.isArray(v)) return map(traverse(v, cnode), (ns) => [utf8("array"), ...ns]);
-  if (v instanceof Map) return map(traverse(v, ([k, x]) => traverse([k, x], cnode)), (rows) => [utf8("map"), ...sortedBy(rows, (r) => bytesToHex(rlp(r[0] ?? [])))]);
-  if (v instanceof Set) return map(traverse(v, cnode), (ns) => [utf8("set"), ...sortedBy(ns, (n) => bytesToHex(rlp(n)))]);
-  if (typeof v === "object") {
-    const r = v as Record<string, unknown>;
-    return map(traverse(Object.keys(r).sort(asc).filter((k) => r[k] !== undefined), (k) => chain(text(k), (name) => map(cnode(r[k]), (n): Rlp => [name, n]))), (rows) => [utf8("object"), ...rows]);
-  }
-  return err({ _tag: "unsupported_type" });
+  (LONE_SURROGATE.test(v) ? err({ _tag: "invalid_utf8" }) : ok(utf8(v)));
+const labelled = (label: string, ...rest: readonly Rlp[]): Rlp => [utf8(label), ...rest];
+const numberNode = (v: number): Result<Rlp, CanonicalValueError> =>
+  (Number.isFinite(v) ? ok(labelled("number", utf8(String(v)))) : err({ _tag: "non_finite_number" }));
+const bigintNode = (v: bigint): Rlp =>
+  labelled("bigint", Uint8Array.of(v < 0n ? 1 : 0), magnitude(v < 0n ? -v : v));
+const mapNode = (m: ReadonlyMap<unknown, unknown>): Result<Rlp, CanonicalValueError> => {
+  const rows = traverse(m, ([k, v]) => traverse([k, v], cnode));
+  const byKey = (row: readonly Rlp[]): string => bytesToHex(rlp(row[0] ?? []));
+  return map(rows, (rs) => labelled("map", ...sortedBy(rs, byKey)));
 };
-export const encodeCanonicalValue = (v: unknown): Result<Uint8Array, CanonicalValueError> => map(cnode(v), rlp);
-/** His flat integrity digest (state-root.ts:133-161): the frame hash and the state commitment are both this, under two namespaces. */
-export const flatDigest = (namespace: string, sections: readonly (readonly [string, unknown])[]): Result<string, CanonicalValueError> =>
-  map(traverse(sections, ([path, value]) => map(encodeCanonicalValue(value), (enc) => { const key = sha256(utf8(`xln.${namespace}.${path}`)); return { key, hex: bytesToHex(key), digest: sha256(enc) }; })),
-    (leaves) => bytesToHex(sha256(concat([utf8("xln.flat-digest.v1"), ...sortedBy(leaves, (l) => l.hex).flatMap((l) => [l.key, l.digest])]))));
+const setNode = (s: ReadonlySet<unknown>): Result<Rlp, CanonicalValueError> =>
+  map(traverse(s, cnode), (ns) => labelled("set", ...sortedBy(ns, (n) => bytesToHex(rlp(n)))));
+const objectNode = (o: Record<string, unknown>): Result<Rlp, CanonicalValueError> => {
+  const keys = Object.keys(o).toSorted(asc).filter((k) => o[k] !== undefined);
+  const field = (k: string) => chain(text(k), (name) => map(cnode(o[k]), (n): Rlp => [name, n]));
+  return map(traverse(keys, field), (fields) => labelled("object", ...fields));
+};
+const cnode = (v: unknown): Result<Rlp, CanonicalValueError> => {
+  switch (true) {
+    case v === null: return ok(labelled("null"));
+    case typeof v === "boolean": return ok(labelled("bool", Uint8Array.of(v ? 1 : 0)));
+    case typeof v === "number": return numberNode(v);
+    case typeof v === "bigint": return ok(bigintNode(v));
+    case typeof v === "string": return map(text(v), (b) => labelled("string", b));
+    case Array.isArray(v): return map(traverse(v, cnode), (ns) => labelled("array", ...ns));
+    case v instanceof Map: return mapNode(v);
+    case v instanceof Set: return setNode(v);
+    case typeof v === "object": return objectNode(v as Record<string, unknown>);
+    default: return err({ _tag: "unsupported_type" });
+  }
+};
+export const encodeCanonicalValue = (v: unknown): Result<Uint8Array, CanonicalValueError> =>
+  map(cnode(v), rlp);
+/** og state-root.ts:133-161: the frame hash and the state commitment both use this, under two namespaces. */
+export const flatDigest = (
+  namespace: string, sections: readonly (readonly [string, unknown])[],
+): Result<string, CanonicalValueError> => {
+  const leafOf = ([path, value]: readonly [string, unknown]) => map(encodeCanonicalValue(value), (enc) => {
+    const key = sha256(utf8(`xln.${namespace}.${path}`));
+    return { key, hex: bytesToHex(key), digest: sha256(enc) };
+  });
+  return map(traverse(sections, leafOf), (leaves) => {
+    const ordered = sortedBy(leaves, (l) => l.hex).flatMap((l) => [l.key, l.digest]);
+    return bytesToHex(sha256(concat([utf8("xln.flat-digest.v1"), ...ordered])));
+  });
+};
 
 
-export type CommittedDelta = { readonly tokenId: number; readonly collateral: bigint; readonly ondelta: bigint; readonly offdelta: bigint; readonly leftCreditLimit: bigint; readonly rightCreditLimit: bigint; readonly leftAllowance: bigint; readonly rightAllowance: bigint; readonly leftHold: bigint; readonly rightHold: bigint };
+// ---- the committed Account state and its commitment root ----
+
+export type CommittedDelta = {
+  readonly tokenId: number;
+  readonly collateral: bigint;
+  readonly ondelta: bigint;
+  readonly offdelta: bigint;
+  readonly leftCreditLimit: bigint;
+  readonly rightCreditLimit: bigint;
+  readonly leftAllowance: bigint;
+  readonly rightAllowance: bigint;
+  readonly leftHold: bigint;
+  readonly rightHold: bigint;
+};
 export type JClaimAccumulator = { readonly version: 1; readonly root: string; readonly count: bigint };
 export type CommittedMap = ReadonlyMap<number | string, unknown>;
 export type Domain = { readonly chainId: number; readonly depositoryAddress: string };
-export type DisputeConfig = { readonly leftResponseSeconds: number; readonly rightResponseSeconds: number };
+export type DisputeConfig = {
+  readonly leftResponseSeconds: number;
+  readonly rightResponseSeconds: number;
+};
 export type CommittedAccountState = {
-  readonly domain: Domain; readonly leftEntity: string; readonly rightEntity: string; readonly watchSeed: string; readonly disputeConfig: DisputeConfig;
-  readonly jNonce: number; readonly lastFinalizedJHeight: number; readonly leftPendingJClaims: JClaimAccumulator; readonly rightPendingJClaims: JClaimAccumulator;
-  readonly deltas: ReadonlyMap<number, CommittedDelta>; readonly locks: CommittedMap; readonly pulls: CommittedMap; readonly swapOffers: CommittedMap; readonly subcontracts: CommittedMap;
-  readonly lendingIntents: CommittedMap; readonly requestedRebalance: CommittedMap; readonly requestedRebalanceFeeState: CommittedMap; readonly rebalanceFeePolicies: CommittedMap;
+  readonly domain: Domain;
+  readonly leftEntity: string;
+  readonly rightEntity: string;
+  readonly watchSeed: string;
+  readonly disputeConfig: DisputeConfig;
+  readonly jNonce: number;
+  readonly lastFinalizedJHeight: number;
+  readonly leftPendingJClaims: JClaimAccumulator;
+  readonly rightPendingJClaims: JClaimAccumulator;
+  readonly deltas: ReadonlyMap<number, CommittedDelta>;
+  readonly locks: CommittedMap;
+  readonly pulls: CommittedMap;
+  readonly swapOffers: CommittedMap;
+  readonly subcontracts: CommittedMap;
+  readonly lendingIntents: CommittedMap;
+  readonly requestedRebalance: CommittedMap;
+  readonly requestedRebalanceFeeState: CommittedMap;
+  readonly rebalanceFeePolicies: CommittedMap;
   readonly settlementWorkspace?: SettlementWorkspace | undefined;
 };
-export type CommitmentError = CanonicalValueError | Tagged<"bad_domain" | "bad_j_claims" | "bad_key" | "key_prefix_collision" | "nested_collection" | "leaf_too_large">;
+export type CommitmentError =
+  | CanonicalValueError
+  | Tagged<"bad_domain" | "bad_j_claims" | "bad_key" | "key_prefix_collision">
+  | Tagged<"nested_collection" | "leaf_too_large">;
 const u16 = (n: number): Uint8Array => Uint8Array.of((n >> 8) & 0xff, n & 0xff);
 const prefixed = (t: string): Uint8Array => concat([u16(utf8(t).length), utf8(t)]);
-const LEAF = prefixed("xln.storage.merkle.leaf.v1"), BRANCH = prefixed("xln.storage.merkle.branch.v1"), EXTENSION = prefixed("xln.storage.merkle.extension.v1"), RADIX_16 = Uint8Array.of(0x10);
+const LEAF = prefixed("xln.storage.merkle.leaf.v1");
+const BRANCH = prefixed("xln.storage.merkle.branch.v1");
+const EXTENSION = prefixed("xln.storage.merkle.extension.v1");
+const RADIX_16 = Uint8Array.of(0x10);
 export const EMPTY_J_ROOT = bytesToHex(keccak256(utf8("xln.account-j-claim.empty.v1")));
 const keyBytes = (key: number | string): Result<Uint8Array, CommitmentError> => {
-  if (typeof key === "number") return Number.isSafeInteger(key) && key >= 0 ? ok(wordOf(BigInt(key))) : err({ _tag: "bad_key" });
+  if (typeof key === "number") {
+    return Number.isSafeInteger(key) && key >= 0 ? ok(wordOf(BigInt(key))) : err({ _tag: "bad_key" });
+  }
   const body = utf8(key);
   return body.length > 0xffff ? err({ _tag: "bad_key" }) : ok(concat([u16(body.length), body]));
 };
 export type PreparedLeaf = { readonly key: Uint8Array; readonly value: Uint8Array };
 type Leaf = { readonly nibbles: readonly number[]; readonly key: Uint8Array; readonly digest: Uint8Array };
-type MNode = Tagged<"leaf", { leaf: Leaf }> | Tagged<"branch", { path: readonly number[]; children: ReadonlyMap<number, MNode> }>;
+/** A radix-16 trie: a branch's path is the nibbles every leaf under it shares. */
+type MNode =
+  | Tagged<"leaf", { leaf: Leaf }>
+  | Tagged<"branch", { path: readonly number[]; children: ReadonlyMap<number, MNode> }>;
 const nibblesOf = (b: Uint8Array): number[] => [...b].flatMap((x) => [x >> 4, x & 0x0f]);
+/** The first depth from `depth` on where the leaves disagree. */
+const splitDepth = (leaves: readonly Leaf[], first: Leaf, depth: number): number => {
+  const agreeAt = (d: number): boolean => leaves.every((l) => l.nibbles[d] === first.nibbles[d]);
+  const offset = first.nibbles.slice(depth).findIndex((_, i) => !agreeAt(depth + i));
+  return offset === -1 ? first.nibbles.length : depth + offset;
+};
 const build = (leaves: readonly Leaf[], depth: number): MNode => {
   const [first] = leaves;
   if (first === undefined) throw new Error("unreachable: build is called with at least one leaf");
   if (leaves.length === 1) return { _tag: "leaf", leaf: first };
-  let common = depth;
-  while (leaves.every((l) => l.nibbles[common] === first.nibbles[common])) common++;
-  const groups = new Map<number, Leaf[]>();
-  for (const l of leaves) { const slot = l.nibbles[common] ?? 0; groups.set(slot, [...(groups.get(slot) ?? []), l]); }
-  return { _tag: "branch", path: first.nibbles.slice(0, common), children: new Map([...groups].map(([slot, g]) => [slot, build(g, common + 1)])) };
+  const split = splitDepth(leaves, first, depth);
+  const slotOf = (l: Leaf): number => l.nibbles[split] ?? 0;
+  const slots = [...new Set(leaves.map(slotOf))];
+  const childAt = (slot: number) => build(leaves.filter((l) => slotOf(l) === slot), split + 1);
+  const children = new Map(slots.map((slot) => [slot, childAt(slot)] as const));
+  return { _tag: "branch", path: first.nibbles.slice(0, split), children };
 };
-const pack = (ns: readonly number[]): Uint8Array => { const out = new Uint8Array(Math.ceil(ns.length / 2)); ns.forEach((n, i) => { out[i >> 1] = (out[i >> 1] ?? 0) | (i % 2 === 0 ? n << 4 : n); }); return out; };
+const pack = (ns: readonly number[]): Uint8Array =>
+  Uint8Array.from({ length: Math.ceil(ns.length / 2) }, (_, i) => ((ns[2 * i] ?? 0) << 4) | (ns[2 * i + 1] ?? 0));
 const nodeHash = (node: MNode): Uint8Array => match(node, {
   leaf: ({ leaf }) => sha256(concat([LEAF, leaf.key, leaf.digest])),
-  branch: (b) => sha256(concat([BRANCH, RADIX_16, ...[...b.children].sort(([x], [y]) => x - y).flatMap(([slot, child]) => [Uint8Array.of(slot), edgeHash(b.path, child)])])),
+  branch: (b) => {
+    const bySlot = [...b.children].toSorted(([x], [y]) => x - y);
+    const edges = bySlot.flatMap(([slot, child]) => [Uint8Array.of(slot), edgeHash(b.path, child)]);
+    return sha256(concat([BRANCH, RADIX_16, ...edges]));
+  },
 });
-const edgeHash = (parentPath: readonly number[], child: MNode): Uint8Array => match(child, {
-  leaf: () => nodeHash(child),
-  branch: (b) => { const gap = b.path.slice(parentPath.length + 1); return gap.length === 0 ? nodeHash(child) : sha256(concat([EXTENSION, RADIX_16, u16(gap.length), pack(gap), nodeHash(child)])); },
-});
-const holdsCollection = (v: unknown): boolean =>
-  v instanceof Map || v instanceof Set || (Array.isArray(v) ? v.some(holdsCollection) : v !== null && typeof v === "object" && Object.values(v).some(holdsCollection));
-const isPrefix = (short: Uint8Array, long: Uint8Array): boolean => short.length <= long.length && short.every((b, i) => b === long[i]);
+/** An edge that skips nibbles is an extension node over the child. */
+const edgeHash = (parentPath: readonly number[], child: MNode): Uint8Array => {
+  if (child._tag === "leaf") return nodeHash(child);
+  const gap = child.path.slice(parentPath.length + 1);
+  if (gap.length === 0) return nodeHash(child);
+  return sha256(concat([EXTENSION, RADIX_16, u16(gap.length), pack(gap), nodeHash(child)]));
+};
+const holdsCollection = (v: unknown): boolean => {
+  switch (true) {
+    case v instanceof Map || v instanceof Set: return true;
+    case Array.isArray(v): return v.some(holdsCollection);
+    case v !== null && typeof v === "object": return Object.values(v).some(holdsCollection);
+    default: return false;
+  }
+};
+const isPrefix = (short: Uint8Array, long: Uint8Array): boolean =>
+  short.length <= long.length && short.every((b, i) => b === long[i]);
 const MAX_LEAF_BYTES = 10_000;
+/** A leaf holds one flat value; a collection inside it would escape the trie's per-key proofs. */
 export const prepareLeaf = (key: number | string, value: unknown): Result<PreparedLeaf, CommitmentError> =>
-  chain(keyBytes(key), (k): Result<PreparedLeaf, CommitmentError> => holdsCollection(value) ? err({ _tag: "nested_collection" }) : chain(encodeCanonicalValue(value), (v): Result<PreparedLeaf, CommitmentError> => v.length > MAX_LEAF_BYTES ? err({ _tag: "leaf_too_large" }) : ok({ key: k, value: v })));
-export type PreparedMap = readonly PreparedLeaf[];
-export const prepareMap = (m: CommittedMap): Result<PreparedMap, CommitmentError> =>
-  chain(traverse(m, ([k, v]) => prepareLeaf(k, v)), (ls) => {
-    const leaves = sortedBy([...new Map(ls.map((l) => [nobleHex(l.key), l])).values()], (l) => nobleHex(l.key));
-
-    return leaves.some((cur, i) => i > 0 && isPrefix(leaves[i - 1]?.key ?? cur.key, cur.key)) ? err({ _tag: "key_prefix_collision" }) : ok(leaves);
+  chain(keyBytes(key), (k): Result<PreparedLeaf, CommitmentError> => {
+    if (holdsCollection(value)) return err({ _tag: "nested_collection" });
+    return chain(encodeCanonicalValue(value), (v): Result<PreparedLeaf, CommitmentError> =>
+      (v.length > MAX_LEAF_BYTES ? err({ _tag: "leaf_too_large" }) : ok({ key: k, value: v })));
   });
+export type PreparedMap = readonly PreparedLeaf[];
+/** Keys are sorted, so a key that prefixes another sits right before it. */
+export const prepareMap = (m: CommittedMap): Result<PreparedMap, CommitmentError> =>
+  chain(traverse(m, ([k, v]) => prepareLeaf(k, v)), (prepared) => {
+    const unique = [...new Map(prepared.map((l) => [nobleHex(l.key), l])).values()];
+    const leaves = sortedBy(unique, (l) => nobleHex(l.key));
+    const prefixesNext = (cur: PreparedLeaf, i: number): boolean =>
+      i > 0 && isPrefix(leaves[i - 1]?.key ?? cur.key, cur.key);
+    return leaves.some(prefixesNext) ? err({ _tag: "key_prefix_collision" }) : ok(leaves);
+  });
+/** The root is always a branch: a lone leaf or a pathed branch is lifted under its first nibble. */
 const sealRadix = (leaves: readonly Leaf[]): string => {
   if (leaves.length === 0) return ZERO_WORD;
   const top = build(leaves, 0);
   const lift = (slot: number): MNode => ({ _tag: "branch", path: [], children: new Map([[slot, top]]) });
-  return bytesToHex(nodeHash(match(top, { leaf: ({ leaf }) => lift(leaf.nibbles[0] ?? 0), branch: (b) => (b.path.length === 0 ? top : lift(b.path[0] ?? 0)) })));
+  const root = match<MNode, MNode>(top, {
+    leaf: ({ leaf }) => lift(leaf.nibbles[0] ?? 0),
+    branch: (b) => (b.path.length === 0 ? top : lift(b.path[0] ?? 0)),
+  });
+  return bytesToHex(nodeHash(root));
 };
-const preparedMapRoot = (m: PreparedMap): string => sealRadix(m.map((leaf) => ({ nibbles: nibblesOf(leaf.key), key: leaf.key, digest: sha256(leaf.value) })));
-export const mapRoot = (m: CommittedMap): Result<string, CommitmentError> => map(prepareMap(m), preparedMapRoot);
+const preparedMapRoot = (m: PreparedMap): string =>
+  sealRadix(m.map((leaf) => ({ nibbles: nibblesOf(leaf.key), key: leaf.key, digest: sha256(leaf.value) })));
+export const mapRoot = (m: CommittedMap): Result<string, CommitmentError> =>
+  map(prepareMap(m), preparedMapRoot);
+/** A mixed-case address must carry its EIP-55 checksum; the committed spelling is lowercase. */
 export const domainOf = (d: Domain): Result<Domain, CommitmentError> => {
   const { chainId, depositoryAddress: a } = d;
-  if (!Number.isSafeInteger(chainId) || chainId <= 0 || !/^0x[0-9a-fA-F]{40}$/.test(a)) return err({ _tag: "bad_domain" });
+  const shaped = Number.isSafeInteger(chainId) && chainId > 0 && /^0x[0-9a-fA-F]{40}$/.test(a);
+  if (!shaped) return err({ _tag: "bad_domain" });
   const body = a.slice(2);
-  if (/[a-f]/.test(body) && /[A-F]/.test(body) && checksum(a) !== a) return err({ _tag: "bad_domain" });
+  const mixedCase = /[a-f]/.test(body) && /[A-F]/.test(body);
+  if (mixedCase && checksum(a) !== a) return err({ _tag: "bad_domain" });
   return ok({ chainId, depositoryAddress: `0x${body.toLowerCase()}` });
 };
+/** An accumulator is empty exactly when its root is the empty root. */
 const jClaims = (c: JClaimAccumulator): Result<JClaimAccumulator, CommitmentError> => {
   const root = c.root.trim().toLowerCase();
-  const shaped = /^0x[0-9a-f]{64}$/.test(root) && c.count >= 0n && c.count < 1n << 64n && (root === EMPTY_J_ROOT) === (c.count === 0n);
+  const countFits = c.count >= 0n && c.count < 1n << 64n;
+  const emptyAgrees = (root === EMPTY_J_ROOT) === (c.count === 0n);
+  const shaped = /^0x[0-9a-f]{64}$/.test(root) && countFits && emptyAgrees;
   return shaped ? ok({ version: 1, root, count: c.count }) : err({ _tag: "bad_j_claims" });
 };
-const MAP_NAMES = ["deltas", "locks", "pulls", "swapOffers", "subcontracts", "lendingIntents", "requestedRebalance", "requestedRebalanceFeeState", "rebalanceFeePolicies"] as const;
+const MAP_NAMES = [
+  "deltas", "locks", "pulls", "swapOffers", "subcontracts", "lendingIntents",
+  "requestedRebalance", "requestedRebalanceFeeState", "rebalanceFeePolicies",
+] as const;
 type MapName = (typeof MAP_NAMES)[number];
-export type PreparedCommitment = { readonly state: CommittedAccountState; readonly domain: Domain; readonly left: JClaimAccumulator; readonly right: JClaimAccumulator; readonly maps: { readonly [K in MapName]: PreparedMap } };
-export const prepareState = (state: CommittedAccountState): Result<PreparedCommitment, CommitmentError> =>
-  map(all({ domain: domainOf(state.domain), left: jClaims(state.leftPendingJClaims), right: jClaims(state.rightPendingJClaims), ...Object.fromEntries(MAP_NAMES.map((n) => [n, prepareMap(state[n])])) as { [K in MapName]: Result<PreparedMap, CommitmentError> } }),
-    ({ domain, left, right, ...maps }) => ({ state, domain, left, right, maps }));
-export const preparedRoot = ({ state, domain, left, right, maps }: PreparedCommitment): Result<string, CommitmentError> => {
+export type PreparedCommitment = {
+  readonly state: CommittedAccountState;
+  readonly domain: Domain;
+  readonly left: JClaimAccumulator;
+  readonly right: JClaimAccumulator;
+  readonly maps: { readonly [K in MapName]: PreparedMap };
+};
+export const prepareState = (
+  state: CommittedAccountState,
+): Result<PreparedCommitment, CommitmentError> => {
+  type PreparedMaps = { [K in MapName]: Result<PreparedMap, CommitmentError> };
+  const maps = Object.fromEntries(MAP_NAMES.map((n) => [n, prepareMap(state[n])])) as PreparedMaps;
+  const domain = domainOf(state.domain);
+  const left = jClaims(state.leftPendingJClaims);
+  const right = jClaims(state.rightPendingJClaims);
+  return map(all({ domain, left, right, ...maps }), ({ domain, left, right, ...maps }) =>
+    ({ state, domain, left, right, maps }));
+};
+export const preparedRoot = (prepared: PreparedCommitment): Result<string, CommitmentError> => {
+  const { state, domain, left, right, maps } = prepared;
   const root = (n: MapName): string => preparedMapRoot(maps[n]);
+  const identity = {
+    chainId: domain.chainId,
+    depositoryAddress: domain.depositoryAddress,
+    leftEntity: state.leftEntity.toLowerCase(),
+    rightEntity: state.rightEntity.toLowerCase(),
+    watchSeed: state.watchSeed.toLowerCase(),
+  };
+  const financial = { deltasRoot: root("deltas"), jNonce: state.jNonce, disputeConfig: state.disputeConfig };
+  const commitments = {
+    locksRoot: root("locks"),
+    pullsRoot: root("pulls"),
+    swapOffersRoot: root("swapOffers"),
+    subcontractsRoot: root("subcontracts"),
+    lendingIntentsRoot: root("lendingIntents"),
+    settlementWorkspace: workspaceWithoutHankos(state.settlementWorkspace),
+  };
+  const jurisdiction = {
+    lastFinalizedJHeight: state.lastFinalizedJHeight,
+    leftPendingJClaims: left,
+    rightPendingJClaims: right,
+  };
+  const rebalance = {
+    requestedRebalanceRoot: root("requestedRebalance"),
+    requestedRebalanceFeeStateRoot: root("requestedRebalanceFeeState"),
+    rebalanceFeePoliciesRoot: root("rebalanceFeePolicies"),
+  };
   return flatDigest("account.state", [
-    ["identity", { chainId: domain.chainId, depositoryAddress: domain.depositoryAddress, leftEntity: state.leftEntity.toLowerCase(), rightEntity: state.rightEntity.toLowerCase(), watchSeed: state.watchSeed.toLowerCase() }],
-    ["financial", { deltasRoot: root("deltas"), jNonce: state.jNonce, disputeConfig: state.disputeConfig }],
-    ["commitments", { locksRoot: root("locks"), pullsRoot: root("pulls"), swapOffersRoot: root("swapOffers"), subcontractsRoot: root("subcontracts"), lendingIntentsRoot: root("lendingIntents"), settlementWorkspace: workspaceWithoutHankos(state.settlementWorkspace) }],
-    ["jurisdiction", { lastFinalizedJHeight: state.lastFinalizedJHeight, leftPendingJClaims: left, rightPendingJClaims: right }],
-    ["rebalance", { requestedRebalanceRoot: root("requestedRebalance"), requestedRebalanceFeeStateRoot: root("requestedRebalanceFeeState"), rebalanceFeePoliciesRoot: root("rebalanceFeePolicies") }],
+    ["identity", identity],
+    ["financial", financial],
+    ["commitments", commitments],
+    ["jurisdiction", jurisdiction],
+    ["rebalance", rebalance],
   ]);
 };
+/** Structural equality over plain data; collections compare by identity only. */
 const sameValue = (a: unknown, b: unknown): boolean => {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  if (a instanceof Map || a instanceof Set || b instanceof Map || b instanceof Set || Array.isArray(a) !== Array.isArray(b)) return false;
+  const collection = a instanceof Map || a instanceof Set || b instanceof Map || b instanceof Set;
+  if (collection || Array.isArray(a) !== Array.isArray(b)) return false;
   const ka = Object.keys(a), kb = Object.keys(b);
-  return ka.length === kb.length && ka.every((k) => Object.hasOwn(b, k) && sameValue(Reflect.get(a, k), Reflect.get(b, k)));
+  const sameField = (k: string): boolean => Object.hasOwn(b, k) && sameValue(Reflect.get(a, k), Reflect.get(b, k));
+  return ka.length === kb.length && ka.every(sameField);
 };
 const oneKeyKind = (m: CommittedMap): boolean => new Set([...m.keys()].map((k) => typeof k)).size <= 1;
+/**
+ * Only changed leaves are re-prepared. Number keys are fixed 32-byte words and string keys carry their
+ * length, so keys of one kind never prefix each other; only a new key in a mixed map can collide.
+ */
 const prepareMapChanges = (before: CommittedMap, after: CommittedMap): Result<void, CommitmentError> => {
   if (before === after) return ok(undefined);
-  const changed = [...after].filter(([k, v]) => { const was = before.get(k); return was === undefined || !sameValue(was, v); });
-  return chain(traverse(changed, ([k, v]) => prepareLeaf(k, v)), () => (changed.every(([k]) => before.has(k)) || oneKeyKind(after) ? ok(undefined) : map(prepareMap(after), () => undefined)));
+  const changed = [...after].filter(([k, v]) => {
+    const was = before.get(k);
+    return was === undefined || !sameValue(was, v);
+  });
+  const onlyOldKeys = changed.every(([k]) => before.has(k));
+  return chain(traverse(changed, ([k, v]) => prepareLeaf(k, v)), () =>
+    (onlyOldKeys || oneKeyKind(after) ? ok(undefined) : map(prepareMap(after), () => undefined)));
 };
-export const prepareChanges = (before: CommittedAccountState, after: CommittedAccountState): Result<void, CommitmentError> => checks(
-  sameValue(before.domain, after.domain) ? ok(undefined) : domainOf(after.domain),
-  ...(["leftPendingJClaims", "rightPendingJClaims"] as const).map((side) => (sameValue(before[side], after[side]) ? ok(undefined) : jClaims(after[side]))),
-  ...MAP_NAMES.map((n) => prepareMapChanges(before[n], after[n])),
-);
-export const accountStateCommitment = (state: CommittedAccountState): Result<string, CommitmentError> => chain(prepareState(state), preparedRoot);
+export const prepareChanges = (
+  before: CommittedAccountState, after: CommittedAccountState,
+): Result<void, CommitmentError> => {
+  const domain = sameValue(before.domain, after.domain) ? ok(undefined) : domainOf(after.domain);
+  const claimSides = ["leftPendingJClaims", "rightPendingJClaims"] as const;
+  const claims = claimSides.map((side) =>
+    (sameValue(before[side], after[side]) ? ok(undefined) : jClaims(after[side])));
+  const maps = MAP_NAMES.map((n) => prepareMapChanges(before[n], after[n]));
+  return checks(domain, ...claims, ...maps);
+};
+export const accountStateCommitment = (state: CommittedAccountState): Result<string, CommitmentError> =>
+  chain(prepareState(state), preparedRoot);
 
 
 export type WireTx = { readonly type: string; readonly data: unknown };
