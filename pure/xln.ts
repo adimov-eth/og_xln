@@ -5707,7 +5707,16 @@ const crontabSection = (committed: EntityCommitted): Result<EntityCommitted, Ent
 /** og DerivedDeadline: per-payment deadlines read from Account locks and paybook entries, never stored as hooks. */
 export type DerivedDeadline =
   | { readonly id: string; readonly triggerAt: number; readonly type: "htlc_timeout"; readonly data: { readonly accountId: string; readonly lockId: string } }
-  | { readonly id: string; readonly triggerAt: number; readonly type: "htlc_secret_ack_timeout"; readonly data: { readonly hashlock: string; readonly counterpartyEntityId: string } };
+  | { readonly id: string; readonly triggerAt: number; readonly type: "htlc_secret_ack_timeout"; readonly data: { readonly hashlock: string; readonly counterpartyEntityId: string } }
+  | { readonly id: string; readonly triggerAt: number; readonly type: "lending_overdue"; readonly data: { readonly loanId: string } };
+/** og LendingState (types/finance/lending.ts): the hub's committed `lending` book of pools and loans. */
+type LendingPool = { readonly positionId: string; readonly tokenId: number; readonly borrowedAmount: bigint; readonly availableAmount: bigint; readonly updatedAt: number };
+type LendingLoan = { readonly loanId: string; readonly positionId: string; readonly borrowerEntityId: string; readonly tokenId: number; readonly principalAmount: bigint; readonly dueAt: number; readonly status: string; readonly updatedAt: number };
+type LendingBook = { readonly pools: ReadonlyMap<string, LendingPool>; readonly loans: ReadonlyMap<string, LendingLoan> };
+const lendingBook = (state: EntityState): LendingBook | undefined => {
+  const raw = state.committed["lending"] as Partial<LendingBook> | undefined;
+  return raw?.pools instanceof Map && raw.loans instanceof Map ? (raw as LendingBook) : undefined;
+};
 export type DueHook = ScheduledHook | DerivedDeadline;
 /** og compareDeadlines: triggerAt, then the id text. */
 export const compareDeadlines = (a: { readonly triggerAt: number; readonly id: string }, b: { readonly triggerAt: number; readonly id: string }): number => a.triggerAt - b.triggerAt || asc(a.id, b.id);
@@ -5716,7 +5725,7 @@ const activeAccount = (c: AccountReplica): boolean => c._tag === "open" || c._ta
 /** og isSecretAckPendingPayment. */
 const secretAckPending = (e: PaybookEntry): boolean => (e.inboundEntity ?? "") !== "" && (e.secret ?? "") !== "" && e.secretAckPending === true
   && Number.isSafeInteger(e.secretAckStartedAt) && Number.isSafeInteger(e.secretAckDeadlineAt) && (e.secretAckDeadlineAt ?? 0) >= (e.secretAckStartedAt ?? 0);
-/** og collectDerivedDeadlines, optionally only those due by `now` (og's lending_overdue needs og's Entity lending book, which the rewrite does not carry). */
+/** og collectDerivedDeadlines, optionally only those due by `now`: HTLC lock timeouts, secret-ack deadlines and active loans' due times. */
 export const derivedDeadlines = (state: EntityState, replicas: Replicas, now?: number): readonly DerivedDeadline[] => {
   const due = (t: number): boolean => now === undefined || t <= now;
   const timeouts = [...replicas].flatMap(([accountId, c]): DerivedDeadline[] => (!activeAccount(c) ? [] : [...c.state.locks.values()].flatMap((l): DerivedDeadline[] => {
@@ -5725,7 +5734,8 @@ export const derivedDeadlines = (state: EntityState, replicas: Replicas, now?: n
   })));
   const acks = [...(state.paybook?.entries.values() ?? [])].flatMap((e): DerivedDeadline[] => (secretAckPending(e) && due(e.secretAckDeadlineAt ?? 0)
     ? [{ id: `htlc-secret-ack:${e.hashlock}`, triggerAt: e.secretAckDeadlineAt ?? 0, type: "htlc_secret_ack_timeout", data: { hashlock: e.hashlock, counterpartyEntityId: e.inboundEntity ?? "" } }] : []));
-  return [...timeouts, ...acks].sort(compareDeadlines);
+  const loans = [...(lendingBook(state)?.loans.values() ?? [])].flatMap((l): DerivedDeadline[] => (l.status === "active" && due(l.dueAt) ? [{ id: `lending-overdue:${l.loanId}`, triggerAt: l.dueAt, type: "lending_overdue", data: { loanId: l.loanId } }] : []));
+  return [...timeouts, ...acks, ...loans].sort(compareDeadlines);
 };
 /** og ScheduledWakeJob: advisory diagnostics; execution recomputes the full due set from EntityState at the frame timestamp. */
 export type ScheduledWakeJob = { readonly kind: "hook" | "task"; readonly id: string; readonly dueAt: number };
@@ -5791,7 +5801,7 @@ export type WakeOutput = { readonly signerId: string; readonly txs: readonly Wak
 type HookRun = Folded & {
   readonly crontab: Crontab; readonly outputs: readonly WakeOutput[]; readonly timeouts: readonly { readonly accountId: string; readonly lockId: string }[];
   readonly prepare: ReadonlyMap<string, string>; readonly finalize: readonly string[]; readonly broadcast: boolean;
-  readonly sent: readonly EntityOutput[]; readonly hashes: readonly HashToSign[];
+  readonly sent: readonly EntityOutput[]; readonly hashes: readonly HashToSign[]; readonly accountTxs: readonly AccountTxTarget[];
 };
 // ---- og entity/tx/state-effects/board-rotation-hanko-refresh.ts, scheduler/board-hanko-refresh-hook.ts, tx/j-events-board.ts (BoardActivated),
 // ---- entity/account/account-counterparty-route.ts: our board rotation re-Hankos every certified Account frame for the peer ----
@@ -5962,6 +5972,32 @@ const secretAckTimeout = (run: HookRun, hook: Extract<DerivedDeadline, { type: "
   return ok({ ...run, prepare: mapSet(run.prepare, cp, "auto-prepare-dispute-after-secret-ack-timeout") });
 };
 /** og processDueHook. */
+/**
+ * og extensions/lending.ts projectedHubCreditLimit: the credit we grant the borrower (our peerCreditLimit) once our pending frame, the mempool
+ * and the Account txs this wake already returned land.
+ */
+const projectedHubCredit = (c: AccountReplica, self: EntityId, borrower: string, queued: readonly AccountTxTarget[], tk: TokenId): bigint => {
+  const d = c.state.account.deltas.get(tk), party = partyOf(replicaId(c), self), selfIsLeft = party.ok && party.value.left;
+  const target = (tx: AccountTx): bigint | undefined => (tx.type === "set_credit_limit" && tx.tokenId === tk ? tx.limit : tx.type === "lending_credit" && tx.tokenId === tk ? tx.creditLimit : undefined);
+  const txs = [...(c._tag === "proposed" ? c.candidate.frame.txs : []), ...c.mempool, ...queued.filter((q) => lower(q.accountId) === borrower).map((q) => q.tx)];
+  return txs.reduce((p, tx) => target(tx) ?? p, d === undefined ? 0n : selfIsLeft ? d.rightCreditLimit : d.leftCreditLimit);
+};
+/**
+ * og settleOverdueLendingLoan (tx/handlers/account/committed-lending-close.ts): an active loan past due defaults, its principal returns to the
+ * pool and the borrower's credit line is called in by a `lending_credit` revoke; a loan without its pool or Account is dropped.
+ */
+const lendingOverdue = (run: HookRun, loanId: string, now: number): HookRun => {
+  const book = lendingBook(run.state), loan = book?.loans.get(loanId);
+  if (book === undefined || loan === undefined || loan.status !== "active" || loan.dueAt > now) return run;
+  const pool = book.pools.get(loan.positionId), borrower = lower(loan.borrowerEntityId), child = run.accountReplicas.get(borrower as EntityId);
+  if (pool === undefined || child === undefined || pool.borrowedAmount < loan.principalAmount) return run;
+  const hub = lower(run.state.id), tk = String(loan.tokenId) as TokenId, current = projectedHubCredit(child, run.state.id, borrower, run.accountTxs, tk);
+  const lending = { ...book, loans: mapSet(book.loans, loanId, { ...loan, status: "defaulted", updatedAt: now }),
+    pools: mapSet(book.pools, loan.positionId, { ...pool, borrowedAmount: pool.borrowedAmount - loan.principalAmount, availableAmount: pool.availableAmount + loan.principalAmount, updatedAt: now }) };
+  const revoke: AccountTxTarget = { accountId: loan.borrowerEntityId, tx: { type: "lending_credit", action: "revoke", loanId, hubEntityId: hub, borrowerEntityId: loan.borrowerEntityId, tokenId: tk,
+    creditLimit: current > loan.principalAmount ? current - loan.principalAmount : 0n } };
+  return { ...run, state: { ...run.state, committed: { ...run.state.committed, lending: lending as unknown as Binary } }, accountTxs: [...run.accountTxs, revoke] };
+};
 const dueHook = (run: HookRun, hook: DueHook, now: number, first: string): Result<HookRun, EntityError> => {
   switch (hook.type) {
     case "htlc_timeout": return ok(run.accountReplicas.get(hook.data.accountId as EntityId)?.state.locks.has(hook.data.lockId) ? { ...run, timeouts: [...run.timeouts, hook.data] } : run);
@@ -5970,6 +6006,7 @@ const dueHook = (run: HookRun, hook: DueHook, now: number, first: string): Resul
     case "settlement_window": case "watchdog": return ok(run);
     case "hub_rebalance_kick": { const task = run.crontab.tasks.get("hubRebalance"); return ok(task === undefined ? run : { ...run, crontab: { ...run.crontab, tasks: mapSet(run.crontab.tasks, "hubRebalance", { ...task, lastRun: 0 }) } }); }
     case "board_hanko_refresh": return boardRefreshHook(run, hook, now);
+    case "lending_overdue": return ok(lendingOverdue(run, hook.data.loanId, now));
     case "counterparty_board_hanko_refresh_deadline": {
       const child = run.accountReplicas.get(hook.data.accountId as EntityId);
       if (child === undefined || currentFrameOf(child).height < 1n) return ok(run);
@@ -6127,7 +6164,7 @@ export const hubRebalance = (d: Folded, now: number, runtimeNow: number, manualB
   });
 };
 /** `outputs`: og outputs to this Entity (its collective continuations); `sent`: og outputs to other Entities; `hashes`: og context.hashesToSign. */
-export type CrontabRun = Folded & { readonly outputs: readonly WakeOutput[]; readonly sent: readonly EntityOutput[]; readonly hashes: readonly HashToSign[] };
+export type CrontabRun = Folded & { readonly outputs: readonly WakeOutput[]; readonly sent: readonly EntityOutput[]; readonly hashes: readonly HashToSign[]; readonly accountTxs: readonly AccountTxTarget[] };
 /**
  * og executeCrontab at the Entity's timestamp `now`: every due hook (the derived per-payment deadlines and the stored hooks, which are removed
  * as they fire) in (triggerAt, id) order, then the due periodic hubRebalance task (og hubRebalanceHandler, a no-op without a hub config).
@@ -6136,13 +6173,13 @@ export type CrontabRun = Folded & { readonly outputs: readonly WakeOutput[]; rea
 export const executeCrontab = (state: EntityState, replicas: Replicas, now: number, manualBroadcast = false, runtimeNow = now): Result<CrontabRun, EntityError> => chain(crontabOf(state), (crontab) => {
   const stored = [...crontab.hooks.values()].filter((h) => h.triggerAt <= now), due: readonly DueHook[] = [...derivedDeadlines(state, replicas, now), ...stored].sort(compareDeadlines);
   const first = signerId([...membersOf(state.quorum).keys()][0] ?? "");
-  const start: HookRun = { state, accountReplicas: replicas, crontab: stored.reduce((c, h) => cancelHook(c, h.id), crontab), outputs: [], timeouts: [], prepare: new Map(), finalize: [], broadcast: false, sent: [], hashes: [] };
+  const start: HookRun = { state, accountReplicas: replicas, crontab: stored.reduce((c, h) => cancelHook(c, h.id), crontab), outputs: [], timeouts: [], prepare: new Map(), finalize: [], broadcast: false, sent: [], hashes: [], accountTxs: [] };
   return chain(foldResult<HookRun, DueHook, EntityError>(due, start, (run, hook) => dueHook(run, hook, now, first)), (run): Result<CrontabRun, EntityError> => {
     const outputs = due.length === 0 ? [] : batchedHookOutputs(run, first, manualBroadcast), task = run.crontab.tasks.get("hubRebalance");
-    if (task === undefined || !task.enabled || now - task.lastRun < task.intervalMs) return ok({ state: withCrontab(run.state, run.crontab), accountReplicas: run.accountReplicas, outputs, sent: run.sent, hashes: run.hashes });
+    if (task === undefined || !task.enabled || now - task.lastRun < task.intervalMs) return ok({ state: withCrontab(run.state, run.crontab), accountReplicas: run.accountReplicas, outputs, sent: run.sent, hashes: run.hashes, accountTxs: run.accountTxs });
     return map(hubRebalance(run, now, runtimeNow, manualBroadcast), (reb): CrontabRun => {
       const crontabAfter: Crontab = { ...run.crontab, tasks: mapSet(run.crontab.tasks, "hubRebalance", { ...task, lastRun: now }) };
-      return { state: withCrontab(reb.state, crontabAfter), accountReplicas: reb.accountReplicas, outputs: [...outputs, ...reb.outputs], sent: run.sent, hashes: run.hashes };
+      return { state: withCrontab(reb.state, crontabAfter), accountReplicas: reb.accountReplicas, outputs: [...outputs, ...reb.outputs], sent: run.sent, hashes: run.hashes, accountTxs: run.accountTxs };
     });
   });
 });
@@ -6156,7 +6193,9 @@ const foldWake = (state: EntityState, replicas: Replicas, w: Extract<EntityTx, {
     if (missing !== undefined) return invariant(`${missing.type === "j_broadcast" ? "J_BROADCAST" : missing.type === "j_abort_sent_batch" ? "J_ABORT_SENT_BATCH" : "ORDERBOOK_SWEEP_CROSS_J"}_ENTITY_TX_NOT_PORTED`);
     // og returns the crontab's outputs to other Entities and its hashesToSign beside the approved self txs
     const own = (d: Draft): Draft => { const hashes = [...run.hashes, ...(d.hashes ?? [])]; return { ...d, outputs: [...run.sent, ...d.outputs], ...(hashes.length === 0 ? {} : { hashes }) }; };
-    return map(approved.length === 0 ? ok({ state: run.state, accountReplicas: run.accountReplicas, outputs: [] }) : foldNested(run.state, run.accountReplicas, approved as readonly EntityTx[], ctx, "collective"), own);
+    // og applyLocalAccountEffects: the wake's returned Account txs (a lending_overdue revoke) are admitted before its approved self txs
+    const queued = run.accountTxs.reduce(queueReturned, { state: run.state, accountReplicas: run.accountReplicas, outputs: [] } as Draft);
+    return map(approved.length === 0 ? ok(queued) : foldNested(queued.state, queued.accountReplicas, approved as readonly EntityTx[], ctx, "collective"), own);
   }));
 // ---- og entity/tx/j-events.ts J7 Entity-side dispute effects and tx/dispute-finalize-guards.ts: J batch retirement, nonce sync, the dispute-deadline hook ----
 type BatchRows = { readonly [field: string]: readonly Binary[] };

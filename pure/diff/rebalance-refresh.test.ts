@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   accountId, createEntity, crontabTaskHasPendingWork, executeCrontab, genesisReplica, initCrontab, rebalanceAccountIds, tokenId, withCrontab, crontabOf, ZERO_WORD,
-  applyBoardJEvent, counterpartyProposer, rearmBoardRefreshes, entityId, quorumBoardHash, quorumHanko, scheduleHook,
+  applyBoardJEvent, counterpartyProposer, rearmBoardRefreshes, derivedDeadlines, entityId, quorumBoardHash, quorumHanko, scheduleHook,
   type AccountReplica, type Crontab, type DisputeHanko, type EntityError, type EntityId, type EntityState, type Hash, type JEvent, type RefreshMigration, type ScheduledHook, type SettlementWorkspace,
 } from "../xln.ts";
 import { ALICE, BOB, CAROL, TERMS, aliceAddr, bobAddr, carolAddr, crypto, keyOf, signLazyAccountHanko, unwrap } from "../xln_run.ts";
@@ -16,6 +16,7 @@ import { captureAccountBoardHankoRefreshEvidence } from "../../core/entity/tx/st
 import { applyCertifiedBoardRegistryEvent } from "../../core/jurisdiction/machine/board-registry/index.ts";
 import { executeCrontab as ogExecuteCrontab, crontabTaskHasPendingWork as ogHasPendingWork } from "../../core/entity/scheduler/index.ts";
 import { getRebalanceAccountIds } from "../../core/entity/consensus/account/work-index.ts";
+import { collectDerivedDeadlines as ogCollectDerivedDeadlines } from "../../core/entity/scheduler/derived-deadlines.ts";
 import { initJBatch as ogInitJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import { EntityAccountCandidateMap, PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
@@ -298,4 +299,45 @@ describe("rebalance-refresh: board Hanko refresh (og board-rotation-hanko-refres
     }
     expect([(seen.get("quiet") ?? 0) > 20, (seen.get("rearmed") ?? 0) > 20]).toEqual([true, true]);
   }, 120_000);
+});
+
+// ---- lending_overdue: og collectDerivedDeadlines (loans) and settleOverdueLendingLoan through executeCrontab ----
+describe("rebalance-refresh: lending_overdue (og derived-deadlines.ts, committed-lending-close.ts settleOverdueLendingLoan)", () => {
+  test("MATCH: 300 random hub lending books (active / repaid loans, due times, missing pools and Accounts, borrowed underflow, credit in the delta and queued in the mempool) -- og's derived deadlines, lending book and revokes", async () => {
+    const seen = new Map<string, number>(), bump = (k: string) => seen.set(k, (seen.get(k) ?? 0) + 1);
+    for (let i = 0; i < 300; i++) {
+      const hub = pick([ALICE, BOB, CAROL]), peers = [ALICE, BOB, CAROL].filter((p) => p !== hub) as EntityId[], now = 5_000_000 + ri(1000);
+      const lim = (): bigint => pick([0n, 50n, 100n, 1_000n]);
+      const accts = peers.filter(() => rng() < 0.85).map((peer) => ({ peer, tokens: [1, 3].map((t) => ({ t, left: lim(), right: lim() })), queued: rng() < 0.3 ? { t: pick([1, 3]), limit: lim(), lending: rng() < 0.5 } : undefined }));
+      const pools = new Map<string, any>(), loans = new Map<string, any>();
+      for (let p = 0; p < 1 + ri(3); p++) pools.set(`lend-p${p}`, { positionId: `lend-p${p}`, hubEntityId: hub, lenderEntityId: peers[0], tokenId: pick([1, 3]), principalAmount: 500n, availableAmount: BigInt(ri(300)), borrowedAmount: pick([0n, 40n, 200n, 500n]), interestBps: 100, termId: "1d", termMs: 86_400_000, createdAt: 1, updatedAt: 1, status: "open" });
+      for (let l = 0; l < ri(5); l++) {
+        const loanId = `loan-${i}-${l}`;
+        loans.set(loanId, { requestId: `borrow-${l}`, loanId, hubEntityId: hub, borrowerEntityId: pick([...peers, word(999)]), lenderEntityId: peers[0], positionId: pick([...pools.keys(), "lend-missing"]), tokenId: pick([1, 3]), principalAmount: pick([10n, 40n, 60n, 300n]),
+          interestAmount: 1n, repaymentAmount: 11n, repaidAmount: 0n, interestBps: 100, termId: "1d", termMs: 86_400_000, openedAt: 1, dueAt: now + pick([-5_000, -1, 0, 0, 1, 7_000]), updatedAt: 1, status: pick(["active", "active", "active", "repaid", "opening"]) });
+      }
+      const replicas = new Map(accts.map((a) => {
+        const base = unwrap(genesisReplica(unwrap(accountId(hub, a.peer)), TERMS)), tk = (n: number) => unwrap(tokenId(String(n)));
+        const deltas = new Map(a.tokens.map((x) => [tk(x.t), { tokenId: tk(x.t), collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: x.left, rightCreditLimit: x.right }]));
+        const mempool = a.queued === undefined ? [] : [a.queued.lending ? { type: "lending_credit", action: "grant", loanId: "loan-q", hubEntityId: hub, borrowerEntityId: a.peer, tokenId: tk(a.queued.t), creditLimit: a.queued.limit } : { type: "set_credit_limit", tokenId: tk(a.queued.t), limit: a.queued.limit }];
+        return [a.peer, { ...base, state: { ...base.state, account: { ...base.state.account, deltas } }, mempool } as AccountReplica];
+      }));
+      const ogAccts = accts.map((a) => [a.peer, { ...ogAccount(hub, { peer: a.peer, toks: [], settlePending: false }), mempool: a.queued === undefined ? [] : [a.queued.lending ? { type: "lending_credit", data: { action: "grant", loanId: "loan-q", hubEntityId: hub, borrowerEntityId: a.peer, tokenId: a.queued.t, creditLimit: a.queued.limit } } : { type: "set_credit_limit", data: { tokenId: a.queued.t, amount: a.queued.limit } }] }] as const);
+      for (const [peer, acc] of ogAccts) { const a = accts.find((x) => x.peer === peer)!; acc.state.deltas = PA("deltas", a.tokens.map((x) => [x.t, { tokenId: x.t, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: x.left, rightCreditLimit: x.right, leftAllowance: 0n, rightAllowance: 0n, leftHold: 0n, rightHold: 0n }])); }
+      const og: any = { entityId: hub, timestamp: now, config: ogConfigOf([aliceAddr]), accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries(ogAccts as never, hub, () => ZERO_WORD as never)),
+        lending: { pools: new Map([...pools].map(([k, v]) => [k, { ...v }])), loans: new Map([...loans].map(([k, v]) => [k, { ...v }])) }, crontabState: { tasks: new Map(), hooks: new Map() }, paybook: { entries: new Map(), feesEarned: 0n }, reserves: new Map() };
+      const state = withCrontab(unwrap(createEntity({ id: hub, jurisdiction: JUR, threshold: 1n, members: new Map([[aliceAddr as never, { shares: 1n }]]), committed: { lending: { pools: new Map([...pools].map(([k, v]) => [k, { ...v }])), loans: new Map([...loans].map(([k, v]) => [k, { ...v }])) } } as never })).state, { tasks: new Map(), hooks: new Map() } as Crontab);
+      expect(derivedDeadlines(state, replicas)).toEqual(ogCollectDerivedDeadlines(og) as never);
+      const ctx = { manualBroadcastInInput: false, bookIntentSlot: createBookIntentProgram().openSlot(), hashesToSign: [], accountChanges: new Set<string>(), candidateEffects: [], accountTxs: [] as any[] };
+      await ogExecuteCrontab({ quietRuntimeLogs: true, state: { timestamp: now } } as never, { entityId: hub, state: og } as never, og.crontabState, ctx as never);
+      const run = unwrap(executeCrontab(state, replicas, now));
+      expect(run.state.committed["lending"]).toEqual(og.lending);
+      expect(run.accountTxs.map(({ accountId: id, tx }) => { const x = tx as any; return { accountId: id, tx: { type: x.type, data: { action: x.action, loanId: x.loanId, hubEntityId: x.hubEntityId, borrowerEntityId: x.borrowerEntityId, tokenId: Number(x.tokenId), creditLimit: x.creditLimit } } }; })).toEqual(ctx.accountTxs);
+      expect(run.outputs).toEqual([]);
+      for (const l of og.lending.loans.values()) if (l.status === "defaulted") bump("defaulted");
+      for (const l of loans.values()) if (l.status === "active" && l.dueAt <= now && og.lending.loans.get(l.loanId).status === "active") bump("dropped");
+      for (const t of ctx.accountTxs) bump(t.tx.data.creditLimit > 0n ? "revoke:partial" : "revoke:zero");
+    }
+    for (const k of ["defaulted", "dropped", "revoke:partial", "revoke:zero"]) expect([k, (seen.get(k) ?? 0) > 3]).toEqual([k, true]);
+  });
 });
