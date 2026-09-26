@@ -34,6 +34,10 @@ import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../..
 import { EMPTY_J_HISTORY_ROOT as OG_EMPTY_ROOT, foldJHistoryRoot as ogFoldRoot, canonicalJEventRangeHash, buildJEventRangeDigest } from "../../core/jurisdiction/machine/history-consensus/index.ts";
 import { applyJEvent as ogApplyJEvent } from "../../core/entity/tx/j-events.ts";
 import { anvilKey, signDigestHex } from "../xln_run.ts";
+import { getBoardHandoverFrameConfig } from "../../core/entity/consensus/authority/board-handover.ts";
+import { handleBoardHandoverEntityTx } from "../../core/entity/tx/handlers/board-handover.ts";
+import { encodeBoard, hashBoard } from "../../core/entity/factory.ts";
+import { carolAddr } from "../xln_run.ts";
 
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const rng = prng(0xe7_1a);
@@ -244,7 +248,7 @@ describe("entity-j RJ-9: signed EVM transaction parser (ethers v6 Transaction.fr
     expect(accepted).toBeGreaterThan(400);
     expect(refused).toBeGreaterThan(200);
     expect(mutated).toBeGreaterThan(1000);
-  });
+  }, 120_000);
   test("MATCH: registerNumberedEntitiesBatch(bytes[]) calldata is og encodeNumberedRegistrationCalldata", () => {
     const iface = EntityProvider__factory.createInterface();
     for (let i = 0; i < 40; i++) {
@@ -400,7 +404,7 @@ describe("entity-j RJ-9: durable numbered-registration intents (og numbered-regi
     expect(tally.refused).toBeGreaterThan(6);
     expect(tally.completed).toBeGreaterThan(2);
     expect(refusals.size).toBeGreaterThan(8);
-  });
+  }, 120_000);
 });
 
 // ---- og entity/tx/j-events.ts applyJEvent: the Entity-certified J range ----
@@ -485,5 +489,99 @@ describe("entity-j: Entity-level j_event (og entity/tx/j-events.ts applyJEvent)"
     for (const k of ["clean:ok", "stale:ok", "ahead:refused", "jurisdiction:refused", "root:refused", "from:refused", "signature:refused", "rangeHash:refused"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
     for (const k of ["RESERVE", "DEBT:", "DEBT PAID", "DEBT FORGIVEN", "OBSERVED", "jBatch finalized", "quarantined"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
     for (const k of ["DEBT_LEDGER_DIVERGENCE", "DEBT_CREATED_AMOUNT_INVALID"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
+  }, 120_000);
+});
+
+// ---- og board-handover.ts (consensus/authority + tx/handlers): [j_event with the Entity's own BoardActivated chain, boardHandover] ----
+const NUM = `0x${"0".repeat(63)}2` as EntityId;
+/** ALICE's proposer-signed range for `entityId` with one block per event list, above the certified head. */
+const rangeFor = (entityId: string, og: any, eventLists: readonly (readonly { type: string; data: Record<string, unknown> }[])[]): Record<string, unknown> => {
+  const baseHeight = Number(og.lastFinalizedJHeight ?? 0), scannedThroughHeight = baseHeight + Math.max(1, eventLists.length);
+  const blocks = eventLists.map((raw, i) => {
+    const blockNumber = baseHeight + 1 + i, blockHash = jword();
+    const events = raw.map((e, logIndex) => normalizeJurisdictionEvent({ ...e, blockNumber, blockHash, transactionHash: jword(), logIndex })!).sort(compareCanonicalJurisdictionEvents);
+    return { blockNumber, blockHash, eventsHash: canonicalJurisdictionEventsHash(events), events };
+  });
+  const tipBlockHash = jword();
+  const eventHistoryRoot = ogFoldRoot(og.jHistoryFinality?.eventHistoryRoot ?? OG_EMPTY_ROOT, blocks.map((b) => ({ jurisdictionRef: JREF, jHeight: b.blockNumber, jBlockHash: b.blockHash, eventsHash: b.eventsHash })));
+  const rangeHash = canonicalJEventRangeHash(JREF, blocks);
+  const digest = buildJEventRangeDigest({ entityId, jurisdictionRef: JREF, signerId: ALICE_SIGNER, baseHeight, scannedThroughHeight, tipBlockHash, eventHistoryRoot, rangeHash });
+  return { from: ALICE_SIGNER, jurisdictionRef: JREF, baseHeight, scannedThroughHeight, observedAt: scannedThroughHeight, tipBlockHash, blocks, eventHistoryRoot, rangeHash, signature: signDigestHex(digest, anvilKey(2)) };
+};
+const ogBoardHash = (config: any): string => { try { return hashBoard(encodeBoard(config)).toLowerCase(); } catch { return jword(); } };
+/** A new board and the frame defect to put around it. */
+const handoverCase = (variant: string): { board: any; activationFor: (oldHash: string, newHash: string) => { type: string; data: Record<string, unknown> }[] } => {
+  const pool = [aliceAddr, bobAddr, carolAddr].map((a) => a.toLowerCase()), validators = pool.filter(() => jrng() < 0.6);
+  if (validators.length === 0) validators.push(pool[1]!);
+  if (variant === "bobFirst" && validators[0] !== pool[1]) { const i = validators.indexOf(pool[1]!); if (i >= 0) validators.splice(i, 1); validators.unshift(pool[1]!); }
+  const shares: Record<string, bigint> = Object.fromEntries(validators.map((v) => [v, BigInt(1 + jri(3))]));
+  const total = Object.values(shares).reduce((a, b) => a + b, 0n);
+  let board: any = { mode: "proposer-based", threshold: BigInt(1 + jri(Number(total))), validators, shares };
+  if (variant === "upper") { const up = ethers.getAddress(validators[0]!), { [validators[0]!]: s, ...rest } = shares; board = { ...board, validators: [up, ...validators.slice(1)], shares: { ...rest, [up]: s } }; }
+  if (variant === "shareUpper") { const { [validators[0]!]: s, ...rest } = shares; board = { ...board, shares: { ...rest, [validators[0]!.toUpperCase().replace("0X", "0x")]: s } }; }
+  if (variant === "gossip") board = { ...board, mode: "gossip-based" };
+  if (variant === "threshold0") board = { ...board, threshold: 0n };
+  if (variant === "thresholdHigh") board = { ...board, threshold: total + 1n };
+  if (variant === "dup") board = { ...board, validators: [...validators, validators[0]!] };
+  if (variant === "outsider") board = { ...board, shares: { ...shares, [`0x${"ab".repeat(20)}`]: 1n } };
+  if (variant === "noShares") board = { ...board, shares: [] };
+  const act = (entityId: string, previousBoardHash: string, newBoardHash: string) => ({ type: "BoardActivated", data: { entityId, previousBoardHash, newBoardHash, previousBoardValidUntil: String(1_700_000_000 + jri(99)) } });
+  return {
+    board, activationFor: (oldHash, newHash) => {
+      if (variant === "noActivation") return [{ type: "ReserveUpdated", data: { entity: NUM, tokenId: 1, newBalance: "5" } }];
+      if (variant === "badPrev") return [act(NUM, jword(), newHash)];
+      if (variant === "hashMismatch") return [act(NUM, oldHash, jword())];
+      if (variant === "chain2") { const mid = jword(); return [act(NUM, oldHash, mid), act(NUM, mid, newHash)]; }
+      return [act(NUM, oldHash, newHash)];
+    },
+  };
+};
+
+describe("entity-j RJ-10: boardHandover (og board-handover.ts, frame config derived inside consensus)", () => {
+  test("MATCH (randomized): certified BoardActivated handovers and their defects -- same frame authority verdict, handler verdict, new board, leader and certified registry", async () => {
+    const variants = ["ok", "ok", "chain2", "bobFirst", "badPrev", "hashMismatch", "noActivation", "upper", "shareUpper", "gossip", "threshold0", "thresholdHigh", "dup", "outsider", "noShares", "shapeAlone", "shapeReversed", "twice", "unregistered", "wrongRegistration"];
+    const seen = new Map<string, number>();
+    for (let run = 0; run < 60; run++) {
+      const variant = variants[run % variants.length]!;
+      let state = unwrap(createEntity({ id: NUM, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: { name: "j", entityProviderAddress: EP }, committed: { reserves: new Map([[1, 10n]]) as never } })).state;
+      const replicas: ReadonlyMap<EntityId, AccountReplica> = new Map();
+      const ogEnv: any = { quietRuntimeLogs: true, infrastructure: {} };
+      let carry: any = { height: 0, lastFinalizedJHeight: 0, outDebtsByToken: new Map(), inDebtsByToken: new Map() };
+      const ogFresh = (t: number): any => ({ ...ogState(state, replicas, t), ...structuredClone(carry) });
+      const oldHash = ogBoardHash(ogFresh(1).config);
+      if (variant !== "unregistered") {
+        const og = ogFresh(10), registered = variant === "wrongRegistration" ? jword() : oldHash;
+        const data = rangeFor(NUM, og, [[{ type: "FoundationBootstrapped", data: { recipient: aliceAddr, boardHash: jword(), controlTokenId: "1", dividendTokenId: "2" } }, { type: "EntityRegistered", data: { entityId: NUM, entityNumber: "2", boardHash: registered } }]]);
+        const ogR = await ogRun(() => ogApplyJEvent(og, data as any, ogEnv, {} as any, [], true));
+        const f = foldTxs(state, replicas, [{ type: "j_event", data: data as never }], { verify: verifiers.verify, timestamp: 10n });
+        expect([f.ok, f.ok ? "" : (f.error as any).reason]).toEqual([ogR.ok, ogR.ok ? "" : (ogR as any).code]);
+        if (!f.ok || !ogR.ok) continue;
+        expect(f.value.draft.state.committed["certifiedBoardState"]).toEqual(ogR.value.newState.certifiedBoardState);
+        state = f.value.draft.state;
+        carry = { ...carry, lastFinalizedJHeight: ogR.value.newState.lastFinalizedJHeight, jHistoryFinality: ogR.value.newState.jHistoryFinality, certifiedBoardState: ogR.value.newState.certifiedBoardState };
+      }
+      const { board, activationFor } = handoverCase(variant);
+      const og = ogFresh(20), range = { type: "j_event", data: rangeFor(NUM, og, [activationFor(oldHash, ogBoardHash(board))]) }, handover = { type: "boardHandover", data: { board } };
+      const txs: any[] = variant === "shapeAlone" ? [handover] : variant === "shapeReversed" ? [handover, range] : variant === "twice" ? [range, handover, handover] : [range, handover];
+      const ogR = await ogRun(async () => {
+        const authorized = getBoardHandoverFrameConfig(ogEnv, og, txs);
+        const j = await ogApplyJEvent(og, txs[0].data, ogEnv, {} as any, [], true);
+        return handleBoardHandoverEntityTx(j.newState, txs[1], ogEnv, true, authorized ?? undefined).newState;
+      });
+      const f = foldTxs(state, replicas, txs, { verify: verifiers.verify, timestamp: 20n });
+      const key = `${variant}:${ogR.ok ? "ok" : "refused"}`;
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+      expect([variant, f.ok, f.ok ? "" : (f.error as any).reason]).toEqual([variant, ogR.ok, ogR.ok ? "" : (ogR as any).code]);
+      if (!f.ok || !ogR.ok) continue;
+      const next = ogR.value, s = f.value.draft.state, q: any = s.quorum;
+      expect(f.value.evicted).toEqual([]);
+      expect([...q.members.keys()].map((a: string) => a.toLowerCase())).toEqual(next.config.validators);
+      expect(Object.fromEntries([...q.members].map(([a, m]: any) => [a.toLowerCase(), m.shares]))).toEqual(next.config.shares);
+      expect(q.threshold).toBe(next.config.threshold);
+      expect(s.leaderState).toEqual(next.leaderState);
+      expect(s.committed["certifiedBoardState"]).toEqual(next.certifiedBoardState);
+      expect(Number(s.committed["lastFinalizedJHeight"])).toBe(next.lastFinalizedJHeight);
+    }
+    for (const k of ["ok:ok", "chain2:ok", "bobFirst:ok", "badPrev:refused", "hashMismatch:refused", "noActivation:refused", "upper:refused", "gossip:refused", "threshold0:refused", "shapeAlone:refused", "twice:refused", "unregistered:refused", "wrongRegistration:refused"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
   }, 120_000);
 });

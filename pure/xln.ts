@@ -4626,7 +4626,9 @@ export type JBatchEntityTx =
   | { readonly type: "j_clear_batch"; readonly data: { readonly reason?: string | undefined } }
   | { readonly type: "mintReserves"; readonly data: { readonly tokenId: number; readonly amount: bigint } }
   // og j_event: the active proposer's signed, canonical J range (JurisdictionEventData) the Entity certifies
-  | { readonly type: "j_event"; readonly data: { readonly [field: string]: Binary } };
+  | { readonly type: "j_event"; readonly data: { readonly [field: string]: Binary } }
+  // og boardHandover: the new board an on-chain BoardActivated chain in the same frame's j_event authorizes
+  | { readonly type: "boardHandover"; readonly data: { readonly board: HandoverConfig } };
 /** og types/entity-tx.ts settlement workspace operations (payments/settle.ts). */
 export type SettleEntityTx =
   | { readonly type: "settle_propose"; readonly data: { readonly counterpartyEntityId: EntityId; readonly ops: readonly SettlementOp[]; readonly executorIsLeft?: boolean | undefined; readonly memo?: string | undefined; readonly continuation?: SettlementContinuationPlan | undefined } }
@@ -5269,7 +5271,7 @@ export const localTimeoutVote = (r: EntityReplica, timestamp: bigint): EntityInp
   return { kind: "leaderTimeoutVote", timestamp, local: true, vote: { ...leaderVoteBody(r.state, r.head), voterId: signerId(r.signerId), signature: "", ...opt("preparedFrame", lock) } };
 };
 
-type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined };
+type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly boardHandover?: HandoverConfig | undefined };
 type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 /** Who the tx is about: og routes accountInput by its envelope, the rest by an explicit counterparty. */
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
@@ -5283,7 +5285,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   settle_propose: (x) => x.data.counterpartyEntityId, settle_update: (x) => x.data.counterpartyEntityId, settle_approve: (x) => x.data.counterpartyEntityId, settle_execute: (x) => x.data.counterpartyEntityId, settle_reject: (x) => x.data.counterpartyEntityId,
   prepareCrossJurisdictionSwap: () => self, materializeCrossJurisdictionSwap: () => self, registerCrossJurisdictionSwap: () => self,
   admitCrossJurisdictionBookOrder: () => self, removeCrossJurisdictionBookOrder: () => self, crossJurisdictionBookOrderRemoved: () => self, crossJurisdictionFillNotice: () => self, requestCrossJurisdictionClear: () => self, runtimeOutput: () => self, proposeAccountsNow: () => self, initOrderbookExt: () => self,
-  r2r: () => self, r2e: () => self, r2c: () => self, e2r: () => self, j_broadcast: () => self, j_rebroadcast: () => self, j_abort_sent_batch: () => self, j_clear_batch: () => self, mintReserves: () => self, j_event: () => self,
+  r2r: () => self, r2e: () => self, r2c: () => self, e2r: () => self, j_broadcast: () => self, j_rebroadcast: () => self, j_abort_sent_batch: () => self, j_clear_batch: () => self, mintReserves: () => self, j_event: () => self, boardHandover: () => self,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -8818,6 +8820,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     j_broadcast: (x) => entityJBroadcast(skip, x.data, ctx.timestamp), j_rebroadcast: (x) => entityJRebroadcast(skip, x.data, ctx.timestamp),
     j_abort_sent_batch: (x) => ok(entityJAbort(skip, x.data)), j_clear_batch: (x) => ok(entityJClear(skip, x.data)), mintReserves: (x) => ok(entityMint(skip, x.data, ctx.timestamp)),
     j_event: (x) => entityJEvent(skip, x.data as JRec, ctx),
+    boardHandover: (x) => entityBoardHandover(skip, x.data.board, ctx.boardHandover),
     runtimeOutput: (x) => {
       if (x.data.protocol !== "cross-j") return invariant(`RUNTIME_OUTPUT_PROTOCOL_INVALID:${String(x.data.protocol)}`);
       const refused = runtimeOutputAuthError(state, x.data);
@@ -8962,12 +8965,15 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   // og assertScheduledWakeFrameOrder (prepareEntityFrameWorkingSet): a plain Error for the whole frame
   const misordered = wakeOrderIssue(txs);
   if (misordered !== undefined) return err(misordered);
-  return chain(normalizeGovernance(state), (normalized) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
-    const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
+  // og getBoardHandoverFrameConfig over the normalized pre-frame state: the authority a [j_event, boardHandover] frame is certified under
+  return chain(normalizeGovernance(state), (normalized) => chain(handoverFrameConfig(normalized, txs), (handover) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
+    const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, handover === null ? ctx : { ...ctx, boardHandover: handover });
     if (r.ok) return ok({ ...acc, included: [...acc.included, tx], draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs], events: [...(acc.draft.events ?? []), ...(r.value.events ?? [])], runtimeEvents: [...(acc.draft.runtimeEvents ?? []), ...(r.value.runtimeEvents ?? [])], touched: [...(acc.draft.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc.draft, r.value), swaps: joinSwapEvents(acc.draft.swaps, r.value.swaps) } });
     return fatalTx(tx, r.error) ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
+    // og finishAuthorityTransitionOnly: a board handover frame primes no Account work and runs no post-tx phases
+    if (handover !== null) return ok(folded);
     // og materializeSettlementContinuation, then drainPostOrderbookAccountWork's settlement approvals, before proposePendingAccountFrames.
     // og applyPostEntityTxPhases: cancels + orderbook matching, then drainPostOrderbookAccountWork.
     return chain(chain(chain(materializeContinuation(folded.draft, ctx, settleQueue(ctx)), (d) => bookPhase(d, ctx.timestamp)), (d) => materializeSettlements(d, ctx)), (settled) => {
@@ -8977,7 +8983,7 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
       // og refreshChangedAccountCommitments: after the Account proposals, a changed certified frame re-arms its board Hanko refresh
       return map(rearmBoardRefreshes(replicas, { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) }, Number(ctx.timestamp)), (draft) => ({ ...folded, draft }));
     });
-  }));
+  })));
 };
 const EMPTY_COLLECTION = { radix: 16, leafCount: 0, root: ZERO_WORD } as const;
 /** og applyEntityFrame `state.crontabState ??= initCrontab()`: the hubRebalance task at the 1s cadence, no hooks. */
@@ -11163,6 +11169,118 @@ const entityJEvent = (d: Draft, data: JRec, ctx: FoldContext): Result<Draft, Ent
 /** og finalizedJHistoryRoot: the certified head's root, or the empty root before the first certified range. */
 const anchorRoot = (state: EntityState): string => { const a = certifiedJAnchor(state); return a.ok && a.value !== null ? a.value.eventHistoryRoot : EMPTY_J_HISTORY_ROOT; };
 const liveAccount = (c: AccountReplica): boolean => c._tag !== "preparing" && c._tag !== "disputed";
+// ---- og entity/consensus/authority/board-handover.ts + entity/tx/handlers/board-handover.ts: the on-chain BoardActivated handover ----
+/** og ConsensusConfig as boardHandover carries it (mode, threshold, validators, shares). */
+export type HandoverConfig = { readonly mode: string; readonly threshold: bigint; readonly validators: readonly string[]; readonly shares: { readonly [signer: string]: bigint } };
+/** og FinancialDataCorruptionError / TypeSafetyViolationError messages. */
+const safetyText = (message: string, context?: Record<string, unknown>): string => `🚨 FINANCIAL-SAFETY VIOLATION: ${message}${context === undefined ? "" : `\nContext: ${stableJson(context)}`}`;
+const typeSafetyText = (message: string, value: unknown): string => `🛡️ TYPE-SAFETY VIOLATION: ${message}${value === undefined ? "" : `\nReceived: ${typeof value} = ${String(value)}`}`;
+/** og validateConsensusConfig: mode, threshold, validators, shares, then voting power (a refusal is og's Error message). */
+export const consensusConfigIssue = (value: unknown, context: string): Result<HandoverConfig, string> => {
+  const c = recOf(value) ?? {}, mode = c["mode"], threshold = c["threshold"];
+  if (mode !== "proposer-based" && mode !== "gossip-based") return err(safetyText(`${context}.mode must be proposer-based or gossip-based`));
+  if (typeof threshold !== "bigint" || threshold <= 0n) return err(safetyText(`${context}.threshold must be positive bigint`));
+  if (threshold > 0xffffn) return err(safetyText(`${context}.threshold exceeds uint16 board encoding`, { threshold }));
+  const rawValidators = c["validators"];
+  if (!Array.isArray(rawValidators)) return err(typeSafetyText(`${context}.validators must be an array`, rawValidators));
+  if (rawValidators.length === 0) return err(safetyText(`${context}.validators cannot be empty`));
+  const normalized = new Set<string>(), validators: string[] = [];
+  for (const [index, validator] of (rawValidators as readonly unknown[]).entries()) {
+    if (typeof validator !== "string" || validator.trim().length === 0) return err(safetyText(`${context}.validators[${index}] must be a non-empty string`));
+    const id = validator.trim().toLowerCase();
+    if (normalized.has(id)) return err(safetyText(`${context}.validators has duplicate signer`, { validator }));
+    normalized.add(id);
+    validators.push(validator);
+  }
+  const rawShares = c["shares"];
+  if (!rawShares || typeof rawShares !== "object" || Array.isArray(rawShares)) return err(typeSafetyText(`${context}.shares must be a non-null object`, rawShares));
+  const shares = rawShares as Readonly<Record<string, unknown>>;
+  for (const [id, power] of Object.entries(shares)) if (typeof power !== "bigint") return err(safetyText(`${context}.shares.${id} must be bigint`));
+  const byId = new Map<string, bigint>();
+  for (const [raw, power] of Object.entries(shares)) {
+    const id = raw.trim().toLowerCase();
+    if (byId.has(id)) return err(safetyText(`${context}.shares has case-duplicate signer`, { rawSigner: raw }));
+    byId.set(id, power as bigint);
+  }
+  let total = 0n;
+  for (const validator of validators) {
+    const power = byId.get(validator.trim().toLowerCase());
+    if (power === undefined || power <= 0n) return err(safetyText(`${context}.shares missing positive power for validator`, { validator }));
+    if (power > 0xffffn) return err(safetyText(`${context}.shares exceeds uint16 board encoding`, { validator, power }));
+    total += power;
+  }
+  for (const id of Object.keys(shares)) if (!normalized.has(id.trim().toLowerCase())) return err(safetyText(`${context}.shares contains signer outside validators`, { shareSigner: id }));
+  if (total < threshold) return err(safetyText(`${context}.threshold exceeds total validator power`, { threshold, totalPower: total }));
+  return ok({ mode, threshold, validators, shares: shares as Readonly<Record<string, bigint>> });
+};
+/** og hashBoard(encodeBoard(config)); og's encodeBoard refusals keep the rewrite's lazyBoardEncoding codes except the proposer's (og `BOARD_PROPOSER_EOA_REQUIRED:<proposer>`). */
+const handoverBoardHash = (config: HandoverConfig): Result<string, EntityError> => {
+  const encoded = lazyBoardEncoding({ mode: "proposer-based", threshold: config.threshold, validators: config.validators, shares: config.shares });
+  if (encoded.ok) return ok(keccak256Hex(hexToBytes(encoded.value)).toLowerCase());
+  return invariant(jCode(encoded.error) === "BOARD_PROPOSER_EOA_REQUIRED" ? `BOARD_PROPOSER_EOA_REQUIRED:${config.validators[0] ?? ""}` : jCode(encoded.error));
+};
+/** og assertCanonicalConfig: a valid config in the Entity's own mode with lowercase validators and share signers. */
+const canonicalHandoverConfig = (board: unknown): Result<HandoverConfig, EntityError> => {
+  const config = consensusConfigIssue(board, "BOARD_HANDOVER_CONFIG");
+  if (!config.ok) return invariant(`BOARD_HANDOVER_CONFIG_INVALID:${config.error}`);
+  const c = config.value;
+  if (c.mode !== "proposer-based") return invariant(`BOARD_HANDOVER_MODE_CHANGE_FORBIDDEN:proposer-based:${c.mode}`);
+  for (const v of c.validators) if (v !== v.trim().toLowerCase()) return invariant(`BOARD_HANDOVER_VALIDATOR_NON_CANONICAL:${v}`);
+  for (const s of Object.keys(c.shares)) if (s !== s.trim().toLowerCase()) return invariant(`BOARD_HANDOVER_SHARE_SIGNER_NON_CANONICAL:${s}`);
+  return ok(c);
+};
+/**
+ * og getBoardHandoverFrameConfig: a frame carrying boardHandover must be exactly [j_event, boardHandover], and the j_event's own
+ * BoardActivated chain must run from the committed board to the new config's board. The authority the frame is certified under.
+ */
+export const handoverFrameConfig = (state: EntityState, txs: readonly EntityTx[]): Result<HandoverConfig | null, EntityError> => {
+  const handovers = txs.filter((tx) => tx.type === "boardHandover");
+  if (handovers.length === 0) return ok(null);
+  if (handovers.length !== 1) return invariant(`BOARD_HANDOVER_COUNT_INVALID:${handovers.length}`);
+  const [range, handover] = txs;
+  if (txs.length !== 2 || range?.type !== "j_event" || handover?.type !== "boardHandover") return invariant(`BOARD_HANDOVER_FRAME_SHAPE_INVALID:${txs.map((tx) => tx.type).join(",")}`);
+  return chain(canonicalHandoverConfig(handover.data.board), (config) => {
+    const me = lower(state.id), blocks = Array.isArray(range.data["blocks"]) ? (range.data["blocks"] as readonly unknown[]) : [];
+    const activations = blocks.flatMap((b) => { const events = recOf(b)?.["events"]; return Array.isArray(events) ? (events as readonly unknown[]) : []; })
+      .map((e) => recOf(e) ?? {}).filter((e) => e["type"] === "BoardActivated" && lower((recOf(e["data"]) ?? {})["entityId"]) === me).map((e) => recOf(e["data"]) ?? {});
+    if (activations.length === 0) return invariant("BOARD_HANDOVER_ACTIVATION_MISSING");
+    let expected = configBoardHash(state.quorum).toLowerCase();
+    for (const a of activations) {
+      const received = lower(a["previousBoardHash"]);
+      if (received !== expected) return invariant(`BOARD_HANDOVER_ACTIVATION_CHAIN_INVALID:${received}:${expected}`);
+      expected = lower(a["newBoardHash"]);
+    }
+    return chain(handoverBoardHash(config), (hash) => (hash !== expected ? invariant(`BOARD_HANDOVER_CONFIG_HASH_MISMATCH:${hash}:${expected}`) : ok(config)));
+  });
+};
+/**
+ * og handleBoardHandoverEntityTx: the frame-authorized config replaces the board once the Entity's certified registry holds its own
+ * BoardActivated record for exactly that board; the new CEO leads from view 0. Validators must be EOAs here (nested Entity validators are not ported).
+ */
+const entityBoardHandover = (d: Draft, board: unknown, authorized: HandoverConfig | undefined): Result<Draft, EntityError> => {
+  const state = d.state, config = consensusConfigIssue(board, "BOARD_HANDOVER_CONFIG");
+  if (!config.ok) return invariant(config.error);
+  const c = config.value;
+  if (c.mode !== "proposer-based") return invariant("BOARD_HANDOVER_MODE_CHANGE_FORBIDDEN");
+  if (authorized === undefined) return invariant("BOARD_HANDOVER_TRANSITION_PROOF_REQUIRED");
+  return chain(observerBoardRecord(state, state.id), (record) => {
+    if (record === null || record.source !== "BoardActivated") return invariant("BOARD_HANDOVER_CERTIFIED_ACTIVATION_REQUIRED");
+    const previous = configBoardHash(state.quorum).toLowerCase();
+    return chain(handoverBoardHash(c), (next) => chain(handoverBoardHash(authorized), (auth) => {
+      if (auth !== next || record.boardHash !== next) return invariant(`BOARD_HANDOVER_CERTIFIED_AUTHORITY_MISMATCH:previous=${record.previousBoardHash}:${previous}:certified=${record.boardHash}:authorized=${auth}:next=${next}`);
+      const members = new Map<Address, { readonly shares: bigint }>();
+      for (const v of c.validators) {
+        const a = address(v), share = Object.entries(c.shares).find(([k]) => lower(k) === lower(v))?.[1];
+        if (!a.ok || share === undefined) return invariant(`BOARD_HANDOVER_ENTITY_VALIDATOR_NOT_PORTED:${v}`);
+        members.set(a.value, { shares: share });
+      }
+      const active = c.validators[0];
+      if (active === undefined) return invariant("BOARD_HANDOVER_VALIDATOR_MISSING");
+      return chain(admitQuorum({ _tag: "teaching", threshold: c.threshold, members }), (quorum) =>
+        ok({ ...d, state: { ...state, quorum, leaderState: { activeValidatorId: active, view: 0, changedAtHeight: Number(state.height) + 1 } }, touched: [] }));
+    }));
+  });
+};
 // ---- og jurisdiction/machine/registration-evidence, receipt-codec verifyCanonicalReceiptProof (@ethereumjs/mpt 10 + @ethereumjs/rlp 10) ----
 type RlpItem = Uint8Array | readonly RlpItem[];
 /** @ethereumjs/rlp _decode: canonical prefixes only; a failure is null. */
