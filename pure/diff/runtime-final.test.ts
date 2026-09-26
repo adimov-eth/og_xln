@@ -30,13 +30,16 @@ import { mergeEntityInputs as ogMergeEntityInputs } from "../../core/entity/cons
 import { selectCrossJOpeningAccountProposalTxs as ogOpeningSelection } from "../../core/entity/transition/cross-j-proposer-materialization.ts";
 import { collectReadyLocalAccountWorkTargets as ogReadyAccountWork } from "../../core/runtime/admit/entity-input-output.ts";
 import { isProposalDeferrableEntityInput as ogDeferrable } from "../../core/entity/consensus/input/consensus.ts";
+import { selectPotentialCrossJAccountInputPairs as ogPotentialPairs, selectMatchedCrossJAccountInputPairs as ogMatchedPairs } from "../../core/runtime/delivery/topology/entity-routing.ts";
+import { markPotentialAtomicCrossJInputPairs as ogMarkPotential, admitAtomicCrossJAccountInputs as ogAdmitAtomic } from "../../core/runtime/frame/cross-j/atomic-admission.ts";
+import { markCommittedAtomicCrossJAckOutputs as ogMarkAckOutputs } from "../../core/runtime/frame/cross-j/evidence.ts";
 import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "../../core/jurisdiction/machine/events/event-normalization.ts";
 import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
 import { verifyAccountSignature as ogVerifyAccountSignature, registerSignerKey } from "../../core/account/crypto.ts";
 import { FailureDispositionError } from "../../core/protocol/errors/failure-taxonomy.ts";
 import { entityRequiresJPrefixCertificate, buildLocalJPrefixAttestation, buildCertifiedJPrefixTx, mergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation, assertFrameJPrefix, jPrefixAttestationHash, jPrefixVerify, jEventRangeLocalHistoryError,
   type JPrefixAttestation, type JPrefixCrypto, type JPrefixFailure, type JPrefixRound, type JPrefixView, type ValidatorJHistory, type ValidatorJBlock, type EntityState,
-  hashEntityFrame, wireEntityTx, mergeEntityInputs, canon, crossOpeningSelection, readyAccountWorkTargets, type EntityFrame, type EntityOutput } from "../xln.ts";
+  hashEntityFrame, wireEntityTx, mergeEntityInputs, canon, crossOpeningSelection, readyAccountWorkTargets, potentialCrossPairs, markPotentialCrossPairs, matchedCrossPairs, admitAtomicCrossPairs, markCommittedAckOutputs, type EntityFrame, type EntityOutput } from "../xln.ts";
 import { anvilKey, signDigestHex, carolAddr } from "../xln_run.ts";
 
 let seed = 71;
@@ -776,3 +779,215 @@ describe("runtime-final: local Account work (og entity-input-output.ts collectRe
     expect(shapes.map(([kind, og]) => [kind, ogDeferrable(og as never)])).toEqual(shapes.map(([kind]) => [kind, kind === "txs"]));
   });
 });
+
+// ---- og runtime/delivery/topology/entity-routing.ts + frame/cross-j/atomic-admission.ts: atomic cross-j Account pair admission ----
+/** Random cross-j Account legs, in the rewrite's shape and og's, with transport provenance; plus a Runtime of replicas both implementations read. */
+const crossWorld = () => {
+  const ENTS = ["0x" + "a1".repeat(32), "0x" + "b2".repeat(32), "0x" + "c3".repeat(32), "0x" + "d4".repeat(32)] as const;
+  const PEERS = ["0x" + "e5".repeat(32), "0x" + "f6".repeat(32)] as const;
+  const SIGNERS = [aliceAddr.toLowerCase(), bobAddr.toLowerCase()] as const;
+  const RUNTIMES = [undefined, "0x" + "11".repeat(20), "0x" + "22".repeat(20)] as const;
+  const ORDERS = ["o1", "o2"] as const, RH: Record<string, string> = { o1: "0x" + "aa".repeat(32), o2: "0x" + "ab".repeat(32) };
+  const FH: Record<string, string> = { o1: "0x" + "01".repeat(32), o2: "0x" + "02".repeat(32) }, PR: Record<string, string> = { o1: "0x" + "03".repeat(32), o2: "0x" + "04".repeat(32) };
+  const route = (o: string, memo: string) => ({ orderId: o, routeHash: RH[o], status: "intent", makerEntityId: ENTS[0], hubEntityId: ENTS[1], sourceSignerId: "nobody", targetSignerId: "nobody",
+    source: { jurisdiction: "j1", entityId: ENTS[0], counterpartyEntityId: PEERS[0], tokenId: 1, amount: 10n }, target: { jurisdiction: "j2", entityId: PEERS[1], counterpartyEntityId: ENTS[1], tokenId: 2, amount: 20n },
+    sourcePull: { pullId: `sp-${o}`, tokenId: 1, amount: 10n, signedAmount: 10n, fullHash: FH[o], partialRoot: PR[o] }, targetPull: { pullId: `tp-${o}`, tokenId: 2, amount: 20n, signedAmount: -20n, fullHash: FH[o], partialRoot: PR[o] },
+    createdAt: 0, updatedAt: 0, memo });
+  const lock = (leg: "source" | "target", o: string) => ({ type: "cross_pull_lock", pullId: rng() < 0.08 ? "bad" : `${leg === "source" ? "sp" : "tp"}-${o}`, tokenId: "1", amount: 10n,
+    fullHash: rng() < 0.08 ? FH.o2 : FH[o], partialRoot: PR[o], crossJurisdiction: { orderId: o, routeHash: rng() < 0.2 ? RH[o]!.toUpperCase().replace("0X", "0x") : RH[o], leg }, crossJurisdictionRoute: route(o, rng() < 0.08 ? "other" : "") });
+  const close = (leg: "source" | "target", o: string) => ({ type: "cross_pull_close", pullId: `${leg === "source" ? "sp" : "tp"}-${o}`, binary: "0x",
+    proof: { orderId: o, routeHash: RH[o], sourcePullId: `sp-${o}`, targetPullId: `tp-${o}`, fillRatio: rng() < 0.1 ? 2 : 1, cumulativeSourceAmount: 5n, cumulativeTargetAmount: 6n, binaryHash: "0xbb", closeMode: "full" } });
+  const offer = (o: string) => ({ type: "swap_offer", offerId: `of-${o}`, crossJurisdiction: { orderId: o, routeHash: RH[o] } });
+  type RwTx = Record<string, unknown> & { type: string };
+  const frameTxs = (kind: string, orders: readonly string[]): RwTx[] => orders.flatMap((o): RwTx[] => kind === "source" ? [lock("source", o), ...(rng() < 0.85 ? [offer(o)] : [])] : kind === "target" ? [lock("target", o)]
+    : kind === "both" ? [lock("source", o), offer(o), lock("target", o)] : kind === "closeS" ? [close("source", o)] : kind === "closeT" ? [close("target", o)] : [{ type: "add_delta", tokenId: "1" }]);
+  const frames: { height: bigint; stateHash: string; prevFrameHash: string; txs: RwTx[] }[] = [];
+  const frameOf = (kind: string, orders: readonly string[]) => {
+    const f = { height: BigInt(1 + ri(3)), stateHash: "0x" + (frames.length + 16).toString(16).padStart(64, "0"), prevFrameHash: "0x" + "99".repeat(32), txs: frameTxs(kind, orders) };
+    frames.push(f);
+    return f;
+  };
+  const accountTx = (from: string, to: string, f: ReturnType<typeof frameOf>, ackOnly: boolean) => ({ type: "accountInput", data: ackOnly
+    ? { kind: "ack", fromEntityId: from, toEntityId: to, height: f.height, frameHash: rng() < 0.9 ? f.stateHash : "0x" + "98".repeat(32) }
+    : { kind: "ack_frame", fromEntityId: from, toEntityId: to, ack: null, frame: f } });
+  type RwIn = { entityId: string; signerId: string; from?: string; runtimeId?: string; sourceRuntimeFrame?: { height: number; timestamp: number }; atomicCrossJurisdictionPair?: { phase: "proposal" | "ack"; pairKey: string }; input: { kind: "txs"; timestamp: bigint; txs: RwTx[] } };
+  const provenance = () => {
+    const from = pick([undefined, undefined, RUNTIMES[1], RUNTIMES[2], "not-a-runtime"]), frame = rng() < 0.6 ? pick([{ height: 1, timestamp: 10 }, { height: 2, timestamp: 20 }]) : undefined;
+    return { ...(from === undefined ? {} : { from }), ...(rng() < 0.5 ? { runtimeId: pick([RUNTIMES[1], RUNTIMES[2]]) as string } : {}), ...(frame === undefined ? {} : { sourceRuntimeFrame: frame }) };
+  };
+  const leg = (entityId: string, kind: string, orders: readonly string[], prov: object, ackOnly = false): RwIn => {
+    const f = frameOf(kind, orders), txs: RwTx[] = [accountTx(pick(PEERS), entityId, f, ackOnly)];
+    if (rng() < 0.08) txs.push(accountTx(pick(PEERS), entityId, frameOf(pick(["source", "target", "none"]), orders), false));
+    if (rng() < 0.2) txs.push({ type: "chat", data: { message: "hi" } } as never);
+    // og never nests an accountInput in a runtimeOutput (RUNTIME_OUTPUT_NESTED_PROTOCOL_TX_FORBIDDEN): the envelope carries only ordinary txs
+    const wrapped: RwTx[] = rng() < 0.15 ? [...txs, { type: "runtimeOutput", data: { protocol: "cross-j", sourceEntityId: pick(PEERS), sourceSignerId: SIGNERS[0], targetEntityId: entityId, entityTxs: [{ type: "chat", data: { message: "w" } }] } }] : txs;
+    return { entityId, signerId: pick(SIGNERS), ...prov, input: { kind: "txs", timestamp: 0n, txs: wrapped } };
+  };
+  const inputs = (): RwIn[] => {
+    const out: RwIn[] = [];
+    for (let c = 0; c < 1 + ri(3); c++) {
+      const orders = rng() < 0.7 ? ["o1"] : ["o1", "o2"], prov = provenance(), [a, b] = rng() < 0.9 ? [ENTS[ri(2)] as string, ENTS[2 + ri(2)] as string] : [ENTS[0], ENTS[0]];
+      const [ka, kb] = pick([["source", "target"], ["target", "source"], ["both", "both"], ["closeS", "closeT"], ["closeT", "closeS"], ["closeS", "closeT"], ["source", "source"], ["none", "target"]]);
+      const second = rng() < 0.85 ? prov : provenance(), ackPair = rng() < 0.15;
+      out.push(leg(a, ka as string, orders, prov, ackPair), ...(rng() < 0.85 ? [leg(b, kb as string, orders, second, ackPair)] : []));
+    }
+    for (let k = 0; k < ri(2); k++) out.push({ entityId: pick(ENTS), signerId: pick(SIGNERS), ...provenance(), input: { kind: "txs", timestamp: 0n, txs: [{ type: "chat", data: { message: "x" } } as never] } });
+    for (let k = out.length - 1; k > 0; k--) { const j = ri(k + 1); [out[k], out[j]] = [out[j] as RwIn, out[k] as RwIn]; }
+    // transport markers: some inputs arrive already marked (a valid cohort key, a stale one, or an ACK cohort)
+    if (rng() < 0.3) for (const i of out) if (rng() < 0.5) i.atomicCrossJurisdictionPair = { phase: pick(["proposal", "ack"] as const), pairKey: pick(["k1", "proposal\u0000open\u0000o1\u0000" + RH.o1]) };
+    return out;
+  };
+  const ogTx = (tx: RwTx): unknown => {
+    if (tx.type === "accountInput") {
+      const d = tx["data"] as Record<string, unknown>;
+      if (d["kind"] === "ack") return { type: "accountInput", data: { kind: "ack", fromEntityId: d["fromEntityId"], toEntityId: d["toEntityId"], ack: { height: Number(d["height"]), frameHash: d["frameHash"] } } };
+      const f = d["frame"] as ReturnType<typeof frameOf>;
+      return { type: "accountInput", data: { kind: "ack_frame", fromEntityId: d["fromEntityId"], toEntityId: d["toEntityId"], proposal: { frame: ogFrame(f) } } };
+    }
+    if (tx.type === "runtimeOutput") { const d = tx["data"] as Record<string, unknown>; return { type: "runtimeOutput", data: { ...d, entityTxs: (d["entityTxs"] as RwTx[]).map(ogTx) } }; }
+    return tx;
+  };
+  const ogAccountTx = (tx: RwTx): unknown => { const { type, ...data } = tx; return { type, data }; };
+  const ogFrame = (f: ReturnType<typeof frameOf>) => ({ height: Number(f.height), stateHash: f.stateHash, prevFrameHash: f.prevFrameHash, accountTxs: f.txs.map(ogAccountTx) });
+  const ogIn = (i: RwIn) => { const { input, ...rest } = i; return { ...rest, entityTxs: input.txs.map(ogTx) }; };
+  /** Replicas of every input's (Entity, signer): hub or not, heads and pending frames from the frame pool, authorizations, live pulls. */
+  const runtime = (ins: readonly RwIn[]) => {
+    const rw = new Map<string, unknown>(), ogReplicas = new Map<string, unknown>();
+    const auth = (o: string) => ({ ...route(o, ""), sourcePull: undefined, targetPull: undefined });
+    const shared = new Map(ORDERS.map((o) => [o, auth(o)]));
+    for (const i of ins) {
+      const key = `${i.entityId}:${i.signerId}`;
+      if (rw.has(key) || rng() < 0.08) continue;
+      const hub = rng() < 0.35, rwAccounts = new Map<string, unknown>(), ogAccounts = new Map<string, unknown>();
+      for (const peer of PEERS) {
+        const head = rng() < 0.3 && frames.length > 0 ? pick(frames) : undefined, pending = rng() < 0.5 && frames.length > 0 ? pick(frames) : undefined;
+        const pulls = new Map(rng() < 0.2 ? [["p", { crossJurisdiction: { routeHash: pick([RH.o1, RH.o2, "0x" + "cc".repeat(32)]) }, fullHash: pick([FH.o1, FH.o2]), partialRoot: pick([PR.o1, PR.o2]) }]] : []);
+        rwAccounts.set(peer, { _tag: pending ? "proposed" : "open", head: head ? { _tag: "installed", height: head.height, prevFrameHash: head.stateHash } : { _tag: "genesis", height: 0n, prevFrameHash: "genesis" }, ...(pending ? { candidate: { frame: pending } } : {}), state: { pulls } });
+        ogAccounts.set(peer, { currentFrame: head ? ogFrame(head) : { height: 0, stateHash: "", prevFrameHash: "", accountTxs: [] }, ...(pending ? { pendingFrame: ogFrame(pending) } : {}), state: { pulls } });
+      }
+      const auths = new Map(ORDERS.flatMap((o) => { const r = rng(); return r < 0.3 ? [] : r < 0.8 ? [[o, shared.get(o)]] : r < 0.9 ? [[o, { ...auth(o), status: "resting" }]] : [[o, { ...auth(o), memo: "divergent" }]]; }) as [string, unknown][]);
+      const state = { id: i.entityId, timestamp: 5n, committed: { profile: { isHub: hub } }, crossJurisdictionAuthorizations: auths };
+      rw.set(key, { state, signerId: i.signerId, accountReplicas: rwAccounts });
+      ogReplicas.set(key, { entityId: i.entityId, signerId: i.signerId, state: { entityId: i.entityId, timestamp: 5, profile: { isHub: hub }, accounts: ogAccounts, crossJurisdictionAuthorizations: auths } });
+    }
+    return { rw: { entities: rw, timestamp: 7n } as never, og: { state: { eReplicas: ogReplicas, timestamp: 7, height: 3 }, warn: () => undefined } as never };
+  };
+  return { inputs, ogIn, runtime, reset: () => { frames.length = 0; } };
+};
+/** One comparable row per input: Entity, marker, the Account legs it still carries. */
+const crossInputView = (i: Record<string, unknown>) => {
+  const txs = ("input" in i ? ((i["input"] as { txs: { type: string; data: Record<string, unknown> }[] }).txs) : (i["entityTxs"] as { type: string; data: Record<string, unknown> }[])) ?? [];
+  const legs = txs.flatMap((tx) => (tx.type === "runtimeOutput" ? (tx.data["entityTxs"] as { type: string; data: Record<string, unknown> }[]) : [tx])).filter((tx) => tx.type === "accountInput").map((tx) => String(tx.data["fromEntityId"]) + ":" + String(tx.data["kind"]));
+  return { entityId: i["entityId"], marker: (i["atomicCrossJurisdictionPair"] as object | undefined) ?? null, txs: txs.length, legs };
+};
+const crossPairView = (p: Record<string, unknown>) => {
+  const frame = (f: Record<string, unknown>) => ({ ...f, height: Number(f["height"]) });
+  return { ...p, ...(p["sourceAccountFrame"] ? { sourceAccountFrame: frame(p["sourceAccountFrame"] as Record<string, unknown>), targetAccountFrame: frame(p["targetAccountFrame"] as Record<string, unknown>) } : {}) };
+};
+describe("runtime-final: atomic cross-j Account pair admission (og entity-routing.ts, atomic-admission.ts)", () => {
+  test("MATCH (randomized): 800 input batches -- og selectPotentialCrossJAccountInputPairs (both frame policies) and markPotentialAtomicCrossJInputPairs", () => {
+    seed = 131;
+    const w = crossWorld();
+    let paired = 0, marked = 0;
+    for (let n = 0; n < 800; n++) {
+      w.reset();
+      const ins = w.inputs(), ogs = ins.map(w.ogIn);
+      for (const allow of [false, true]) {
+        const want = ogPotentialPairs(ogs as never, { allowDifferentSourceRuntimeFrames: allow }), got = potentialCrossPairs(ins as never, { allowDifferentSourceRuntimeFrames: allow });
+        expect([n, allow, got]).toEqual([n, allow, want]);
+        paired += want.length;
+      }
+      const want = ogMarkPotential(ogs as never).map((i) => crossInputView(i as never)), got = markPotentialCrossPairs(ins as never).map((i) => crossInputView(i as never));
+      expect([n, got]).toEqual([n, want]);
+      marked += want.filter((i) => i.marker !== null).length;
+    }
+    expect(paired).toBeGreaterThan(300);
+    expect(marked).toBeGreaterThan(100);
+  });
+  test("MATCH (randomized): 800 batches against a Runtime of hubs and spokes -- og selectMatchedCrossJAccountInputPairs (pairs, rejected legs with reason and detail, retained inputs)", () => {
+    seed = 137;
+    const w = crossWorld(), reasons = new Map<string, number>();
+    let pairs = 0;
+    for (let n = 0; n < 800; n++) {
+      w.reset();
+      const ins = w.inputs(), ogs = ins.map(w.ogIn), env = w.runtime(ins);
+      const want = ogMatchedPairs(env.og, ogs as never), got = matchedCrossPairs(env.rw, ins as never);
+      const legView = (l: { inputIndex: number; reason: string; detail: readonly string[]; accountInput: Record<string, unknown> }) => ({ inputIndex: l.inputIndex, reason: l.reason, detail: l.detail, from: l.accountInput["fromEntityId"], kind: l.accountInput["kind"] });
+      expect([n, got.pairs.map((p) => crossPairView(p as never)), got.rejectedLegs.map((l) => legView(l as never)), got.inputs.map((i) => crossInputView(i as never))])
+        .toEqual([n, want.pairs.map((p) => crossPairView(p as never)), want.rejectedLegs.map((l) => legView(l as never)), want.inputs.map((i) => crossInputView(i as never))]);
+      pairs += want.pairs.length;
+      for (const l of want.rejectedLegs) reasons.set(l.reason, (reasons.get(l.reason) ?? 0) + 1);
+    }
+    expect(pairs).toBeGreaterThan(40);
+    expect([...reasons.keys()].sort()).toEqual(["atomic-group-invalid", "candidate-invalid", "multiple-candidates-per-input", "pair-match-failed"]);
+  });
+  test("MATCH (randomized): 500 merged batches -- og admitAtomicCrossJAccountInputs (retry coalescing, stripped legs, pairs grouped first and marked; replay refuses)", () => {
+    seed = 139;
+    const w = crossWorld();
+    let grouped = 0;
+    for (let n = 0; n < 500; n++) {
+      w.reset();
+      const base = w.inputs();
+      // a transport retry: the same marked cohort again from a later source frame
+      const ins = rng() < 0.3 && base.length >= 2 ? [...base, ...base.slice(0, 2).map((i) => ({ ...i, sourceRuntimeFrame: { height: 9, timestamp: 90 } }))] : base;
+      const ogs = ins.map(w.ogIn), env = w.runtime(ins);
+      for (const replay of [false, true]) {
+        let want: unknown;
+        try { const r = ogAdmitAtomic(env.og, ogs as never, replay); want = { inputs: r.inputs.map((i) => crossInputView(i as never)), pairs: r.pairs.map((p) => crossPairView(p as never)) }; }
+        catch (e) { want = ogCode(e); }
+        const r = admitAtomicCrossPairs(env.rw, ins as never, replay);
+        const got = r.ok ? { inputs: r.value.inputs.map((i) => crossInputView(i as never)), pairs: r.value.pairs.map((p) => crossPairView(p as never)) } : rwCode(r);
+        expect([n, replay, got]).toEqual([n, replay, want]);
+        if (!replay && typeof want === "object" && (want as { pairs: unknown[] }).pairs.length > 0) grouped += 1;
+      }
+    }
+    expect(grouped).toBeGreaterThan(20);
+  });
+  test("MATCH: the Runtime applies an admitted pair atomically -- a leg that cannot commit discards both, rejects the pair and re-applies the rest; a lone leg is stripped; replay refuses (og applyAtomicEntityInputPair)", () => {
+    const solo = (id: EntityId, signer: string) => unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[signer as Address, { shares: 1n }]]), signerId: signer as Address }));
+    const rt = spawn(spawn(createRuntime(), solo(ALICE, aliceAddr)), solo(BOB, bobAddr));
+    const proof = { orderId: "o1", routeHash: "0x" + "aa".repeat(32), sourcePullId: "sp-o1", targetPullId: "tp-o1", fillRatio: 1, cumulativeSourceAmount: 5n, cumulativeTargetAmount: 6n, binaryHash: "0xbb", closeMode: "full" };
+    const leg = (to: EntityId, signer: string, pullId: string, n: number): RoutedEntityInput => ({ entityId: to, signerId: signer, input: { kind: "txs", timestamp: NOW, txs: [
+      { type: "accountInput", data: { kind: "ack_frame", fromEntityId: CAROL, toEntityId: to, ack: null, frame: { height: 1n, stateHash: "0x" + String(n).repeat(64), prevFrameHash: "0x" + "99".repeat(32), txs: [{ type: "cross_pull_close", pullId, binary: "0x", proof }] } } } as never,
+      { type: "chat", data: { from: signer.toLowerCase(), message: `m${n}` } } as never] } });
+    const pair = [leg(ALICE, aliceAddr, "sp-o1", 1), leg(BOB, bobAddr, "tp-o1", 2)];
+    const step = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: pair }, verifiers));
+    expect(step.rejected.map((e) => rwCode({ ok: false, error: e }))).toEqual(["CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED", "CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED"]);
+    expect(step.applied.entityInputs.map((i) => [i.entityId, i.input.kind === "txs" ? i.input.txs.map((tx) => tx.type) : [], i.atomicCrossJurisdictionPair ?? null])).toEqual([[ALICE, ["chat"], null], [BOB, ["chat"], null]]);
+    expect(rwCode(applyRuntime(rt, { runtimeTxs: [], entityInputs: pair }, { ...verifiers, replay: true }))).toBe("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED");
+    // a lone leg is no cohort: its Account leg is stripped before Account consensus (og CROSS_J_ACCOUNT_PAIR_STRUCTURAL_MISMATCH), a replay refuses the frame
+    const lone = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [pair[0] as RoutedEntityInput] }, verifiers));
+    expect(lone.applied.entityInputs.map((i) => [i.entityId, i.input.kind === "txs" ? i.input.txs.map((tx) => tx.type) : []])).toEqual([[ALICE, ["chat"]]]);
+    expect(rwCode(applyRuntime(rt, { runtimeTxs: [], entityInputs: [pair[0] as RoutedEntityInput] }, { ...verifiers, replay: true }))).toBe("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_INVALID");
+    // og entityInputMergeKey: a marked leg needs its transport frame
+    const marked = { ...(pair[0] as RoutedEntityInput), atomicCrossJurisdictionPair: { phase: "proposal" as const, pairKey: "k" } };
+    expect(() => ogMergeEntityInputs([{ entityId: ALICE, signerId: aliceAddr, entityTxs: [], atomicCrossJurisdictionPair: marked.atomicCrossJurisdictionPair }] as never)).toThrow("ENTITY_INPUT_ATOMIC_CROSS_J_SOURCE_FRAME_MISSING");
+    expect(rwCode(applyRuntime(rt, { runtimeTxs: [], entityInputs: [marked] }, verifiers))).toBe("ENTITY_INPUT_ATOMIC_CROSS_J_SOURCE_FRAME_MISSING");
+  });
+  test("MATCH (randomized): 400 committed pairs and Runtime outboxes -- og markCommittedAtomicCrossJAckOutputs (exactly one distinct ACK output per leg gets the ACK marker)", () => {
+    seed = 149;
+    const ENTS = [ALICE, BOB, CAROL].map((e) => e.toLowerCase()), HASHES = ["0x" + "71".repeat(32), "0x" + "72".repeat(32)];
+    let markedRuns = 0;
+    for (let n = 0; n < 400; n++) {
+      const expectation = () => { const [a, b] = [pick(ENTS), pick(ENTS)]; return { entityId: a, signerId: "s", counterpartyEntityId: b, height: BigInt(1 + ri(2)), stateHash: pick(HASHES) }; };
+      const pairs = Array.from({ length: 1 + ri(2) }, (_, k) => ({ pairKey: `k${k}`, phase: pick(["proposal", "proposal", "ack"] as const), sourceInputIndex: 0, targetInputIndex: 1, sourceAccountFrame: expectation(), targetAccountFrame: expectation() }));
+      const outbox = Array.from({ length: ri(6) }, () => {
+        const from = pick(ENTS), to = pick(ENTS), height = BigInt(1 + ri(2)), frameHash = pick(HASHES).toUpperCase().replace("0X", "0x");
+        const data = rng() < 0.6 ? { kind: "ack", fromEntityId: from, toEntityId: to, height, frameHash } : { kind: "ack_frame", fromEntityId: from, toEntityId: to, ack: rng() < 0.7 ? { height, frameHash } : null, frame: {} };
+        return { to: rng() < 0.9 ? to : pick(ENTS), tx: { type: "accountInput", data } };
+      }) as { to: string; tx: { type: string; data: object } }[];
+      // the honest case: each committed leg's own ACK leaves once
+      for (const p of pairs) for (const e of [p.sourceAccountFrame, p.targetAccountFrame]) if (rng() < 0.8) outbox.splice(ri(outbox.length + 1), 0, { to: e.counterpartyEntityId, tx: { type: "accountInput", data: { kind: "ack", fromEntityId: e.entityId, toEntityId: e.counterpartyEntityId, height: e.height, frameHash: e.stateHash } } });
+      const ogOutbox = outbox.map((o) => { const d = o.tx.data as Record<string, unknown>; const ack = d["kind"] === "ack" ? { height: Number(d["height"]), frameHash: d["frameHash"] } : d["ack"] === null ? undefined : { height: Number((d["ack"] as { height: bigint }).height), frameHash: (d["ack"] as { frameHash: string }).frameHash };
+        return { entityId: o.to, signerId: "s", entityTxs: [{ type: "accountInput", data: { kind: d["kind"], fromEntityId: d["fromEntityId"], toEntityId: d["toEntityId"], ...(ack === undefined ? {} : { ack }) } }] }; });
+      const ogPairs = pairs.map((p) => ({ ...p, sourceAccountFrame: { ...p.sourceAccountFrame, height: Number(p.sourceAccountFrame.height) }, targetAccountFrame: { ...p.targetAccountFrame, height: Number(p.targetAccountFrame.height) } }));
+      let want: unknown;
+      try { ogMarkAckOutputs(ogOutbox as never, ogPairs as never); want = ogOutbox.map((o) => (o as { atomicCrossJurisdictionPair?: unknown }).atomicCrossJurisdictionPair ?? null); } catch (e) { want = ogCode(e); }
+      const r = markCommittedAckOutputs(outbox as never, pairs as never);
+      expect([n, r.ok ? r.value.map((o) => o.atomicCrossJurisdictionPair ?? null) : rwCode(r)]).toEqual([n, want]);
+      if (Array.isArray(want) && want.some((m) => m !== null)) markedRuns += 1;
+    }
+    expect(markedRuns).toBeGreaterThan(5);
+  });
+});
+
