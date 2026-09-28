@@ -2,7 +2,7 @@
 
 `bun style/check.ts` (from `pure/`) scans `xln.ts` and its layers `xln/*.ts` with the ast-grep rules in `style/rules/` and fails if any rule's hit count rises above `style/baseline.json`. After a refactor lowers a count, `bun style/check.ts --update` ratchets the baseline down.
 
-`layering` counts imports from a layer to a higher one (split/README.md); its baseline is 0.
+`layering` (`style/layering.ts`) counts module paths in a layer other than an npm package or a lower layer written `./<layer>.ts`, read from the syntax tree: static imports and re-exports, `import()` types, dynamic `import()` and `require`. Its baseline is 0.
 
 `unreachable` counts top-level declarations of the layers that nothing reaches (`style/reach.ts`): a declaration is live when another `.ts` file under `pure/` names it, or when a live declaration or a top-level statement mentions it. Its baseline is 0, so a new export with no caller fails the gate and names itself. Delete it, or call it from the code or a test that needs it.
 
