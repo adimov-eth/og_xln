@@ -1,4 +1,5 @@
 {
+  "layering": 0,
   "long-line": 2,
   "no-assign-member": 1,
   "no-class": 1,

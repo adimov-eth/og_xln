@@ -8,4 +8,4 @@ rule:
     field: function
     kind: member_expression
     has: { field: property, regex: '^(push|pop|shift|unshift|splice|set|delete|add|clear|sort|reverse|fill)$' }
-files: [xln.ts]
+files: [xln.ts, "xln/*.ts"]

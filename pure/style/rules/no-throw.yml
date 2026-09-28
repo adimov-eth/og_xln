@@ -3,4 +3,4 @@ language: TypeScript
 severity: error
 message: throw; return a Result (err) instead
 rule: { kind: throw_statement }
-files: [xln.ts]
+files: [xln.ts, "xln/*.ts"]

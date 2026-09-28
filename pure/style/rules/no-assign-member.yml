@@ -7,4 +7,4 @@ rule:
     - { kind: assignment_expression, has: { field: left, any: [ { kind: member_expression }, { kind: subscript_expression } ] } }
     - { kind: augmented_assignment_expression }
     - { kind: update_expression }
-files: [xln.ts]
+files: [xln.ts, "xln/*.ts"]
