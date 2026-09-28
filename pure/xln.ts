@@ -9660,9 +9660,17 @@ type AccountEnv = {
   readonly refreshMigration?: RefreshMigration | undefined;
   /** og shadow.rejectedFrameEvidence: the last unsafe peer frame the Entity disputed (committed; never cleared). */
   readonly rejectedFrame?: RejectedFrame | undefined;
+  /**
+   * og AccountAuthorityEntityStage admissionRequests (rscore/authority/entity-stage.ts executeAccountInput): the txs
+   * this Entity frame's own txs enqueued here, whole and in order. The mempool admits them only after the frame's txs
+   * (admitStaged, og's outbound phase), so everything the frame runs reads `mempool` without them. Frame scoped; never
+   * committed.
+   */
+  readonly staged?: readonly WireAccountTx[] | undefined;
 };
-type EnvMeta =
-  Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy" | "refreshMigration" | "rejectedFrame">;
+type EnvMeta = Pick<
+  AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy" | "refreshMigration" | "rejectedFrame" | "staged"
+>;
 /** Entity-side Account fields every phase keeps (og counterpartyBoardHankoRefresh, publicPinned, rebalance policy). */
 const envMeta = (r: EnvMeta): EnvMeta => ({
   ...opt("boardRefresh", r.boardRefresh),
@@ -9670,6 +9678,7 @@ const envMeta = (r: EnvMeta): EnvMeta => ({
   ...opt("rebalancePolicy", r.rebalancePolicy),
   ...opt("refreshMigration", r.refreshMigration),
   ...opt("rejectedFrame", r.rejectedFrame),
+  ...opt("staged", r.staged),
 });
 /** og AccountBoardHankoRefreshMigration: the activation our refresh belongs to and its outcome. */
 export type RefreshMigration = {
@@ -10647,8 +10656,11 @@ const collision = (
 ): OnProposed => {
   const height = input.frame.height, own = r.candidate.frame;
   if (ctx.party.left) {
-    const waiting = `⚠️ LEFT has ${r.mempool.length} pending txs while waiting for RIGHT's ACK`;
-    const pending = r.mempool.length > 0 ? [accountSay(waiting)] : [];
+    // og restoreCollisionQueueEvent (entity-stage.ts): the worker's mempool count plus every tx this Entity frame
+    // staged on the Account so far, before admission dedupes them
+    const queued = r.mempool.length + (r.staged?.length ?? 0);
+    const waiting = `⚠️ LEFT has ${queued} pending txs while waiting for RIGHT's ACK`;
+    const pending = queued > 0 ? [accountSay(waiting)] : [];
     return ok(done<OpenAccount | ProposedAccount | ReceivedAccount, AccountOutput>(r, [
       accountSay(`📤 LEFT-WINS: Ignored RIGHT's frame ${height} (waiting for their ACK)`), ...pending,
     ]));
@@ -11213,6 +11225,28 @@ export const admitAt = (
   r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, _clock?: FrameClock, _verify?: Verify,
 ): Result<AccountReplica, AccountReplicaError> =>
   (isLive(r) ? admit(r, txs, self) : map(partyOf(replicaId(r), self), () => r));
+/**
+ * og AccountAuthorityEntityStage.executeAccountInput for a local `enqueue`: the Account records the txs whole and
+ * reports them all taken; its mempool admits them only after the frame's txs (admitStaged).
+ */
+export const stageEnqueue = (r: AccountReplica, txs: readonly WireAccountTx[]): AccountReplica =>
+  (txs.length > 0 ? { ...r, staged: [...(r.staged ?? []), ...txs] } : r);
+/**
+ * og applyLocalAccountEffects: an Entity tx's returned Account txs go through the stage, except that a frozen Account
+ * takes no new work (og shouldSuppressReturnedAccountTx).
+ */
+export const stageReturned = (r: AccountReplica, txs: readonly WireAccountTx[]): AccountReplica =>
+  (isLive(r) ? stageEnqueue(r, txs) : r);
+/**
+ * og's outbound phase (the TS Account worker's applyOutboundTxs, before any Account proposes): the Account admits what
+ * the frame staged on it, in order, deduped against its mempool and pending frame (og applyAccountEnqueue, in every
+ * status). A tx the mempool refuses outright throws in og's worker.
+ */
+export const admitStaged = (r: AccountReplica, self: EntityId): Result<AccountReplica, AccountReplicaError> => {
+  if (r.staged === undefined) return ok(r);
+  const { staged, ...admitted } = r;
+  return admit(admitted as AccountReplica, staged, self);
+};
 const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> =>
   map(partyOf(replicaId(r), ctx.self), (party) => ({
     verify: ctx.verify,
@@ -13659,9 +13693,10 @@ const forwardLeg = (d: Folded, f: DirectForward): Result<AccountTxTarget, Entity
 };
 const forwardPayment = (d: Draft, f: DirectForward): Result<Draft, EntityError> =>
   chain(forwardLeg(d, f), ({ accountId, tx }) => withChild(d.accountReplicas, accountId as EntityId, (child) =>
-    map(admitAt(child, [tx], d.state.id, L0_CLOCK), (admitted) =>
-      ({ ...putChild(d.state, d.accountReplicas, accountId as EntityId, admitted), outputs: d.outputs }))));
-const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
+    ok({
+      ...putChild(d.state, d.accountReplicas, accountId as EntityId, stageReturned(child, [tx])),
+      outputs: d.outputs,
+    })));
 type InitOrderbook = Extract<EntityTx, { readonly type: "initOrderbookExt" }>["data"];
 /**
  * og handleInitOrderbookExtEntityTx: an existing extension and a spread that does not sum to 10000 bps are silent
@@ -13932,7 +13967,7 @@ const policySane = (p: RebalancePolicy): boolean =>
  * then the hub's fee terms; add_delta per token and the optional credit line are queued with them.
  */
 const seedAccount = (
-  state: EntityState, replicas: Replicas, data: OpenAccountData, opened: AccountReplica, now: bigint,
+  state: EntityState, replicas: Replicas, data: OpenAccountData, opened: AccountReplica,
 ): Result<Draft, EntityError> => {
   const credit = data.tokenId ?? "1", requested = data.rebalancePolicy, hub = hubConfigOf(state);
   const tokens = [...new Set([credit, ...DEFAULT_ACCOUNT_TOKEN_IDS])].filter((t) => Number(t) > 0) as TokenId[];
@@ -13955,10 +13990,7 @@ const seedAccount = (
       rebalancePolicy: new Map(policies),
       ...(pinned ? { publicPinned: true } : {}),
     };
-    // og admission never folds; the rewrite's admission fold needs a real clock only for rebalance_policy's timestamp
-    const clock = hubTxs.length > 0 ? { ...L0_CLOCK, timestamp: now } : L0_CLOCK;
-    return map(admitAt(child, seeded, state.id, clock), (admitted) =>
-      ({ ...putChild(state, replicas, data.targetEntityId, admitted), outputs: [] }));
+    return ok({ ...putChild(state, replicas, data.targetEntityId, stageReturned(child, seeded)), outputs: [] });
   });
 };
 /** og isValidEntityId: a bytes32 hex id in either case (og keys the Account by its lowercase form). */
@@ -14011,7 +14043,7 @@ const selfAccountRefusal = (): EntityError => ({
  * + defaults and an optional credit line, on the Account keyed by the target's lowercase id.
  */
 const openChild = (
-  state: EntityState, replicas: Replicas, tx: Extract<EntityTx, { type: "openAccount" }>, now: bigint,
+  state: EntityState, replicas: Replicas, tx: Extract<EntityTx, { type: "openAccount" }>,
 ): Result<Draft, EntityError> => {
   const refusal = openRefusal(state, replicas, tx.data);
   if (refusal !== undefined) return invariant(refusal);
@@ -14019,7 +14051,7 @@ const openChild = (
   const { targetEntityId: target, accountDomain, watchSeed, disputeConfig } = data;
   const id = mapErr(accountId(state.id, target), selfAccountRefusal);
   const opening = chain(id, (account) => genesisReplica(account, { domain: accountDomain, watchSeed, disputeConfig }));
-  return chain(opening, (opened) => seedAccount(state, replicas, data, opened, now));
+  return chain(opening, (opened) => seedAccount(state, replicas, data, opened));
 };
 /** og createInboundAccountState: an unknown peer's first proposal (height 1) opens the Account from its envelope. */
 const inboundChild = (
@@ -23422,8 +23454,7 @@ const queueReturned = (d: Draft, target: AccountTxTarget): Draft => {
   const peer = target.accountId.toLowerCase() as EntityId;
   const child = d.accountReplicas.get(peer);
   if (child === undefined) return d;
-  const admitted = admitAt(child, [target.tx], d.state.id, L0_CLOCK);
-  return admitted.ok ? { ...d, ...putChild(d.state, d.accountReplicas, peer, admitted.value) } : d;
+  return { ...d, ...putChild(d.state, d.accountReplicas, peer, stageReturned(child, [target.tx])) };
 };
 // ---- settlements: propose, update, approve, execute, reject, deferred and committed auto-approval, continuations ----
 // og entity/tx/handlers/payments/settle.ts
@@ -23953,7 +23984,7 @@ const settleExecute = (
   const skip = (why: string): Result<Draft, EntityError> => ok(settleSay(d, `⏭️ settle_execute skipped: ${why}`));
   if (t === undefined) return skip(`no account with ${peer.slice(-4)}`);
   if (w === undefined) return skip(`no workspace with ${peer.slice(-4)}`);
-  // og rejectFailure: a reject disposition evicts only this tx
+  // og rejectFailure: the reject becomes MalformedEntityFrameInputError around the outer signed command, evicted whole
   if (settlePending(t.child)) return err({ _tag: "entity_command", reason: SETTLE_PENDING });
   const execute = (workspaceHash: string): Result<Draft, EntityError> => {
     const counterpartyHanko = t.iAmLeft ? w.rightHanko : w.leftHanko;
@@ -24155,14 +24186,10 @@ const materializeVisible = (
     "⚠️ Settlement approval expired because the workspace changed",
   );
   const admit = (built: HankoDraft): Result<Draft, EntityError> => {
-    const clock = { timestamp: ctx.timestamp, jHeight: entityJHeight(d.state) };
-    const admitted = admitAt(child, [built.tx], self, clock, pendingVerify(ctx.verify, self));
-    if (!admitted.ok || admitted.value.mempool.length !== child.mempool.length + 1) {
-      return invariant(`SETTLEMENT_DEFERRED_HANKO_NOT_ADMITTED:${peer}`);
-    }
+    // og checks admittedAccountTxCount === 1 (SETTLEMENT_DEFERRED_HANKO_NOT_ADMITTED); its stage always reports it
     return ok({
       ...d,
-      ...putChild(forgetDeferred(d.state, peer), d.accountReplicas, id, admitted.value),
+      ...putChild(forgetDeferred(d.state, peer), d.accountReplicas, id, stageEnqueue(child, [built.tx])),
       hashes: [...(d.hashes ?? []), ...built.hashes],
       touched: [...(d.touched ?? []), id],
     });
@@ -24252,7 +24279,8 @@ const materializeContinuation = (d: Draft, ctx: FoldContext, queue: SettleEnqueu
   const discard = (reason: string): Result<Draft, EntityError> =>
     ok(settleSay(forgetContinuation(d, peer), `Settlement continuation cleared: ${reason}`));
   if (child === undefined) return invariant(`SETTLEMENT_CONTINUATION_ACCOUNT_MISSING:${peer}`);
-  if (settlePending(child)) return ok(d);
+  // og stage.hasQueuedSettlementTransition: the one reader that also sees what this frame staged
+  if (settlePending(child) || (child.staged ?? []).some(isSettleTransition)) return ok(d);
   const w = child.state.settlement;
   if (w === undefined) return discard("workspace missing");
   const jb = d.state.jBatch;
@@ -24275,15 +24303,10 @@ const materializeContinuation = (d: Draft, ctx: FoldContext, queue: SettleEnqueu
   };
   return chain(bodyInvariant(canonicalWorkspaceHash(child.state, w)), decide);
 };
-const settleQueue =
-  (ctx: FoldContext): SettleEnqueue =>
-  (d, peer, tx) =>
-    withChild(d.accountReplicas, peer, (child) =>
-      map(admitAt(child, [tx], d.state.id, L0_CLOCK, ctx.verify), (admitted) => ({
-        ...d,
-        ...putChild(d.state, d.accountReplicas, peer, admitted),
-      })),
-    );
+/** A settlement handler's Account tx, staged on its Account for the frame's outbound phase. */
+const stageSettle: SettleEnqueue = (d, peer, tx) =>
+  withChild(d.accountReplicas, peer, (child) =>
+    ok({ ...d, ...putChild(d.state, d.accountReplicas, peer, stageReturned(child, [tx])) }));
 /**
  * A peer frame this Entity just signed, with the Account envelope its receiver HTLC lock followups check the prepared
  * entries against.
@@ -24535,17 +24558,16 @@ const rebalanceKick = (d: Draft, at: CommittedAt): Result<Draft, EntityError> =>
   return chain(hasRebalanceWork(at.self, child), (work) => (work ? ok(kick(crontabOf(d.state))) : ok(d)));
 };
 /**
- * og applyLocalAccountEffects: each returned Account tx is admitted alone and in order; an Account that admits one
- * joins the frame's worklist after the peer.
+ * og applyLocalAccountEffects: each returned Account tx is staged alone and in order; an Account that took it (the
+ * stage reports every staged tx taken) joins the frame's worklist after the peer.
  */
 const admitTargets = (d: Draft, targets: readonly AccountTxTarget[], peer: EntityId): Draft =>
   targets.reduce<Draft>(
     (acc, t) => {
       const id = t.accountId.toLowerCase() as EntityId;
-      const before = acc.accountReplicas.get(id)?.mempool.length;
       const next = queueReturned(acc, t);
-      const admitted = before !== undefined && next.accountReplicas.get(id)?.mempool.length !== before;
-      return admitted ? { ...next, touched: [...(next.touched ?? []), id] } : next;
+      const staged = next.accountReplicas.get(id) !== acc.accountReplicas.get(id);
+      return staged ? { ...next, touched: [...(next.touched ?? []), id] } : next;
     },
     { ...d, touched: [peer] },
   );
@@ -25839,16 +25861,12 @@ const enqueueTo = (
   outputs: readonly EntityOutput[],
 ): Result<Draft, EntityError> =>
   withChild(s.replicas, target, (child) =>
-    map(admitAt(child, accountTxs, s.state.id, L0_CLOCK, s.ctx.verify), (admitted) => ({
-      ...putChild(s.state, s.replicas, target, admitted),
-      outputs,
-    })),
-  );
+    ok({ ...putChild(s.state, s.replicas, target, stageReturned(child, accountTxs)), outputs }));
 /**
  * og open-account.ts: the two status events around the insert, and insertLocalAccount's AccountOpening runtime event.
  */
 const openAccountTx = (s: TxScope, x: EntityTxOf<"openAccount">): Result<Draft, EntityError> =>
-  map(openChild(s.state, s.replicas, x, s.ctx.timestamp), (d) => {
+  map(openChild(s.state, s.replicas, x), (d) => {
     const peer = lower(x.data.targetEntityId);
     const opening: EntityRuntimeEvent = {
       eventName: "AccountOpening",
@@ -25990,7 +26008,6 @@ const setHubConfigTx = (s: TxScope, x: EntityTxOf<"setHubConfig">): Result<Draft
   chain(buildHubConfig(hubConfigOf(s.state), x.data), (config) => {
     const hub: EntityHub = { _tag: "hub", config, lending: lendingBook(s.state) };
     const targets = hubPolicyPairs(s.replicas);
-    const clock = { ...L0_CLOCK, timestamp: s.ctx.timestamp };
     const start: Draft = {
       state: { ...s.state, hub },
       accountReplicas: s.replicas,
@@ -26000,11 +26017,7 @@ const setHubConfigTx = (s: TxScope, x: EntityTxOf<"setHubConfig">): Result<Draft
     const queuePolicy = (d: Draft, [peer, t]: readonly [EntityId, TokenId]): Result<Draft, EntityError> =>
       chain(hubPolicyTx(config, t), (policyTx) =>
         withChild(d.accountReplicas, peer, (child) =>
-          map(admitAt(child, [policyTx], s.state.id, clock, s.ctx.verify), (admitted) => ({
-            ...d,
-            ...putChild(d.state, d.accountReplicas, peer, admitted),
-          })),
-        ),
+          ok({ ...d, ...putChild(d.state, d.accountReplicas, peer, stageReturned(child, [policyTx])) })),
       );
     return map(foldResult(targets, start, queuePolicy), (d) =>
       withStatus({ ...d, outputs: targets.length > 0 ? wakeOf(s) : [] }, hubConfigMessage(config)),
@@ -26046,10 +26059,7 @@ const setRebalancePolicyTx = (s: TxScope, x: EntityTxOf<"setRebalancePolicy">): 
   const updated: AccountReplica = { ...child, rebalancePolicy: mapSet(policies, Number(tokenId), policy) };
   const requests = hubConfigOf(s.state) === undefined ? autoRebalance(updated, s.state.id) : [];
   if (requests.length === 0) return ok({ ...putChild(s.state, s.replicas, to, updated), outputs: [] });
-  return map(admitAt(updated, requests, s.state.id, L0_CLOCK, s.ctx.verify), (admitted) => ({
-    ...putChild(s.state, s.replicas, to, admitted),
-    outputs: wakeOf(s),
-  }));
+  return ok({ ...putChild(s.state, s.replicas, to, stageReturned(updated, requests)), outputs: wakeOf(s) });
 };
 /** og's certified runtimeOutput lane: a cross-j command from a sibling hub, authorized, then folded as a nested run. */
 const runtimeOutputTx = (s: TxScope, x: EntityTxOf<"runtimeOutput">): Result<Draft, EntityError> => {
@@ -26308,11 +26318,11 @@ export const foldTx = (
     processHtlcTimeouts: (x) => ok(processHtlcTimeoutsTx(s, x)),
     disputeStart: (x) => disputeStartTx(s, x),
     setRebalancePolicy: (x) => setRebalancePolicyTx(s, x),
-    settle_propose: (x) => settlePropose(skip, x.data, settleQueue(ctx)),
-    settle_update: (x) => settleUpdate(skip, x.data, settleQueue(ctx)),
+    settle_propose: (x) => settlePropose(skip, x.data, stageSettle),
+    settle_update: (x) => settleUpdate(skip, x.data, stageSettle),
     settle_approve: (x) => settleApprove(skip, x.data),
-    settle_execute: (x) => settleExecute(skip, x.data, ctx.verify, settleQueue(ctx), ctx.jReplicas),
-    settle_reject: (x) => settleReject(skip, x.data, settleQueue(ctx)),
+    settle_execute: (x) => settleExecute(skip, x.data, ctx.verify, stageSettle, ctx.jReplicas),
+    settle_reject: (x) => settleReject(skip, x.data, stageSettle),
     // og cross-j setup handlers (setup.ts) and the certified runtimeOutput lane (consensus/frame/application.ts
     // applyRuntimeOutput)
     prepareCrossJurisdictionSwap: (x) => cross(crossPrepare(view(), x.data.route)),
@@ -26419,15 +26429,14 @@ const applyCommittedCancels = (
     })),
   );
 };
-/** Each cancel's resolve admitted alone; an Account that is missing or refuses it keeps its state. */
+/** Each cancel's resolve staged alone on its Account (og applyAccountInput enqueue); a missing Account skips it. */
 const admitCancelResolves = (d: Draft, txs: readonly BookTx[]): Draft =>
   txs.reduce((acc, { accountId, tx }) => {
     const id = accountId as EntityId;
     const child = acc.accountReplicas.get(id);
-    const admitted = child === undefined ? undefined : admit(child, [tx], acc.state.id);
-    return admitted !== undefined && admitted.ok
-      ? { ...acc, ...putChild(acc.state, acc.accountReplicas, id, admitted.value) }
-      : acc;
+    return child === undefined
+      ? acc
+      : { ...acc, ...putChild(acc.state, acc.accountReplicas, id, stageEnqueue(child, [tx])) };
   }, d);
 /**
  * og applySwapCancelRequests: a request whose cross-j book lives on a sibling hub becomes a removal request there; the
@@ -26479,7 +26488,10 @@ const matcherBatches = (
       return ok(mapSet(batches, accountId, [...(batches.get(accountId) ?? []), tx]));
     },
   );
-/** og admitOrderbookAccountTxBatch: one Account's matcher txs admitted together; a short admission halts. */
+/**
+ * og admitOrderbookAccountTxBatch: one Account's matcher txs staged together. og halts on a short admission
+ * (ORDERBOOK_ACCOUNT_TX_ADMISSION_FAILED), but its stage reports every staged tx taken.
+ */
 const admitMatcherBatch = (
   at: Folded,
   [accountId, txs]: readonly [string, readonly AccountTx[]],
@@ -26490,15 +26502,7 @@ const admitMatcherBatch = (
       `ORDERBOOK_ACCOUNT_TX_ACCOUNT_MISSING: account=${accountId} entity=${at.state.id} tx=${txs[0]?.type ?? ""}`,
     );
   }
-  const queued = chain(partyOf(replicaId(child), at.state.id), (p) => enqueue(child, txs, p.left));
-  const admitted = queued.ok ? queued.value.queued.length : 0;
-  const { left, right } = child.state.account.id;
-  if (!queued.ok || admitted !== txs.length) {
-    return invariant(
-      `ORDERBOOK_ACCOUNT_TX_ADMISSION_FAILED: account=${left}:${right} expected=${txs.length} admitted=${admitted}`,
-    );
-  }
-  return ok(putChild(at.state, at.accountReplicas, accountId as EntityId, queued.value.replica));
+  return ok(putChild(at.state, at.accountReplicas, accountId as EntityId, stageEnqueue(child, txs)));
 };
 /**
  * og commitOrderbookMatchResult: the matcher's Account txs are admitted per Account, its books and pair dimensions
@@ -26661,6 +26665,13 @@ const arrivedReplicas = (
  * those arrivals commit, and whose mempool still holds work, is primed (ascending, with the Accounts proposable before
  * the frame) ahead of every Account the tx loop touches.
  */
+/** og's outbound phase: every Account admits what this frame staged on it, before any Account proposes. */
+const admitAllStaged = (d: Draft): Result<Draft, EntityError> => {
+  const admitOne = ([peer, c]: readonly [EntityId, AccountReplica]) =>
+    map(admitStaged(c, d.state.id), (a) => [peer, a] as const);
+  const admitted = traverse([...d.accountReplicas], admitOne);
+  return map(admitted, (rows) => ({ ...d, accountReplicas: new Map(rows) }));
+};
 const primedAccounts = (arrived: Replicas): readonly EntityId[] =>
   [...arrived]
     .filter(([, c]) => arrivedProposable(c))
@@ -26690,14 +26701,13 @@ export const foldTxs = (
   // Account transition
   const setupPhase = txs.some(crossSetupTx);
   if (setupPhase && txs.some(accountTransitionTx)) return invariant("CROSS_J_SETUP_ACCOUNT_TRANSITION_MIXED");
-  const queue = settleQueue(ctx);
   /**
    * og finishAuthorityTransitionOnly (a handover, or a J range certifying the config board): after the settlement
    * continuation, no Account work and no post-tx phases; the current profile is re-certified even when its bytes did
    * not change.
    */
   const authorityOnly = (folded: FoldedTxs): Result<FoldedTxs, EntityError> =>
-    chain(materializeContinuation(folded.draft, ctx, queue), (d) =>
+    chain(chain(materializeContinuation(folded.draft, ctx, stageSettle), admitAllStaged), (d) =>
       map(profileHashToSign(state, replicas, d, true), (draft) => ({ ...folded, draft })),
     );
   /**
@@ -26707,10 +26717,10 @@ export const foldTxs = (
    * og refreshChangedAccountCommitments then re-arms a changed certified frame's board Hanko refresh.
    */
   const proposeAfter = (folded: FoldedTxs): Result<FoldedTxs, EntityError> => {
-    const continued = materializeContinuation(folded.draft, ctx, queue);
+    const continued = materializeContinuation(folded.draft, ctx, stageSettle);
     const booked = chain(continued, (d) => bookPhase(d, ctx.timestamp));
     return chain(
-      chain(booked, (d) => materializeSettlements(d, ctx, arrived)),
+      chain(chain(booked, (d) => materializeSettlements(d, ctx, arrived)), admitAllStaged),
       (settled) => {
         const touched = settled.touched ?? [];
         // an Account this frame opened and nothing else touched is not proposable yet (og openAccount)
@@ -35491,16 +35501,14 @@ const appliedJBlock =
  * joins the proposal worklist (markProposableAccount, a set: first admission wins), in that order. A claim for a
  * missing or non-active Account, or one the Account refuses, is skipped.
  */
-const admitClaims = (draft: Draft, claims: readonly AccountTxTarget[], self: EntityId, ctx: FoldContext): Draft =>
+const admitClaims = (draft: Draft, claims: readonly AccountTxTarget[]): Draft =>
   claims.reduce((d, op) => {
     const peer = op.accountId as EntityId;
     const child = d.accountReplicas.get(peer);
     if (child === undefined || !liveAccount(child)) return d;
-    const admitted = admitAt(child, [op.tx], self, L0_CLOCK, ctx.verify);
-    if (!admitted.ok) return d;
     const touched = d.touched ?? [];
     const marked = touched.includes(peer) ? touched : [...touched, peer];
-    return { ...d, ...putChild(d.state, d.accountReplicas, peer, admitted.value), touched: marked };
+    return { ...d, ...putChild(d.state, d.accountReplicas, peer, stageReturned(child, [op.tx])), touched: marked };
   }, draft);
 /**
  * og handleJEventEntityTx + applyJEvent: the active proposer's signed range is validated before anything else, a
@@ -35558,7 +35566,7 @@ const entityJEvent = (d: Draft, data: JRec, ctx: FoldContext): Result<Draft, Ent
             head: certifiedHead(anchor),
             boards: knownBoards({ ...board }),
           };
-          return admitClaims({ ...step.draft, state: { ...applied, jFinality }, touched: [] }, claims, state.id, ctx);
+          return admitClaims({ ...step.draft, state: { ...applied, jFinality }, touched: [] }, claims);
         }),
       );
     });
