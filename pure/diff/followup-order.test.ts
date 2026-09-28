@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { seedOf, seedTag } from "./seed.ts";
 import { x25519 } from "@noble/curves/ed25519";
 import {
-  EMPTY_HTLC_INFRA, accountId, committedFollowups, createEntity, crontabOf, withCrontab, type Crontab, encryptOpaqueHtlc, genesisReplica, hashHtlcSecret, htlcEnvelopeHash, isLeft, replicaId, tokenId, wireTx,
+  EMPTY_HTLC_INFRA, accountId, admitStaged, committedFollowups, createEntity, crontabOf, withCrontab, type Crontab, encryptOpaqueHtlc, genesisReplica, hashHtlcSecret, htlcEnvelopeHash, isLeft, replicaId, tokenId, wireTx,
   type AccountFrame, type AccountReplica, type AccountTx, type Draft, type Effect, type EntityId, type LendingBook, type PaybookEntry, type PreparedHtlcEntry, type SwapOffer,
 } from "../xln.ts";
 import { ALICE, BOB, CAROL, TERMS, aliceAddr, unwrap } from "../xln_run.ts";
@@ -15,6 +15,7 @@ import { applySuccessfulAccountInput } from "../../core/entity/tx/handlers/accou
 import { createBookIntentProgram, applyBookIntentProgram } from "../../core/entity/books/book-intents.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import { admitLocalAccountTx } from "../../core/account/input/local-tx-admission.ts";
+import { shouldSuppressReturnedAccountTx } from "../../core/entity/consensus/frame/tx-effects.ts";
 import { EntityAccountCandidateMap, PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
 import { ogOf } from "./og-state.ts";
 
@@ -193,14 +194,22 @@ describe(seedTag("followup-order: committed-frame followups of one accountInput 
       expect(`${i}:${rw.ok ? "ok" : "refused"}`).toBe(`${i}:${refused === undefined ? "ok" : "refused"}`);
       bump(refused === undefined ? "accepted" : refused.split(/[:\s]/)[0] ?? "");
       if (!rw.ok) continue;
-      // og applyEntityTxReturnedEffects -> applyLocalAccountEffects: each returned tx is admitted alone, in order; an admitting Account is marked proposable
+      // og applyEntityTxReturnedEffects -> applyLocalAccountEffects: each returned tx an unsuppressed Account gets goes to
+      // og's Account stage, which reports it admitted (the Account is marked proposable) and admits it, deduped by
+      // local-tx-admission.ts, after the frame
       const d = rw.value, ogTargets: any[] = effectsOg.accountTxs, marked: string[] = [peer];
       for (const t of ogTargets) {
         const account = ogState.accounts.get(t.accountId.toLowerCase());
-        if (account !== undefined && admitLocalAccountTx(account, t.tx, {} as never)) marked.push(t.accountId.toLowerCase());
+        if (account === undefined || shouldSuppressReturnedAccountTx(account)) continue;
+        marked.push(t.accountId.toLowerCase());
+        admitLocalAccountTx(account, t.tx, {} as never);
       }
-      // returned Account txs: each Account's mempool, in og's order
-      for (const p of [peer, other]) expect(sortedJson((d.accountReplicas.get(p)?.mempool ?? []).map((t) => ogTx(t, self, p)))).toBe(sortedJson(ogState.accounts.get(p).mempool));
+      // returned Account txs: each Account's mempool once the frame's staged txs are admitted, in og's order
+      const admitted = (p: EntityId): readonly AccountTx[] => {
+        const c = d.accountReplicas.get(p);
+        return c === undefined ? [] : unwrap(admitStaged(c, self)).mempool;
+      };
+      for (const p of [peer, other]) expect(sortedJson(admitted(p).map((t) => ogTx(t, self, p)))).toBe(sortedJson(ogState.accounts.get(p).mempool));
       // the worklist: the input's Account, then each Account a returned tx was admitted to, in admission order
       expect([...new Set<string>(d.touched ?? [])]).toEqual([...new Set(marked)]);
       expect(sortedJson((d.runtimeEvents ?? []).map((e) => ({ eventName: e.eventName, data: e.data })))).toBe(sortedJson(effectsOg.candidateEffects.filter((e: any) => e.kind === "runtimeEvent").map((e: any) => ({ eventName: e.eventName, data: e.data }))));

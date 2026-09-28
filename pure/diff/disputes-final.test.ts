@@ -54,6 +54,10 @@ import { applyAccountDisputeFinality as ogApplyAccountDisputeFinality } from "..
 import { applyFinality } from "../xln.ts";
 import { getDisputeHankoRequirementError as ogDisputeHankoRequirement } from "../../core/account/consensus/dispute/hanko.ts";
 import { disputeRequirement, disputeRequirementText } from "../xln.ts";
+import { admitStaged } from "../xln.ts";
+/** ALICE's Account mempool once her frame's staged txs are admitted (og's Account stage admits after the frame). */
+const admittedOf = (c: AccountReplica | undefined): readonly unknown[] =>
+  (c === undefined ? [] : (unwrap(admitStaged(c, ALICE)).mempool ?? []));
 import { jbOfOg, ogJb, ogReach, withOgJb } from "./og-state.ts";
 
 let seed = seedOf(29);
@@ -426,7 +430,7 @@ describe(seedTag("disputes-final: finalized J events on the Entity (og entity/tx
       const ogResolves = og.value.accountTxs.filter((t: any) => t.accountId === BOB && ogBob.status === "active")
         .filter((t: any) => { const fp = txFingerprint(t.tx); if (queuedFps.has(fp)) return false; queuedFps.add(fp); return true; })
         .filter((t: any) => t.tx.type === "htlc_resolve").map((t: any) => [t.tx.data.lockId, t.tx.data.secret]);
-      const rwResolves = (d.accountReplicas.get(BOB)!.mempool ?? []).slice(bobBefore).filter((t: any) => t.type === "htlc_resolve").map((t: any) => [t.lockId, t.secret]);
+      const rwResolves = admittedOf(d.accountReplicas.get(BOB)).slice(bobBefore).filter((t: any) => t.type === "htlc_resolve").map((t: any) => [t.lockId, t.secret]);
       expect([i, rwResolves]).toEqual([i, ogResolves]);
       const rwOut = d.outputs.flatMap((o: any) => o.input.txs.filter((t: any) => t.type === "runtimeOutput").map((t: any) => ({ entityId: o.to, signerId: String(o.signerId), txs: t.data.entityTxs })));
       expect([i, stableJson(rwOut)]).toEqual([i, stableJson(og.value.outputs.map((o: any) => ({ entityId: o.entityId, signerId: o.signerId, txs: o.entityTxs })))]);
@@ -594,7 +598,7 @@ describe(seedTag("disputes-final: unsafe Account frames on the Entity (og entity
       expect([i, after === undefined ? undefined : (unwrap(installedAccount(ALICE, BOB, after)) as any).rejectedFrameEvidence]).toEqual([i, ogCommitted]);
       if (ogCommitted !== undefined) bump(kinds, `committed:${ogCommitted.reason.slice(0, 20)}`);
       expect([i, d.outputs.map((o: any) => [o.to, o.input?.txs?.map((t: any) => t.type).join(",")])]).toEqual([i, ogOut.value.outputs.map((o: any) => [o.entityId, o.entityTxs.map((t: any) => t.type).join(",")])]);
-      const rwResolves = (d.accountReplicas.get(CAROL)?.mempool ?? []).filter((t: any) => t.type === "htlc_resolve").map((t: any) => [t.lockId, t.secret]);
+      const rwResolves = admittedOf(d.accountReplicas.get(CAROL)).filter((t: any) => t.type === "htlc_resolve").map((t: any) => [t.lockId, t.secret]);
       expect([i, rwResolves]).toEqual([i, effects.accountTxs.filter((t: any) => String(t.accountId).toLowerCase() === CAROL.toLowerCase()).map((t: any) => [t.tx.data.lockId, t.tx.data.secret])]);
       for (const m of msgs) bump(kinds, String(m).slice(0, 60));
       if (rwResolves.length > 0) bump(kinds, "resolve");
@@ -700,7 +704,7 @@ describe(seedTag("disputes-final: crossJurisdictionSalvage / resolveHtlcLock on 
       expect([i, d.outputs.map((o: any) => [o.to, o.input?.txs?.length ?? -1])]).toEqual([i, ogOut.value.outputs.map((o: any) => [o.entityId, o.entityTxs.length])]);
       const bob = d.accountReplicas.get(BOB)!;
       if (bob._tag !== "disputed") {
-        const queued = bob.mempool.filter((t: any) => t.type === "htlc_resolve").map((t: any) => [BOB, t.lockId, t.secret]);
+        const queued = admittedOf(bob).filter((t: any) => t.type === "htlc_resolve").map((t: any) => [BOB, t.lockId, t.secret]);
         expect([i, queued]).toEqual([i, ogOut.value.accountTxs.map((t: any) => [t.accountId, t.tx.data.lockId, t.tx.data.secret])]);
         bump(kinds, "queued");
       }

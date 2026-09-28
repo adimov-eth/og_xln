@@ -24,7 +24,7 @@ import { markWorkingOrderbookOffer, normalizeSwapOfferForOrderbook } from "../..
 
 // ---- rewrite ----
 import {
-  bookCommitmentHash, configBoardHash, createEntity, entityId, entityTransactionAction, foldTx, foldTxs, hashHtlcSecret, hashProposalAction,
+  admitStaged, bookCommitmentHash, configBoardHash, createEntity, entityId, entityTransactionAction, foldTx, foldTxs, hashHtlcSecret, hashProposalAction,
   installedAccount, offersForMatching, processOrderbookSwaps, tokenId, wireEntityTx, wireOf,
   type AccountReplica, type BookTx, type EntityId, type EntityReplica, type EntityState, type EntityTx, type HtlcLock, type Hub, type HubAccount,
   type OrderbookExt, type SwapOffer, type SwapOfferEvent, type WireAccountTx,
@@ -79,7 +79,8 @@ describe("regressions: finalized SecretRevealed on the Entity", () => {
     const rw: EntityState = { ...created, crossJurisdictionSwaps: new Map() as never, paybook: { entries: new Map(), feesEarned: 0n } };
     const replica = { ...base, state: { ...base.state, locks } } as AccountReplica;
     const draft = unwrap(foldTx(rw, new Map([[BOB, replica]]), { type: "j_event", data: data as never }, { verify: verifiers.verify, timestamp: BigInt(T0) }));
-    const rwMempool = (draft.accountReplicas.get(BOB)!.mempool ?? []).map((t: any) => [t.type, t.lockId, t.secret]);
+    // the Account's mempool once the frame's staged txs are admitted (og's Account stage admits after the frame)
+    const rwMempool = unwrap(admitStaged(draft.accountReplicas.get(BOB)!, ALICE)).mempool.map((t: any) => [t.type, t.lockId, t.secret]);
     // og: applyJEvent, then og's own Account admission of what it returned
     const ogLocks = new Map([...locks].map(([k, l]) => [k, { ...l, tokenId: 1 }]));
     const ogAccount: any = { status: "active", state: { jNonce: 0, leftEntity: left, rightEntity: base.state.account.id.right, locks: ogLocks, disputeConfig: { ...TERMS.disputeConfig } } };
