@@ -40,7 +40,9 @@ export const walk = async (seed: number, moves: readonly Drawn[], world: readonl
     await w.chain.debugFundReservesBatch(w.ids.map((entityId) => ({ entityId, tokenId: 1, amount: 10n ** 9n })));
     const funded = await lane.tick([], []);
     if (funded.length > 0) return { coverage, diffs: funded };
-    const covered = () => moves.every(([k]) => coverage.entityTxs.has(k));
+    // covered once every drawn kind has committed and every world move has been taken
+    const covered = () =>
+      moves.every(([k]) => coverage.entityTxs.has(k)) && world.every(([name]) => (coverage.actions[name] ?? 0) > 0);
     const more = untilCovered(FRAMES, covered, FRAMES * 6);
     // a halted og Runtime refuses every later frame, so a halt both sides agree on ends the run; so does a departure
     // (departures.ts), after which the two states differ
@@ -105,7 +107,8 @@ const one = async (area: Area | undefined, seed: number): Promise<number> => {
   const { coverage, diffs } = await walk(seed, rowsFor(area), worldIn(scopeOf(area)));
   console.log(walkLine(seed, coverage));
   diffs.forEach((d) => console.log(`  DIFF ${d}`));
-  console.log(`WALKED ${JSON.stringify({ seed, diffs: diffs.length, kinds: [...coverage.entityTxs] })}`);
+  const moves = Object.keys(coverage.actions);
+  console.log(`WALKED ${JSON.stringify({ seed, diffs: diffs.length, kinds: [...coverage.entityTxs], moves })}`);
   return diffs.length > 0 ? 1 : 0;
 };
 
@@ -117,10 +120,14 @@ const many = (args: Args): number => {
     const out = child.stdout.toString();
     process.stdout.write(out.split("\n").filter((l) => !l.startsWith("WALKED ")).join("\n"));
     const walked = out.split("\n").find((l) => l.startsWith("WALKED "));
-    const kinds: readonly string[] = walked === undefined ? [] : JSON.parse(walked.slice(7)).kinds;
-    return { ok: child.exitCode === 0 && walked !== undefined, kinds };
+    const parsed: { kinds: readonly string[]; moves: readonly string[] } =
+      walked === undefined ? { kinds: [], moves: [] } : JSON.parse(walked.slice(7));
+    return { ok: child.exitCode === 0 && walked !== undefined, kinds: parsed.kinds, moves: parsed.moves };
   });
-  const missed = uncovered(rowsFor(args.area), new Set(runs.flatMap((r) => r.kinds)));
+  // a world move no walk ever takes is dead coverage, like a drawn kind no walk commits
+  const taken = new Set(runs.flatMap((r) => r.moves));
+  const untaken = worldIn(scopeOf(args.area)).map(([name]) => name).filter((name) => !taken.has(name));
+  const missed = [...uncovered(rowsFor(args.area), new Set(runs.flatMap((r) => r.kinds))), ...untaken];
   if (missed.length > 0) console.log(`UNCOVERED ${missed.join(",")}`);
   const failed = runs.filter((r) => !r.ok).length;
   console.log(`${failed === 0 && missed.length === 0 ? "OK" : "FAIL"}: ${runs.length} walks, ${failed} failed`);
