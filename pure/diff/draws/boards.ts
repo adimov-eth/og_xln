@@ -71,7 +71,7 @@ import { unwrap } from "../../xln_run.ts";
 import { entityTransactionAction, type EntityTx, type ProposalAction } from "../../xln.ts";
 import { SIGNERS } from "../lane.ts";
 import { TOKEN, type World } from "../world.ts";
-import { arises, drawn, pending, type Move, type Moves, type WorldMoves } from "./areas.ts";
+import { arises, drawn, pending, type Move, type Moves, type Step, type WorldMoves } from "./areas.ts";
 import { amount, one, PARTIES, pick } from "./world-view.ts";
 
 // ---- the domain: an Entity's board, its open proposals, its provider action ----
@@ -103,7 +103,6 @@ const EXTERNAL = SIGNERS.map((s) => s.toLowerCase());
 const asBytes32 = (address: string): string => `0x${address.slice(2).padStart(64, "0")}`;
 
 const entity = (w: World, x: number): OgBoardEntity | undefined => w.ogState(x) as OgBoardEntity | undefined;
-const signerOf = (x: number): string => SIGNERS[x]!.toLowerCase();
 const where = <T>(xs: readonly T[], keep: (x: T) => boolean): readonly T[] => xs.filter(keep);
 
 /** og resolveObserverCertifiedBoardRecord, as `observer` sees `subject`'s board. */
@@ -118,14 +117,58 @@ const selfCertified = (w: World, x: number): OgBoardRecord | undefined => certif
 const actionOf = (w: World, x: number): OgActionState =>
   entity(w, x)?.entityProviderActionState ?? { confirmedNonce: 0n };
 
-// ---- propose ----
+// ---- board governance: an author on an Entity's board, its open proposals, its ballots ----
 
-/** og assertEntityProposalCapacity: room on the board, and no open proposal by this proposer. */
-const canPropose = (w: World, x: number): boolean => {
-  const proposals = [...(entity(w, x)?.proposals.values() ?? [])];
-  return entity(w, x) !== undefined
-    && proposals.length < LIMITS.MAX_PENDING_PROPOSALS_PER_ENTITY
-    && proposals.every((p) => p.proposer.toLowerCase() !== signerOf(x));
+/** A board member authoring on its Entity's behalf: the Entity, and the member as an index into SIGNERS. */
+type Author = { readonly entity: number; readonly member: number };
+/** og EntityReplica (entity/types.ts), as far as a draw reads it. */
+type OgReplica = {
+  readonly entityId: string;
+  readonly signerId: string;
+  readonly state: OgBoardEntity & { readonly height: number };
+  readonly mempool: readonly unknown[];
+  readonly proposal?: unknown;
+  readonly lockedFrame?: unknown;
+};
+const signerId = (member: number): string => SIGNERS[member]!.toLowerCase();
+/** The Entities whose boards the walk governs: the sole-signer parties, and every multi-signer board. */
+const governed = (w: World): readonly number[] => [...PARTIES, ...w.boards];
+/** og's replicas of Entity x, one per board member. */
+const replicasOf = (w: World, x: number): readonly OgReplica[] =>
+  [...(w.lane.env.state.eReplicas.values() as Iterable<OgReplica>)].filter((r) => r.entityId === w.ids[x]);
+/**
+ * Nothing of Entity x is in flight: every member's replica holds the same committed height, with an empty mempool and
+ * no open frame. A draw reads committed state; an input still in flight (a vote forwarded to the proposer, a frame
+ * awaiting precommits) could record the vote or close the proposal under the drawn tx, and og throws on that (a halt).
+ */
+const settled = (w: World, x: number): boolean => {
+  const replicas = replicasOf(w, x);
+  const heights = new Set(replicas.map((r) => r.state.height));
+  return replicas.length === w.signersOf(x).length
+    && heights.size === 1
+    && replicas.every((r) => r.mempool.length === 0 && r.proposal === undefined && r.lockedFrame === undefined);
+};
+/** The proposing member's (board index 0) committed view of Entity x. */
+const committedView = (w: World, x: number): OgBoardEntity | undefined =>
+  replicasOf(w, x).find((r) => r.signerId.toLowerCase() === signerId(w.signersOf(x)[0]!))?.state;
+const openProposals = (w: World, x: number): readonly OgProposal[] =>
+  [...(committedView(w, x)?.proposals.values() ?? [])];
+/** Every member of every settled governed board. */
+const authors = (w: World): readonly Author[] =>
+  governed(w)
+    .filter((entity) => settled(w, entity))
+    .flatMap((entity) => w.signersOf(entity).map((member) => ({ entity, member })));
+/** Submits `txs` to the author's Entity as the author (og binds the command's signer as proposer or voter). */
+const authored = (w: World, a: Author, txs: readonly EntityTx[]): Step => ({
+  runtimeTxs: [],
+  users: [w.user(a.entity, txs, a.member)],
+});
+
+/** og assertEntityProposalCapacity: room on the board, and no open proposal by this author. */
+const canPropose = (w: World) => (a: Author): boolean => {
+  const open = openProposals(w, a.entity);
+  return open.length < LIMITS.MAX_PENDING_PROPOSALS_PER_ENTITY
+    && open.every((p) => p.proposer.toLowerCase() !== signerId(a.member));
 };
 /** A collective action the board may approve: a message, or a profile edit the Entity then applies. */
 const proposalAction = (w: World, x: number): ProposalAction => {
@@ -140,21 +183,13 @@ const proposalAction = (w: World, x: number): ProposalAction => {
   return pick(w, actions);
 };
 
-// ---- vote ----
-
-type Ballot = { readonly entity: number; readonly proposal: OgProposal; readonly voter: number };
-/**
- * Every (Entity, open proposal, member) where the member has not voted. The lane submits as the Entity's own signer,
- * so a member is a signer this world hosts under that index.
- */
+/** An author who has not voted on an open proposal of its board (og ENTITY_PROPOSAL_DUPLICATE_VOTE otherwise). */
+type Ballot = Author & { readonly proposal: OgProposal };
 const ballots = (w: World): readonly Ballot[] =>
-  PARTIES.flatMap((x) => {
-    const members = entity(w, x)?.config.validators.map((v) => v.toLowerCase()) ?? [];
-    const open = [...(entity(w, x)?.proposals.values() ?? [])];
-    return open.flatMap((proposal) =>
-      where([x], (v) => members.includes(signerOf(v)) && !proposal.votes.has(signerOf(v)))
-        .map((voter) => ({ entity: x, proposal, voter })));
-  });
+  authors(w).flatMap((a) =>
+    openProposals(w, a.entity)
+      .filter((proposal) => !proposal.votes.has(signerId(a.member)))
+      .map((proposal) => ({ ...a, proposal })));
 
 // ---- r2e ----
 
@@ -211,7 +246,6 @@ const boardHash = (w: World): string =>
 // ---- the moves ----
 
 type Waiting =
-  | "vote"
   | "entityProviderTransfer"
   | "entityProviderReleaseControlShares"
   | "entityProviderCancelAction"
@@ -219,17 +253,6 @@ type Waiting =
   | "entityProviderActivateBoard";
 /** Draws whose preconditions the base world does not give yet; each row moves into BOARDS when the world does. */
 export const WAITING: { readonly [K in Waiting]: Move } = {
-  vote: drawn(
-    (w) => ballots(w).length > 0,
-    (w) => {
-      const ballot = pick(w, ballots(w));
-      const choice: Choice = pick(w, ["yes", "no"] as const);
-      return one(w, ballot.voter, [{
-        type: "vote",
-        data: { proposalId: ballot.proposal.id, voter: signerOf(ballot.voter), choice },
-      }]);
-    },
-  ),
   entityProviderTransfer: drawn(
     (w) => actionReady(w).length > 0,
     (w) => {
@@ -282,16 +305,31 @@ export const WAITING: { readonly [K in Waiting]: Move } = {
   ),
 };
 
+/** world.ts boardJoins: the 2-of-3 board is in the world only under WALK_BOARD=1, and only then can a vote be drawn. */
+const BOARD_WALK = process.env["WALK_BOARD"] === "1";
 const NUMBERED = "a numbered Entity with a certified board record (the Boards world)";
 export const BOARDS: Moves<"boards"> = {
   propose: drawn(
-    (w) => PARTIES.some((x) => canPropose(w, x)),
+    (w) => authors(w).some(canPropose(w)),
     (w) => {
-      const x = pick(w, where(PARTIES, (p) => canPropose(w, p)));
-      return one(w, x, [{ type: "propose", data: { proposer: signerOf(x), action: proposalAction(w, x) } }]);
+      const a = pick(w, authors(w).filter(canPropose(w)));
+      const action = proposalAction(w, a.entity);
+      return authored(w, a, [{ type: "propose", data: { proposer: signerId(a.member), action } }]);
     },
   ),
-  vote: pending("a board of several signers, and a lane that submits as any member"),
+  vote: BOARD_WALK
+    ? drawn(
+      (w) => ballots(w).length > 0,
+      (w) => {
+        const ballot = pick(w, ballots(w));
+        const choice: Choice = pick(w, ["yes", "no"] as const);
+        return authored(w, ballot, [{
+          type: "vote",
+          data: { proposalId: ballot.proposal.id, voter: signerId(ballot.member), choice },
+        }]);
+      },
+    )
+    : pending("the 2-of-3 board, which joins the world under WALK_BOARD=1"),
   boardHandover: arises("an on-chain BoardActivated in a j_event"),
   r2e: drawn(
     (w) => withdrawers(w).length > 0,
