@@ -262,10 +262,21 @@ const nextTimeout = (w: World): number | undefined => {
 };
 
 /**
+ * A finalize already on its way for this Account, from either side: queued, drafted, in flight or recovered. Such an
+ * Account closes whether or not the window runs out, so its closing proves nothing about the jump.
+ */
+const finalizing = (w: World, s: Side): boolean =>
+  [s, sideOf(w, s.y, s.x)].some(
+    (side) =>
+      side !== undefined
+      && ((started(side) && side.stage.finalizeQueued) || inBatch(w, side, "disputeFinalizations")),
+  );
+
+/**
  * `clock`: time passes to the next challenge-window end, as og's advanceScenarioPastDisputeTimeout does. At the
  * lane's 100 ms per frame the world's 60 s windows would take 600 frames. The jump has landed once a dispute whose
  * window it closed is finalized on chain (closed), which only the dispute_deadline hook or a finalize after the
- * window can do.
+ * window can do; an Account with a finalize already on its way does not count.
  */
 export const DISPUTES_WORLD: WorldMoves = {
   clock: {
@@ -276,7 +287,7 @@ export const DISPUTES_WORLD: WorldMoves = {
     },
     outcome: (w) => {
       const until = nextTimeout(w) ?? 0;
-      const expiring = sides(w).filter((s) => onChainOpen(w, s) && s.stage.timeoutMs <= until);
+      const expiring = sides(w).filter((s) => onChainOpen(w, s) && s.stage.timeoutMs <= until && !finalizing(w, s));
       return (later) => expiring.some((s) => sideOf(later, s.x, s.y)?.stage._tag === "closed");
     },
   },
