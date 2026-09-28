@@ -9842,9 +9842,14 @@ export type Preview = {
   readonly frameProof: LocalProof; readonly dispute: DisputePlan;
   readonly deferred: readonly WireAccountTx[]; readonly floor: number;
 };
+/** og AccountFailedHtlcLock: an htlc_lock the proposal removed, by hashlock, with og's rejection text. */
+export type FailedHtlcLock = { readonly hashlock: string; readonly reason: string };
+/** `failedLocks`: og ProposeAccountFrameResult failedHtlcLocks in window order, on a frame and an idle one alike. */
 export type ProposalPlan =
-  | Tagged<"frame", { preview: Preview }>
-  | Tagged<"idle", { refused: AccountReplicaError; deferred: readonly WireAccountTx[] }>;
+  | Tagged<"frame", { preview: Preview; failedLocks: readonly FailedHtlcLock[] }>
+  | Tagged<"idle", {
+    refused: AccountReplicaError; deferred: readonly WireAccountTx[]; failedLocks: readonly FailedHtlcLock[];
+  }>;
 /**
  * og proposal/transactions.ts throwCriticalProposalFailure: a refused matcher/settlement/cross-j-owned tx halts with
  * og's text; others are dropped.
@@ -9898,21 +9903,32 @@ const refusalHalt = (
   const halt = retried ? null : proposalHaltText(tx, f.message);
   return halt === null ? undefined : { _tag: "proposal_halt", txType: tx.type, cause: error, message: halt };
 };
+/** The refused txs that stay queued for retry, and the removed htlc_locks og reports as failed. */
+type RefusalOutcome = { readonly kept: readonly WireAccountTx[]; readonly failedLocks: readonly FailedHtlcLock[] };
 /**
  * `retry`: og proposalFailureDisposition's extra `retry` cases beyond the capacity/freeze refusals. `failure`: og's
  * text for the refused tx at an index; in window order the first thrown handler (og applyProposalTransaction rethrows)
- * or non-retried critical refusal halts the proposal. Otherwise the answer is the refused txs that stay queued.
+ * or non-retried critical refusal halts the proposal. Otherwise the answer is the refused txs that stay queued, and
+ * each removed htlc_lock with og's rejection text (og classifyFailedTransaction failedHtlcLocks).
  */
 const proposalRefusals = (
   mempool: readonly WireAccountTx[], refused: Refusals,
   retry: RetryRule = () => false, failure: FailureText = (_, e) => refusedTx(e._tag),
-): Result<readonly WireAccountTx[], AccountReplicaError> => {
+): Result<RefusalOutcome, AccountReplicaError> => {
   const retried = (index: number, error: BodyError): boolean =>
     deferredRefusal(error) || retry(txAt(mempool, index), error);
   const halted = refused.reduce<AccountReplicaError | undefined>((found, { index, error }) =>
     found ?? refusalHalt(txAt(mempool, index), error, failure(index, error), retried(index, error)), undefined);
+  const failedLock = ({ index, error }: Refusals[number]): readonly FailedHtlcLock[] => {
+    const tx = txAt(mempool, index);
+    if (tx.type !== "htlc_lock" || retried(index, error)) return [];
+    return [{ hashlock: tx.hashlock, reason: failure(index, error).message }];
+  };
   return halted === undefined
-    ? ok(refused.flatMap(({ index, error }) => (retried(index, error) ? [txAt(mempool, index)] : [])))
+    ? ok({
+      kept: refused.flatMap(({ index, error }) => (retried(index, error) ? [txAt(mempool, index)] : [])),
+      failedLocks: refused.flatMap(failedLock),
+    })
     : err(halted);
 };
 /** og tx-multiset.ts removeCommittedTxsFromMempool: drop each removed tx once, by exact bytes, in mempool order. */
@@ -9976,6 +9992,7 @@ const refreshableHanko = (r: OpenAccount): RetryRule => {
 const framePlan = (
   r: OpenAccount, party: Party, dt: DeltaTransformerRef | undefined,
   at: FoldAt, floor: number, folded: ProposalFold, deferred: readonly WireAccountTx[],
+  failedLocks: readonly FailedHtlcLock[],
 ): Result<ProposalPlan, AccountReplicaError> => {
   const built = all({ committed: commit(folded.state), stamped: stampClaims(folded.included, r.state, party.left) });
   return chain(built, ({ committed: { view, root }, stamped }) => {
@@ -9995,6 +10012,7 @@ const framePlan = (
           frame: { ...unhashed, stateHash }, draft: { state: folded.state, effects: folded.effects },
           frameProof, dispute, deferred, floor,
         },
+        failedLocks,
       })));
   });
 };
@@ -10007,13 +10025,12 @@ const planWindow = (
   const folded = proposalFold(r.state, window, ctx);
   const failure: FailureText = (index, e) =>
     accountTxFailure(lenientBefore(r.state, window, index, ctx), txAt(window, index), ctx, e, party.self, r.dispute);
-  const deferred = map(proposalRefusals(window, folded.refused, refreshableHanko(r), failure), (retried) =>
-    withoutAccountTxs(r.mempool, withoutAccountTxs(window, retried)));
-  return chain(deferred, (kept) => {
+  return chain(proposalRefusals(window, folded.refused, refreshableHanko(r), failure), ({ kept, failedLocks }) => {
+    const deferred = withoutAccountTxs(r.mempool, withoutAccountTxs(window, kept));
     const [firstRefusal] = folded.refused;
     return folded.included.length === 0 && firstRefusal !== undefined
-      ? ok({ _tag: "idle", refused: firstRefusal.error, deferred: kept })
-      : framePlan(r, party, a.dt, at, floor, folded, kept);
+      ? ok({ _tag: "idle", refused: firstRefusal.error, deferred, failedLocks })
+      : framePlan(r, party, a.dt, at, floor, folded, deferred, failedLocks);
   });
 };
 type PlanResult = Result<ProposalPlan, AccountReplicaError>;
@@ -18835,7 +18852,23 @@ const CROSS_SETUP_TXS: ReadonlySet<string> =
 const crossSetupTx = (tx: EntityTx): boolean => nestedFrameTxs(tx).some((n) => CROSS_SETUP_TXS.has(n.type));
 const accountTransitionTx = (tx: EntityTx): boolean =>
   nestedFrameTxs(tx).some((n) => n.type === "accountInput" || n.type === "crossJurisdictionFillNotice");
-type Proposing = { readonly draft: Draft; readonly frames: number };
+/** og AccountFailedHtlcLock, with the Account whose proposal removed it. */
+type AccountFailedLock = { readonly peer: EntityId; readonly lock: FailedHtlcLock };
+/**
+ * One pass of og's Account worker over a list of Accounts (ts-worker/worker.ts applyOutboundProposals): the Entity
+ * draft, the frames proposed, the Accounts it ran a proposal for (one worker effect each), the htlc_locks those
+ * proposals removed, and the resolves owed upstream for them.
+ */
+type Proposing = {
+  readonly draft: Draft;
+  readonly frames: number;
+  readonly attempted: readonly EntityId[];
+  readonly failed: readonly AccountFailedLock[];
+  readonly upstream: readonly AccountTxTarget[];
+};
+type Proposed = { readonly draft: Draft; readonly frames: number };
+type ProposeStep = (acc: Proposing, peer: EntityId) => Result<Proposing, EntityError>;
+const proposingFrom = (draft: Draft): Proposing => ({ draft, frames: 0, attempted: [], failed: [], upstream: [] });
 /** The propose input for a planned frame (with its pending Hankos) or an idle proposal, at the Entity clock. */
 const proposalInput = (
   plan: ProposalPlan,
@@ -18877,13 +18910,15 @@ const proposeOne =
         : crossOpeningSelection(draft.state, peer, child.mempool, ctx.siblings);
     return chain(cohort, (selected): Result<Proposing, EntityError> => {
       if (selected === null) return ok(acc);
+      // og worker: a proposable Account with a selection is one proposal effect, whatever its outcome
+      const tried: Proposing = { ...acc, attempted: [...acc.attempted, peer] };
       const dt = accountDt(ctx, child);
       const party = partyOf(replicaId(child), self);
       // the plan folds our own pending Hankos (a settlement hanko intent) the same way the proposal does
       const verify = pendingVerify(ctx.verify, self);
       const plan = planAccountProposal(child, self, clock, verify, selected, dt, ctx.boardAuthority);
-      if (!plan.ok) return accountThrew(plan.error) ? err(plan.error) : ok(acc);
-      if (!party.ok) return ok(acc);
+      if (!plan.ok) return accountThrew(plan.error) ? err(plan.error) : ok(tried);
+      if (!party.ok) return ok(tried);
       const input = proposalInput(plan.value, clock, selected) as Propose;
       const proposed = propose(child, input, {
         verify,
@@ -18891,13 +18926,65 @@ const proposeOne =
         deltaTransformer: dt,
       });
       const next = routed(draft.state, draft.accountReplicas, peer, proposed);
-      if (!next.ok) return accountThrew(next.error) ? err(next.error) : ok(acc);
+      if (!next.ok) return accountThrew(next.error) ? err(next.error) : ok(tried);
+      const failed = plan.value.failedLocks.map((lock): AccountFailedLock => ({ peer, lock }));
       return ok({
+        ...tried,
         draft: afterProposal(draft, next.value),
         frames: acc.frames + (plan.value._tag === "frame" ? 1 : 0),
+        failed: [...acc.failed, ...failed],
       });
     });
   };
+/**
+ * og proposeAccountFrameCandidate's failedHtlcLocks loop, for one lock: the route's followup (og
+ * failedProposalHtlcFollowup) on the paybook, and the resolve it owes upstream, which the worker admits later.
+ */
+const failedLockFollowup = (acc: Proposing, { lock }: AccountFailedLock): Proposing => {
+  const before = acc.draft.state.paybook ?? EMPTY_PAYBOOK;
+  const flow = failedProposalFollowup({ paybook: before, queue: [] }, lock, acc.draft.state.id);
+  return { ...acc, draft: withPaybookFlow(acc.draft, flow, before), upstream: [...acc.upstream, ...flow.queue] };
+};
+/**
+ * og provider.ts failedProposalContinuationRows: each resolve owed upstream is enqueued on its inbound Account, in
+ * order, and must be admitted exactly once.
+ */
+const admitUpstream = (d: Draft, target: AccountTxTarget, index: number): Result<Draft, EntityError> => {
+  const inbound = target.accountId.toLowerCase() as EntityId;
+  const child = d.accountReplicas.get(inbound);
+  // og's Entity text (frame/application.ts); the worker's own failure for a missing Account is not modelled
+  const hashlock = target.tx.type === "htlc_resolve" ? target.tx.lockId : "";
+  if (child === undefined) return invariant(`HTLC_FORWARD_FAILURE_ACCOUNT_MISSING:${hashlock}:${target.accountId}`);
+  const admitted = admit(child, [target.tx], d.state.id);
+  if (!admitted.ok || admitted.value.mempool.length !== child.mempool.length + 1) {
+    return invariant(`TS_ACCOUNT_WORKER_PROVIDER_GENERATED_ADMISSION:${index}:${inbound}`);
+  }
+  return ok({ ...d, ...putChild(d.state, d.accountReplicas, inbound, admitted.value) });
+};
+/** The inbound Accounts owed a resolve, in first-owed order (og provider.ts continuationProposalIds). */
+const owedAccounts = (p: Proposing): readonly EntityId[] =>
+  [...new Set(p.upstream.map((t) => t.accountId.toLowerCase() as EntityId))];
+/**
+ * og provider.ts's continuation, after every original proposal: a continuation proposal that removes an htlc_lock
+ * halts (HTLC_FOLLOWUP_CASCADE, the first one); then entity-stage.ts prepareEntityAccountOutbound halts when an Account
+ * has two proposal results, an original and a continuation.
+ */
+const continuationHalt = (originals: Proposing, continued: Proposing): Result<Proposing, EntityError> => {
+  const [cascade] = continued.failed;
+  if (cascade !== undefined) {
+    return invariant(`TS_ACCOUNT_WORKER_PROVIDER_HTLC_FOLLOWUP_CASCADE:${cascade.peer}:${cascade.lock.hashlock}`);
+  }
+  const twice = continued.attempted.some((peer) => originals.attempted.includes(peer));
+  return twice ? invariant("ACCOUNT_AUTHORITY_PROPOSAL_RESULT_DUPLICATE") : ok(continued);
+};
+/**
+ * og provider.ts #executeOutbound after the original proposals: every resolve owed upstream is admitted, then each
+ * inbound Account proposes once more (skipped unless proposable, as every worker proposal is).
+ */
+const proposeContinuations = (originals: Proposing, step: ProposeStep): Result<Proposing, EntityError> =>
+  chain(foldResult(originals.upstream, originals.draft, admitUpstream), (draft) =>
+    chain(foldResult(owedAccounts(originals), proposingFrom(draft), step), (continued) =>
+      continuationHalt(originals, continued)));
 /**
  * og sends one final Account input per Account: an ACK already riding on that Account's new frame is not sent again.
  */
@@ -18926,16 +19013,24 @@ const flushOrder = (fold: readonly EntityOutput[], proposals: readonly EntityOut
   return [...fold.filter((o) => !isAck(o)), ...ranked.map(({ o }) => o)];
 };
 /**
- * og proposePendingAccountFrames: every proposable Account in worklist order proposes one frame at the Entity clock; a
- * refused proposal is not a frame. A cross-j opening proposes exactly its sibling cohort (og
- * selectCrossJOpeningAccountProposalTxs) and waits while the reciprocal is missing.
+ * og proposePendingAccountFrames under the Account worker (rscore ts-worker/provider.ts #executeOutbound): every
+ * proposable Account in worklist order proposes one frame at the Entity clock; a refused proposal is not a frame. A
+ * cross-j opening proposes exactly its sibling cohort (og selectCrossJOpeningAccountProposalTxs) and waits while the
+ * reciprocal is missing. The htlc_locks an original proposal removes are followed up at once; their upstream resolves
+ * are admitted after every original proposal, and each inbound Account then proposes as a continuation, joining the
+ * worklist behind the rest (og scheduleAccount).
  */
-const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext): Result<Proposing, EntityError> => {
+const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext): Result<Proposed, EntityError> => {
   const clock: FrameClock = { timestamp: ctx.timestamp, jHeight: entityJHeight(d.state) };
-  return map(foldResult(order, { draft: d, frames: 0 }, proposeOne(ctx, clock)), ({ draft, frames }) => {
-    const outputs = flushOrder(d.outputs, draft.outputs.slice(d.outputs.length), order);
-    return { draft: { ...draft, outputs }, frames };
-  });
+  const step = proposeOne(ctx, clock);
+  const original: ProposeStep = (acc, peer) =>
+    map(step(acc, peer), (next) => next.failed.slice(acc.failed.length).reduce(failedLockFollowup, next));
+  return chain(foldResult(order, proposingFrom(d), original), (originals) =>
+    map(proposeContinuations(originals, step), (continued) => {
+      const worklist = [...new Set([...order, ...owedAccounts(originals)])];
+      const outputs = flushOrder(d.outputs, continued.draft.outputs.slice(d.outputs.length), worklist);
+      return { draft: { ...continued.draft, outputs }, frames: originals.frames + continued.frames };
+    }));
 };
 type Validator = { readonly key: string; readonly share: bigint };
 /**
@@ -23177,11 +23272,13 @@ export const lockFollowup = (
 };
 /** og HTLC_SECRET_ACK_TIMEOUT_MS (paybook/lifecycle.ts). */
 export const HTLC_SECRET_ACK_TIMEOUT_MS = 120_000;
+/** Why a route failed: the reason its inbound lock is resolved with, and the reason an originated payment reports. */
+type RouteFailure = { readonly upstream: string; readonly originated: string };
 /**
- * og applyHtlcTimeoutFollowups: a failed lock fails its route upstream (downstream_error) or ends an originated
- * payment; the entry terminates.
+ * A failed lock fails its route: a forwarded route resolves its inbound lock with an error, an originated payment
+ * emits HtlcFailed (og failOriginatedPayment); the entry terminates. A hashlock without an entry is not ours.
  */
-export const timeoutFollowup = (f: PaybookFlow, hashlock: string, self = ""): PaybookFlow => {
+const failRoute = (f: PaybookFlow, hashlock: string, self: string, why: RouteFailure): PaybookFlow => {
   const route = f.paybook.entries.get(hashlock);
   if (route === undefined) return f;
   const upstream = inboundOf(route);
@@ -23191,17 +23288,30 @@ export const timeoutFollowup = (f: PaybookFlow, hashlock: string, self = ""): Pa
           type: "htlc_resolve",
           lockId: hashlock,
           outcome: "error",
-          reason: "downstream_error",
+          reason: why.upstream,
         })
       : emitRuntime(f, "HtlcFailed", {
           hashlock,
           lockId: hashlock,
-          reason: "timeout",
+          reason: why.originated,
           entityId: self,
           ...opt("description", route.description || undefined),
         });
   return terminatePaybookEntry(failed, hashlock);
 };
+/**
+ * og applyHtlcTimeoutFollowups: a failed lock fails its route upstream (downstream_error) or ends an originated
+ * payment; the entry terminates.
+ */
+export const timeoutFollowup = (f: PaybookFlow, hashlock: string, self = ""): PaybookFlow =>
+  failRoute(f, hashlock, self, { upstream: "downstream_error", originated: "timeout" });
+/**
+ * og failedProposalHtlcFollowup (entity/consensus/account/failed-proposal-followups.ts): an htlc_lock our own proposal
+ * removed fails its route upstream as `forward_failed:<reason>`, or ends an originated payment with og's rejection
+ * text; the entry terminates (og terminatePayment).
+ */
+export const failedProposalFollowup = (f: PaybookFlow, failed: FailedHtlcLock, self: string): PaybookFlow =>
+  failRoute(f, failed.hashlock, self, { upstream: `forward_failed:${failed.reason}`, originated: failed.reason });
 /**
  * og applyHtlcSecretFollowups: record the preimage once, earn the pending fee, pass the secret upstream and arm its ACK
  * deadline, or end an originated payment.

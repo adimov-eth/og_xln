@@ -6,7 +6,10 @@ import { describe, expect, test } from "bun:test";
 import { applyAccountEnqueue } from "../../core/account/input/local-tx-admission.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import { buildEntityTransactionProposalAction, hashEntityProposalAction } from "../../core/entity/auth/authorization.ts";
+import { failedProposalHtlcFollowup } from "../../core/entity/consensus/account/failed-proposal-followups.ts";
 import { accountHasProposableMempoolForEntity } from "../../core/entity/consensus/account/mempool-eligibility.ts";
+import { failOriginatedPayment, terminatePayment } from "../../core/entity/paybook/lifecycle.ts";
+import { runAccountAuthorityEntityStage } from "../../core/rscore/authority/entity-stage.ts";
 import { EntityAccountCandidateMap, PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
 import { ensureEntityCollectionCandidate } from "../../core/entity/state/persistent-collection-map.ts";
 import { handleSetRebalancePolicyEntityTx } from "../../core/entity/tx/handlers/account/lifecycle/admin.ts";
@@ -24,12 +27,12 @@ import { markWorkingOrderbookOffer, normalizeSwapOfferForOrderbook } from "../..
 
 // ---- rewrite ----
 import {
-  bookCommitmentHash, configBoardHash, createEntity, entityId, entityTransactionAction, foldTx, foldTxs, hashHtlcSecret, hashProposalAction,
+  accountId, bookCommitmentHash, configBoardHash, createEntity, entityId, entityTransactionAction, foldTx, foldTxs, genesisReplica, hashHtlcSecret, hashProposalAction,
   installedAccount, offersForMatching, processOrderbookSwaps, tokenId, wireEntityTx, wireOf,
   type AccountReplica, type BookTx, type EntityId, type EntityReplica, type EntityState, type EntityTx, type HtlcLock, type Hub, type HubAccount,
-  type OrderbookExt, type SwapOffer, type SwapOfferEvent, type WireAccountTx,
+  type OrderbookExt, type PaybookEntry, type SwapOffer, type SwapOfferEvent, type WireAccountTx,
 } from "../xln.ts";
-import { ALICE, BOB, NOW, TERMS, UNREGISTERED_J, aliceAddr, anvilKey, genesisAB, hankoVerify, signDigestHex, signedTxs, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, anvilKey, genesisAB, hankoVerify, signDigestHex, signedTxs, TEST_JREPLICA, unwrap, verifiers } from "../xln_run.ts";
 
 /** og's committed Account collections are Patricia-backed maps; their commitment is `rootHash()`. */
 const ogRootHash = (c: object): string => {
@@ -221,5 +224,116 @@ describe("regressions: collective action hash over the reseeded batch", () => {
     const action = unwrap(entityTransactionAction(txs)), og = buildEntityTransactionProposalAction(txs.map((x) => wireEntityTx(x) as never));
     expect(action.type === "entity_transaction" ? action.data.actionHash : "").toBe(og.data.actionHash);
     expect(ogThrows(() => hashEntityProposalAction(og))).toEqual({ ok: true, value: unwrap(hashProposalAction(action)) });
+  });
+});
+
+// ============ an htlc_lock our own proposal removes (walk --area lending, seed 0x30de1) ============
+// The lane's og runs Account work through the worker (rscore ts-worker/provider.ts #executeOutbound): every original
+// proposal first, then the resolves owed upstream are admitted and each inbound Account proposes as a continuation.
+// og proposal/transactions.ts classifyFailedTransaction reports a non-retried htlc_lock refusal as failedHtlcLocks, and
+// og proposeAccountFrameCandidate (frame/application.ts) runs failedProposalHtlcFollowup on each: an originated payment
+// ends through failOriginatedPayment (HtlcFailed, entry deleted); a forwarded one enqueues htlc_resolve
+// forward_failed:<reason> on the inbound Account, schedules that Account in the same proposal loop and terminates the
+// entry. The lock here asks for 16 on an Account with no capacity: og handleHtlcLock's validation refusal (lock.ts).
+describe("regressions: a failed htlc_lock at Account proposal", () => {
+  const H = hashHtlcSecret("0x" + "5a".repeat(32))!;
+  const REASON = "Insufficient capacity: need 16, available 0";
+  const lock: WireAccountTx = { type: "htlc_lock", lockId: H, hashlock: H, timelock: NOW + 3_600_000n, revealBeforeHeight: 99n, amount: 16n, tokenId: tk(1) } as WireAccountTx;
+  const entity = (entry: PaybookEntry): EntityState => {
+    const created = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: UNREGISTERED_J })).state;
+    return { ...created, paybook: { entries: new Map([[H, entry]]), feesEarned: 0n } };
+  };
+  const outbound = { ...genesisAB(), mempool: [lock] } as AccountReplica;
+  /** Carol's lock to Alice under the same hashlock, on a token the Account holds: the leg the forward's failure resolves. */
+  const inbound = (mempool: readonly WireAccountTx[] = [], others: readonly string[] = []): AccountReplica => {
+    const base = unwrap(genesisReplica(unwrap(accountId(ALICE, CAROL)), TERMS));
+    const carolLeft = base.state.account.id.left === CAROL;
+    const held = (h: string): HtlcLock => ({ lockId: h, hashlock: h, timelock: NOW + 7_200_000n, revealBeforeHeight: 199n, amount: 17n, tokenId: tk(1), senderIsLeft: carolLeft, createdHeight: 1n, createdTimestamp: 1n });
+    const delta = { tokenId: tk(1), collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n };
+    const account = { ...base.state.account, deltas: new Map([[tk(1), delta]]) };
+    const locks = new Map([H, ...others].map((h) => [h, held(h)]));
+    return { ...base, state: { ...base.state, account, locks }, mempool } as AccountReplica;
+  };
+  const forwarded: PaybookEntry = { hashlock: H, inboundEntity: CAROL, outboundEntity: BOB, amount: 16n, tokenId: 1, createdTimestamp: 1 };
+  /** The frame's refusal, as the lane compares it with og's halt text. */
+  const refusal = (state: EntityState, replicas: ReadonlyMap<EntityId, AccountReplica>): string => {
+    // a J replica for the Account proof's transformer: a frame that leaves locks open proves them
+    const r = foldTxs(state, replicas, [], { verify: hankoVerify, timestamp: NOW, jReplicas: new Map([["test", TEST_JREPLICA]]) });
+    return r.ok ? "committed" : String((r.error as { reason?: unknown }).reason ?? r.error._tag);
+  };
+  /** og's paybook after the followup, and the runtime events it emitted. */
+  const ogFollowup = (entry: PaybookEntry) => {
+    const og: any = { entityId: ALICE, paybook: { entries: new Map([[H, { ...entry }]]), feesEarned: 0n } };
+    const effects: any[] = [];
+    const followup = failedProposalHtlcFollowup(og, { hashlock: H, reason: REASON });
+    if (followup.kind === "originated") expect(failOriginatedPayment(og, effects, H, REASON)).toBe(true);
+    if (followup.kind === "forwarded") terminatePayment(og, H);
+    return { followup, entries: [...og.paybook.entries.keys()], events: effects.map((e) => ({ eventName: e.eventName, data: e.data })) };
+  };
+  const frame = (state: EntityState, replicas: ReadonlyMap<EntityId, AccountReplica>) =>
+    unwrap(foldTxs(state, replicas, [], { verify: hankoVerify, timestamp: NOW })).draft;
+
+  test("MATCH: an originated payment ends with og's HtlcFailed and its paybook entry is gone", () => {
+    const entry: PaybookEntry = { hashlock: H, originated: true, outboundEntity: BOB, amount: 16n, tokenId: 1, description: "rent", createdTimestamp: 1 };
+    const og = ogFollowup(entry);
+    expect(og.followup.kind).toBe("originated");
+    const d = frame(entity(entry), new Map([[BOB, outbound]]));
+    expect(d.accountReplicas.get(BOB)!.mempool).toEqual([]);
+    expect([...(d.state.paybook?.entries.keys() ?? [])]).toEqual(og.entries);
+    expect((d.runtimeEvents ?? []).filter((e) => e.eventName === "HtlcFailed")).toEqual(og.events);
+  });
+
+  test("MATCH: a forwarded payment returns og's forward_failed resolve upstream, proposed in the same loop", () => {
+    const og = ogFollowup(forwarded);
+    if (og.followup.kind !== "forwarded") throw new Error(`og followup ${og.followup.kind}`);
+    const d = frame(entity(forwarded), new Map([[BOB, outbound], [CAROL, inbound()]]));
+    expect([...(d.state.paybook?.entries.keys() ?? [])]).toEqual(og.entries);
+    expect(d.runtimeEvents ?? []).toEqual([]);
+    const upstream = d.accountReplicas.get(CAROL)!;
+    expect(upstream._tag).toBe("proposed");
+    const proposed = upstream._tag === "proposed" ? upstream.candidate.frame.txs : [];
+    const asOg = (t: any) => ({ type: t.type, data: { lockId: t.lockId, outcome: t.outcome, reason: t.reason } });
+    expect(og.followup.accountId).toBe(CAROL);
+    expect(proposed.map(asOg)).toEqual(og.followup.input.txs as never);
+  });
+
+  test("MATCH: the inbound Account proposed in the original pass and again as a continuation halts as og's Entity stage", async () => {
+    // Carol's own queued resolve names no lock, so her original proposal is idle and leaves her open; the owed resolve
+    // then makes her proposable again, and the worker returns two proposal results for her
+    const stray = { type: "htlc_resolve", lockId: "0x" + "de".repeat(32), outcome: "error", reason: "stray" } as WireAccountTx;
+    const provider = {
+      executeAccountInboundBatch: async () => [],
+      executeEntityBooksBatch: async () => undefined,
+      discardEntityFrameAttempt: async () => undefined,
+      executeAccountOutboundBatch: async () => ({
+        proposals: [BOB, CAROL, CAROL].map((accountId) => ({ accountId, result: {} as never })),
+        generatedAdmissions: [],
+      }),
+    };
+    const env: any = {};
+    const options = { ownerEntityId: ALICE, ownerSignerId: aliceAddr, provider, occurrence: { kind: "runtime-input" as const, inputIndex: 0 }, deferProposal: false };
+    const ogHalt = await runAccountAuthorityEntityStage(env, options, async () => {
+      const stage = env.accountAuthorityEntityStage;
+      await stage.beginEntityAccountFrame({ ownerEntityId: ALICE, entityTxs: [], accountForWrite: () => undefined });
+      await stage.executeEntityBooks({});
+      await stage.prepareEntityAccountOutbound({ entityState: {}, entityHeight: 1, accounts: new Map(), accountForWrite: () => undefined, proposalAccountIds: [], timestamp: Number(NOW), jHeight: 0 });
+      return "committed";
+    }).catch((e: Error) => e.message);
+    expect(refusal(entity(forwarded), new Map([[BOB, outbound], [CAROL, inbound([stray])]]))).toBe(ogHalt);
+  });
+
+  test("MATCH: a continuation proposal that removes an htlc_lock halts with og's worker cascade text", () => {
+    // Carol's locks are full, so her queued lock is not proposable (og accountHasProposableMempoolForEntity) until the
+    // owed resolve arrives; her continuation then refuses that lock, expired, before its capacity check (og lock.ts)
+    const others = Array.from({ length: 31 }, (_, i) => hashHtlcSecret("0x" + (i + 1).toString(16).padStart(64, "0"))!);
+    const E = hashHtlcSecret("0x" + "e1".repeat(32))!;
+    const expired = { type: "htlc_lock", lockId: E, hashlock: E, timelock: NOW - 1n, revealBeforeHeight: 99n, amount: 1n, tokenId: tk(1) } as WireAccountTx;
+    const ogShell = (mempool: readonly unknown[]): any => ({ status: "active", mempool, state: { locks: new Map([H, ...others].map((h) => [h, {}])) } });
+    const resolve = { type: "htlc_resolve", data: { lockId: H, outcome: "error", reason: "forward_failed:x" } };
+    const lockTx = { type: "htlc_lock", data: { lockId: E, hashlock: E } };
+    expect(accountHasProposableMempoolForEntity(ogShell([lockTx]), ALICE)).toBe(false);
+    expect(accountHasProposableMempoolForEntity(ogShell([lockTx, resolve]), ALICE)).toBe(true);
+    const cascade = `TS_ACCOUNT_WORKER_PROVIDER_HTLC_FOLLOWUP_CASCADE:${CAROL.toLowerCase()}:${E}`;
+    expect(refusal(entity(forwarded), new Map([[BOB, outbound], [CAROL, inbound([expired], others)]]))).toBe(cascade);
   });
 });
