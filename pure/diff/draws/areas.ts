@@ -97,6 +97,11 @@ export type Move =
 export type WorldMove = {
   readonly enabled: (w: World) => boolean;
   readonly draw: (w: World) => Step | Promise<Step>;
+  /**
+   * What taking the move promises, read from the world just before it is taken: the move counts as covered once the
+   * returned check holds on a later committed state. Without one, taking the move covers it.
+   */
+  readonly outcome?: (w: World) => (later: World) => boolean;
 };
 /** One area's world moves, by name (`{}` when it has none). */
 export type WorldMoves = Readonly<Record<string, WorldMove>>;

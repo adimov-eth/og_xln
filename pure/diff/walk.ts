@@ -12,7 +12,7 @@
 import { seedOf, untilCovered } from "./seed.ts";
 import { tracing } from "./scenario-trace.ts";
 import type { Coverage } from "./lane.ts";
-import { openWorld } from "./world.ts";
+import { openWorld, type World } from "./world.ts";
 import { AREAS, type Area } from "./draws/areas.ts";
 import { drawnIn, worldIn, type Drawn, type NamedWorldMove, type Scope } from "./draws/index.ts";
 import { stableJson } from "../xln.ts";
@@ -22,8 +22,15 @@ export const walkSeeds = (n: number): readonly number[] => Array.from({ length: 
 /** Committed Runtime frames per run before the walk draws only for coverage. */
 const FRAMES = 30;
 
-/** The lane's first disagreement, or none. */
-export type Walked = { readonly coverage: Coverage; readonly diffs: readonly string[] };
+/** The lane's first disagreement, or none; and the world moves the walk covered (taken, and landed if they promise). */
+export type Walked = {
+  readonly coverage: Coverage;
+  readonly diffs: readonly string[];
+  readonly landed: readonly string[];
+};
+
+/** A world move taken whose promised outcome has not shown yet. */
+type Promised = readonly [string, (later: World) => boolean];
 
 /**
  * One walk over the given drawn rows and world moves; it stops at the first diff, an og halt both sides agree on, or a
@@ -33,20 +40,22 @@ export const walk = async (seed: number, moves: readonly Drawn[], world: readonl
   const w = await openWorld(seed, "model");
   const { lane, coverage } = w;
   const tried = new Map<string, number>();
+  const landed = new Set<string>();
+  const coveredMove = ([name, m]: NamedWorldMove): boolean =>
+    m.outcome === undefined ? (coverage.actions[name] ?? 0) > 0 : landed.has(name);
   try {
     const [imports, opens] = w.importAll();
     const setup = [...(await lane.tick(imports, [])), ...(await lane.tick([], opens))];
-    if (setup.length > 0) return { coverage, diffs: setup };
+    if (setup.length > 0) return { coverage, diffs: setup, landed: [] };
     await w.chain.debugFundReservesBatch(w.ids.map((entityId) => ({ entityId, tokenId: 1, amount: 10n ** 9n })));
     const funded = await lane.tick([], []);
-    if (funded.length > 0) return { coverage, diffs: funded };
-    // covered once every drawn kind has committed and every world move has been taken
-    const covered = () =>
-      moves.every(([k]) => coverage.entityTxs.has(k)) && world.every(([name]) => (coverage.actions[name] ?? 0) > 0);
+    if (funded.length > 0) return { coverage, diffs: funded, landed: [] };
+    // covered once every drawn kind has committed and every world move has been taken (and has landed, if it promises)
+    const covered = () => moves.every(([k]) => coverage.entityTxs.has(k)) && world.every(coveredMove);
     const more = untilCovered(FRAMES, covered, FRAMES * 6);
     // a halted og Runtime refuses every later frame, so a halt both sides agree on ends the run; so does a departure
     // (departures.ts), after which the two states differ
-    const loop = async (i: number): Promise<readonly string[]> => {
+    const loop = async (i: number, promised: readonly Promised[]): Promise<readonly string[]> => {
       if (!more(i) || coverage.halts > 0 || coverage.departures.length > 0) return [];
       const enabled = moves.filter(([, m]) => m.enabled(w));
       // favour the kinds committed least: weight 1 / (1 + times tried)
@@ -58,15 +67,20 @@ export const walk = async (seed: number, moves: readonly Drawn[], world: readonl
       // no Entity tx drawn: one of the enabled world moves, uniformly
       const open = world.filter(([, m]) => m.enabled(w));
       const around = chosen === undefined ? open[w.ri(open.length)] : undefined;
+      // a promise is read before the move changes the world
+      const promise: readonly Promised[] = around?.[1].outcome === undefined ? [] : [[around[0], around[1].outcome(w)]];
       const step = chosen !== undefined ? chosen[1].draw(w) : await (around?.[1].draw(w) ?? { runtimeTxs: [], users: [] });
       const name = chosen?.[0] ?? around?.[0] ?? "world";
       tried.set(name, (tried.get(name) ?? 0) + 1);
       coverage.actions[name] = (coverage.actions[name] ?? 0) + 1;
       if (tracing()) console.log(`frame ${lane.frames() + 1} ${name}`);
       const diffs = await lane.tick(step.runtimeTxs, step.users);
-      return diffs.length > 0 ? diffs : loop(i + 1);
+      const due = [...promised, ...promise];
+      due.filter(([, holds]) => holds(w)).forEach(([name]) => landed.add(name));
+      return diffs.length > 0 ? diffs : loop(i + 1, due.filter(([name]) => !landed.has(name)));
     };
-    return { coverage, diffs: await loop(0) };
+    const diffs = await loop(0, []);
+    return { coverage, diffs, landed: world.filter(coveredMove).map(([name]) => name) };
   } finally {
     await w.close();
   }
@@ -75,6 +89,9 @@ export const walk = async (seed: number, moves: readonly Drawn[], world: readonl
 /** The drawn kinds a walk over these rows never committed. */
 export const uncovered = (moves: readonly Drawn[], seen: ReadonlySet<string>): readonly string[] =>
   moves.map(([k]) => k).filter((k) => !seen.has(k));
+/** The world moves no walk covered: a move never taken, or one whose promised outcome never showed. */
+export const unlanded = (world: readonly NamedWorldMove[], landed: ReadonlySet<string>): readonly string[] =>
+  world.map(([name]) => name).filter((name) => !landed.has(name));
 
 export const walkLine = (seed: number, c: Coverage): string =>
   `seed 0x${seed.toString(16)}: ${c.frames} Runtime frames, halts ${stableJson(c.haltTexts)}, departures `
@@ -104,11 +121,10 @@ const rowsFor = (area: Area | undefined): readonly Drawn[] => drawnIn(scopeOf(ar
 
 /** One walk in this process: 0 when the lane agreed on every frame. */
 const one = async (area: Area | undefined, seed: number): Promise<number> => {
-  const { coverage, diffs } = await walk(seed, rowsFor(area), worldIn(scopeOf(area)));
+  const { coverage, diffs, landed } = await walk(seed, rowsFor(area), worldIn(scopeOf(area)));
   console.log(walkLine(seed, coverage));
   diffs.forEach((d) => console.log(`  DIFF ${d}`));
-  const moves = Object.keys(coverage.actions);
-  console.log(`WALKED ${JSON.stringify({ seed, diffs: diffs.length, kinds: [...coverage.entityTxs], moves })}`);
+  console.log(`WALKED ${JSON.stringify({ seed, diffs: diffs.length, kinds: [...coverage.entityTxs], landed })}`);
   return diffs.length > 0 ? 1 : 0;
 };
 
@@ -120,14 +136,15 @@ const many = (args: Args): number => {
     const out = child.stdout.toString();
     process.stdout.write(out.split("\n").filter((l) => !l.startsWith("WALKED ")).join("\n"));
     const walked = out.split("\n").find((l) => l.startsWith("WALKED "));
-    const parsed: { kinds: readonly string[]; moves: readonly string[] } =
-      walked === undefined ? { kinds: [], moves: [] } : JSON.parse(walked.slice(7));
-    return { ok: child.exitCode === 0 && walked !== undefined, kinds: parsed.kinds, moves: parsed.moves };
+    const parsed: { kinds: readonly string[]; landed: readonly string[] } =
+      walked === undefined ? { kinds: [], landed: [] } : JSON.parse(walked.slice(7));
+    return { ok: child.exitCode === 0 && walked !== undefined, kinds: parsed.kinds, landed: parsed.landed };
   });
-  // a world move no walk ever takes is dead coverage, like a drawn kind no walk commits
-  const taken = new Set(runs.flatMap((r) => r.moves));
-  const untaken = worldIn(scopeOf(args.area)).map(([name]) => name).filter((name) => !taken.has(name));
-  const missed = [...uncovered(rowsFor(args.area), new Set(runs.flatMap((r) => r.kinds))), ...untaken];
+  // a world move no walk covers is dead coverage, like a drawn kind no walk commits
+  const missed = [
+    ...uncovered(rowsFor(args.area), new Set(runs.flatMap((r) => r.kinds))),
+    ...unlanded(worldIn(scopeOf(args.area)), new Set(runs.flatMap((r) => r.landed))),
+  ];
   if (missed.length > 0) console.log(`UNCOVERED ${missed.join(",")}`);
   const failed = runs.filter((r) => !r.ok).length;
   console.log(`${failed === 0 && missed.length === 0 ? "OK" : "FAIL"}: ${runs.length} walks, ${failed} failed`);

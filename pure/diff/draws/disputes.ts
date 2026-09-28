@@ -11,6 +11,7 @@
 //   - Pull and cross-j route guards never apply: the single-Runtime world has no Pulls and no routes.
 // og's watchtower (core/watchtower, core/api/server/rpc/watchtower-proxy.ts) is a server, not an Entity tx: nothing
 // to draw.
+import { batchOpCount, J_BATCH_CONTRACT_LIMITS } from "../../../core/jurisdiction/machine/batch/index.ts";
 import type { EntityTx } from "../../xln.ts";
 import { HUB, SPOKES, type World } from "../world.ts";
 import { arises, drawn, type Move, type Moves, type Step, type WorldMoves } from "./areas.ts";
@@ -31,7 +32,17 @@ type OgDisputeAccount = {
   };
   readonly state?: { readonly leftEntity?: string };
 };
-type OgDisputeBatch = { readonly disputeStarts?: readonly unknown[]; readonly disputeFinalizations?: readonly unknown[] };
+type OgDisputeOp = { readonly counterentity?: string };
+type OgDisputeBatch = {
+  readonly disputeStarts?: readonly OgDisputeOp[];
+  readonly disputeFinalizations?: readonly OgDisputeOp[];
+};
+/** og's jBatchState: the editable draft, the batch in flight, and the recovered remainders. */
+type OgJBatchState = {
+  readonly batch?: OgDisputeBatch;
+  readonly sentBatch?: { readonly batch?: OgDisputeBatch };
+  readonly recoveryBatches?: readonly OgDisputeBatch[];
+};
 
 /**
  * Where one side of an Account stands:
@@ -91,8 +102,27 @@ const sideOf = (w: World, x: number, y: number): Side | undefined => sides(w).fi
 
 const now = (w: World): number => Number(w.lane.runtime().timestamp);
 
-const draftOf = (w: World, x: number): OgDisputeBatch | undefined =>
-  (w.batchOf(x) as { batch?: OgDisputeBatch } | undefined)?.batch;
+const jBatchOf = (w: World, x: number): OgJBatchState | undefined => w.batchOf(x) as OgJBatchState | undefined;
+const draftOf = (w: World, x: number): OgDisputeBatch | undefined => jBatchOf(w, x)?.batch;
+
+/** og hasQueuedDisputeStart / hasQueuedDisputeFinalize: an op for this counterparty in the draft, sent or recovered. */
+const inBatch = (w: World, s: Side, kind: "disputeStarts" | "disputeFinalizations"): boolean => {
+  const j = jBatchOf(w, s.x);
+  const batches = [j?.batch, j?.sentBatch?.batch, ...(j?.recoveryBatches ?? [])];
+  const forCounterparty = (op: OgDisputeOp): boolean => String(op.counterentity ?? "").toLowerCase() === w.ids[s.y];
+  return batches.some((b) => (b?.[kind] ?? []).some(forCounterparty));
+};
+
+/**
+ * og's 50-op J batch (batch/index.ts:204): room for `ops` more in Entity `x`'s draft. Same signature as the shared
+ * guard core is adding to draws/world-view.ts; this file imports that one once it lands.
+ */
+const batchRoom = (w: World, x: number, ops: number): boolean => {
+  const draft = draftOf(w, x);
+  return draft === undefined || batchOpCount(draft as never) + ops <= J_BATCH_CONTRACT_LIMITS.maxTotalOps;
+};
+/** A draw that queues one dispute op into `s.x`'s draft. */
+const room = (w: World, s: Side): boolean => batchRoom(w, s.x, 1);
 
 const trading = (w: World, x: number, y: number): boolean =>
   sideOf(w, x, y)?.stage._tag === "trading" && sideOf(w, y, x)?.stage._tag === "trading";
@@ -109,7 +139,11 @@ const disposable = (w: World, x: number, y: number): boolean => {
 // ---- the variants each kind draws ----
 
 /** A weighted choice among the variants a kind has now; `undefined` when none applies. */
-type Variant = { readonly weight: number; readonly sides: readonly Side[]; readonly tx: (w: World, s: Side) => EntityTx };
+type Variant = {
+  readonly weight: number;
+  readonly sides: readonly Side[];
+  readonly tx: (w: World, s: Side) => EntityTx;
+};
 
 const one = (w: World, s: Side, t: EntityTx): Step => oneTx(w, s.x, [t]);
 
@@ -137,66 +171,67 @@ const prepare = (w: World, s: Side): EntityTx =>
 
 /**
  * prepareDispute: open a dispute on a quiet, disposable Account both sides trade on; or repeat it on one already
- * past trading, where og re-drafts a ready start or refuses with a message.
+ * past trading, where og re-drafts a ready start or refuses with a message. Either may draft a start, so both need
+ * room in the J batch.
  */
 const prepareVariants = (w: World): readonly Variant[] => [
   {
     weight: 3,
-    sides: sides(w).filter((s) => trading(w, s.x, s.y) && quiet(w, s.x, s.y) && disposable(w, s.x, s.y)),
+    sides: sides(w).filter((s) => trading(w, s.x, s.y) && quiet(w, s.x, s.y) && disposable(w, s.x, s.y) && room(w, s)),
     tx: prepare,
   },
-  { weight: 1, sides: sides(w).filter((s) => s.stage._tag !== "trading"), tx: prepare },
+  { weight: 1, sides: sides(w).filter((s) => s.stage._tag !== "trading" && room(w, s)), tx: prepare },
 ];
 
 const start = (w: World, s: Side): EntityTx =>
   tx("disputeStart", { counterpartyEntityId: w.ids[s.y], description: `walk ${w.ri(100)}` });
 
-const startQueued = (w: World, s: Side): boolean =>
-  (draftOf(w, s.x)?.disputeStarts?.length ?? 0) > 0 || w.batchOf(s.x)?.sentBatch !== undefined;
+/** og start-admission: ready once prepared, past its cooldown, and no start for this counterparty in any batch. */
+const startReady = (w: World, s: Side): boolean =>
+  s.stage._tag === "preparing" && s.stage.readyAfter <= now(w) && !inBatch(w, s, "disputeStarts");
 
 /**
- * disputeStart: draft the start of a prepared dispute whose cooldown has run out; or ask for one og refuses (still
- * cooling, not prepared, already disputed), each a frame message.
+ * disputeStart: draft the start of a prepared dispute whose cooldown has run out; or ask for one og refuses with a
+ * frame message before queueing anything (not prepared, still cooling, already disputed, or already queued).
  */
 const startVariants = (w: World): readonly Variant[] => [
-  {
-    weight: 4,
-    sides: sides(w).filter((s) => s.stage._tag === "preparing" && s.stage.readyAfter <= now(w) && !startQueued(w, s)),
-    tx: start,
-  },
-  {
-    weight: 1,
-    sides: sides(w).filter((s) =>
-      s.stage._tag === "preparing" ? s.stage.readyAfter > now(w) : s.stage._tag !== "started"),
-    tx: start,
-  },
+  { weight: 4, sides: sides(w).filter((s) => startReady(w, s) && room(w, s)), tx: start },
+  { weight: 1, sides: sides(w).filter((s) => !startReady(w, s)), tx: start },
 ];
 
 const finalize = (w: World, s: Side): EntityTx =>
   tx("disputeFinalize", { counterpartyEntityId: w.ids[s.y], description: `walk ${w.ri(100)}` });
 
-/** og's J batch holds one disputeFinalize: a second one in the draft halts the Runtime. */
-const finalizeFree = (w: World, s: Side): boolean => (draftOf(w, s.x)?.disputeFinalizations?.length ?? 0) === 0;
+type Started = Side & { readonly stage: Extract<Stage, { _tag: "started" }> };
+const started = (s: Side): s is Started => s.stage._tag === "started";
 
-const observedOpen = (s: Side): s is Side & { stage: Extract<Stage, { _tag: "started" }> } =>
-  s.stage._tag === "started" && s.stage.observed && !s.stage.finalizeQueued;
+/**
+ * og finalize-admission, the checks before any proof is read: an active dispute, DisputeStarted observed, no finalize
+ * queued (finalizeQueued :49, or one for this counterparty in a batch :63).
+ */
+const finalizeAdmitted = (w: World, s: Side): s is Started =>
+  started(s) && s.stage.observed && !s.stage.finalizeQueued && !inBatch(w, s, "disputeFinalizations");
+
+/** Before the window closes only the non-starter may finalize (it accepts the starter's state). */
+const finalizeTimely = (w: World, s: Started): boolean => !s.stage.starter || now(w) >= s.stage.timeoutMs;
+
+/** og's J batch holds one disputeFinalize: a second one in the draft halts the Runtime (finalize.ts:138). */
+const finalizeFree = (w: World, s: Side): boolean => (draftOf(w, s.x)?.disputeFinalizations?.length ?? 0) === 0;
 
 /**
  * disputeFinalize: the non-starter accepts the starter's state at once, or either side finalizes after the
- * challenge window (both queue the finalize); the starter asking early, or before DisputeStarted is observed, is
- * refused with a message.
+ * challenge window; or one og refuses with a frame message: no active dispute, DisputeStarted not yet observed, a
+ * finalize already queued or in a batch, or the starter asking before the window closes.
  */
 const finalizeVariants = (w: World): readonly Variant[] => [
   {
     weight: 3,
-    sides: sides(w).filter((s) => observedOpen(s) && finalizeFree(w, s)
-      && (!s.stage.starter || now(w) >= s.stage.timeoutMs)),
+    sides: sides(w).filter((s) => finalizeAdmitted(w, s) && finalizeTimely(w, s) && finalizeFree(w, s) && room(w, s)),
     tx: finalize,
   },
   {
     weight: 1,
-    sides: sides(w).filter((s) =>
-      s.stage._tag === "started" && (!s.stage.observed || (s.stage.starter && now(w) < s.stage.timeoutMs))),
+    sides: sides(w).filter((s) => !finalizeAdmitted(w, s) || !finalizeTimely(w, s)),
     tx: finalize,
   },
 ];
@@ -217,16 +252,20 @@ export const DISPUTES: Moves<"disputes"> = {
 
 // ---- the world move this area needs: the challenge window runs out ----
 
+const onChainOpen = (w: World, s: Side): s is Started =>
+  started(s) && s.stage.observed && s.stage.timeoutMs > now(w);
+
 /** The earliest challenge-window end still ahead of the committed clock, over the disputes on chain. */
 const nextTimeout = (w: World): number | undefined => {
-  const ahead = sides(w).flatMap((s) =>
-    s.stage._tag === "started" && s.stage.observed && s.stage.timeoutMs > now(w) ? [s.stage.timeoutMs] : []);
+  const ahead = sides(w).flatMap((s) => (onChainOpen(w, s) ? [s.stage.timeoutMs] : []));
   return ahead.length === 0 ? undefined : Math.min(...ahead);
 };
 
 /**
  * `clock`: time passes to the next challenge-window end, as og's advanceScenarioPastDisputeTimeout does. At the
- * lane's 100 ms per frame the world's 60 s windows would take 600 frames; the dispute_deadline hook then finalizes.
+ * lane's 100 ms per frame the world's 60 s windows would take 600 frames. The jump has landed once a dispute whose
+ * window it closed is finalized on chain (closed), which only the dispute_deadline hook or a finalize after the
+ * window can do.
  */
 export const DISPUTES_WORLD: WorldMoves = {
   clock: {
@@ -234,6 +273,11 @@ export const DISPUTES_WORLD: WorldMoves = {
     draw: (w) => {
       w.lane.jumpClock(nextTimeout(w)!);
       return { runtimeTxs: [], users: [] };
+    },
+    outcome: (w) => {
+      const until = nextTimeout(w) ?? 0;
+      const expiring = sides(w).filter((s) => onChainOpen(w, s) && s.stage.timeoutMs <= until);
+      return (later) => expiring.some((s) => sideOf(later, s.x, s.y)?.stage._tag === "closed");
     },
   },
 };
