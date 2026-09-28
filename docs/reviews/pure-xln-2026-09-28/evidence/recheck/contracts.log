@@ -1,0 +1,4 @@
+F4 alias probe: {"before":"0xd83f8740f4987a10e4de31e7b6f623fb93382d3fb271c33b6964dd497424a65b","cached":"0xd83f8740f4987a10e4de31e7b6f623fb93382d3fb271c33b6964dd497424a65b","fresh":"0xe9e6490634daae8a2be9aea19b7bfc518ca40b44537c3bc6510f22c751911953"}
+F5 iterator reads: [ 1, 2, 3 ] callback calls: [ 1 ] throwing iterator callbacks: 0
+F6 required payload: undefined overwritten discriminant: unexpected
+Rejected native mapDelete rewrite: {"existingSize":2,"nativeSize":1}

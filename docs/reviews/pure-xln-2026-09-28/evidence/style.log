@@ -1,0 +1,7 @@
+ok   long-line              2 / 2
+ok   no-assign-member       1 / 1
+ok   no-class               1 / 1
+ok   no-let                 0 / 0
+ok   no-loop                0 / 0
+ok   no-mutating-call       5 / 5
+ok   no-throw              30 / 30

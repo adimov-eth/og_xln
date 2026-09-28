@@ -1,0 +1,446 @@
+$ bun tools/stand-lock.ts run --reason xln-review-semantic-vectors -- bun test "pure/diff/runtime-2.test.ts" pure/diff/final-sweep.test.ts "pure/diff/entity-consensus-2.test.ts"
+bun test v1.4.2 (744846f84)
+
+pure/diff/runtime-2.test.ts:
+(pass) runtime-2: entity lending (ER-17, og payments/lending.ts) [SEEDX=0] > MATCH: 400 random lendingOffer/Borrow/Repay/ClosePosition -- same accept/refuse code as og, same queued Account tx on the hub Account, same wake to validators[0] [1247.26ms]
+(pass) runtime-2: entity lending (ER-17, og payments/lending.ts) [SEEDX=0] > MATCH: a lendingOffer for a token the hub Account has not enabled is og LENDING_TOKEN_NOT_ENABLED; the missing hub is LENDING_HUB_ACCOUNT_MISSING [7.70ms]
+(pass) runtime-2: og RuntimeTx capability authorization (og runtime/tx/internal-tx-auth.ts) [SEEDX=0] > MATCH: every og RuntimeTx kind -- external ingress refused with og's code, replay admitted, importReplica/importJ unguarded [0.34ms]
+(pass) runtime-2: og RuntimeTx capability authorization (og runtime/tx/internal-tx-auth.ts) [SEEDX=0] > MATCH: a locally created checkpoint barrier / adapter-command marker is admitted; a structurally equal copy from ingress is not [0.80ms]
+(pass) runtime-2: og RuntimeTx capability authorization (og runtime/tx/internal-tx-auth.ts) [SEEDX=0] > MATCH (og validateRuntimeInputShapeAndLimits): a checkpoint barrier must stand alone in its Runtime input [1.18ms]
+(pass) runtime-2: recordRuntimeAdapterCommand frontier (og runtime/command/frontier.ts) [SEEDX=0] > MATCH: 600 random adapter-command markers -- same accept/refuse code and same frontier map as og applyRuntimeAdapterCommandMarker [4.74ms]
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-2-0","existingHasPrecommits":false,"existingHeight":2,"incoming":"frame-1-0","incomingHasPrecommits":false,"incomingHeight":1,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-1","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-2-0","incomingHasPrecommits":false,"incomingHeight":2,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"8d47","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-1-1","incomingHasPrecommits":false,"incomingHeight":1,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-1-1","incomingHasPrecommits":false,"incomingHeight":1,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-2-1","existingHasPrecommits":false,"existingHeight":2,"incoming":"frame-1-0","incomingHasPrecommits":false,"incomingHeight":1,"signer":"93bc"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-2-1","existingHasPrecommits":false,"existingHeight":2,"incoming":"frame-1-1","incomingHasPrecommits":false,"incomingHeight":1,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"8d47","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-2-0","incomingHasPrecommits":false,"incomingHeight":2,"signer":"93bc"}
+[WARN][entity.input.merge] frame.conflict {"entity":"8d47","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-1-1","incomingHasPrecommits":false,"incomingHeight":1,"signer":"93bc"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-2-1","existingHasPrecommits":false,"existingHeight":2,"incoming":"frame-1-1","incomingHasPrecommits":false,"incomingHeight":1,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-2-1","incomingHasPrecommits":false,"incomingHeight":2,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"8d47","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-2-1","incomingHasPrecommits":false,"incomingHeight":2,"signer":"93bc"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-2-1","existingHasPrecommits":false,"existingHeight":2,"incoming":"frame-2-0","incomingHasPrecommits":false,"incomingHeight":2,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-1","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-2-0","incomingHasPrecommits":false,"incomingHeight":2,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-1","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-2-1","incomingHasPrecommits":false,"incomingHeight":2,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"8d47","existing":"frame-1-1","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-1-0","incomingHasPrecommits":false,"incomingHeight":1,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-1-1","incomingHasPrecommits":false,"incomingHeight":1,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"8d47","existing":"frame-2-1","existingHasPrecommits":false,"existingHeight":2,"incoming":"frame-2-0","incomingHasPrecommits":false,"incomingHeight":2,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"8d47","existing":"frame-1-1","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-2-0","incomingHasPrecommits":false,"incomingHeight":2,"signer":"93bc"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-1-1","incomingHasPrecommits":false,"incomingHeight":1,"signer":"93bc"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-2-0","existingHasPrecommits":false,"existingHeight":2,"incoming":"frame-1-0","incomingHasPrecommits":false,"incomingHeight":1,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-2-1","incomingHasPrecommits":false,"incomingHeight":2,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-2-1","incomingHasPrecommits":false,"incomingHeight":2,"signer":"93bc"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-2-0","existingHasPrecommits":false,"existingHeight":2,"incoming":"frame-1-0","incomingHasPrecommits":false,"incomingHeight":1,"signer":"93bc"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-2-1","incomingHasPrecommits":false,"incomingHeight":2,"signer":"79c8"}
+[WARN][entity.input.merge] frame.conflict {"entity":"f2bd","existing":"frame-1-0","existingHasPrecommits":false,"existingHeight":1,"incoming":"frame-1-1","incomingHasPrecommits":false,"incomingHeight":1,"signer":"93bc"}
+(pass) runtime-2: mergeEntityInputs (og entity/consensus/input/merge.ts) [SEEDX=0] > MATCH: 500 random batches of txs / precommit / proposal lanes -- same merged lanes in the same order, same equivocation refusals as og [22.79ms]
+(pass) runtime-2: Runtime WAL commitments (og storage/hashes.ts, canonical-hash.ts, replica-meta-digest.ts, wal/outbox-payload.ts) [SEEDX=0] > MATCH: 300 random canonical Runtime state hashes equal og computeCanonicalRuntimeStateHash [23.02ms]
+(pass) runtime-2: Runtime WAL commitments (og storage/hashes.ts, canonical-hash.ts, replica-meta-digest.ts, wal/outbox-payload.ts) [SEEDX=0] > MATCH: 300 random component views / post-state oracles / replica-meta digests / output digests equal og [50.76ms]
+(pass) runtime-2: Runtime WAL commitments (og storage/hashes.ts, canonical-hash.ts, replica-meta-digest.ts, wal/outbox-payload.ts) [SEEDX=0] > MATCH: 300 random WAL rows -- storageFrameHash equals og computeStorageFrameHash (frameHash excluded, Entity hashes normalized and sorted) [22.52ms]
+(pass) runtime-2: importReplica board authority (og runtime/tx/tx-handlers.ts importReplicaRuntimeTx) [SEEDX=0] > MATCH: 600 random boards -- lazyBoardEntityId equals og hashBoard(encodeBoard(config)) and refuses exactly when og throws [29.43ms]
+(pass) runtime-2: importReplica board authority (og runtime/tx/tx-handlers.ts importReplicaRuntimeTx) [SEEDX=0] > MATCH: the Entity encryption public key is og X25519(HKDF-SHA256(seed, entityId, 'xln:entity-encryption:v1')) [12.08ms]
+(pass) runtime-2: importReplica board authority (og runtime/tx/tx-handlers.ts importReplicaRuntimeTx) [SEEDX=0] > MATCH (og importReplica order): identity, jurisdiction, board membership, proposer flag, lazy id, seed, then genesis replica [2.95ms]
+(pass) runtime-2: WAL frame commit and recover (og storage write + read/verify.ts + replay) [SEEDX=0] > MATCH: a committed WAL row chains from og ZERO_FRAME_HASH and its frameHash / canonicalStateHash recompute under og's functions; tampering is refused [140.50ms]
+
+pure/diff/entity-consensus-2.test.ts:
+(pass) entity-consensus-2: leader order, views and vote bodies (ER-18) [SEEDX=0] > MATCH: getEntityLeaderOrder / getEntityLeaderState / getNextEntityFailoverLeader / buildEntityLeaderVoteBody / hashEntityLeaderVoteBody over 60 random configs and leader states [8.53ms]
+(pass) entity-consensus-2: leader order, views and vote bodies (ER-18) [SEEDX=0] > MATCH: getEntityLeaderTimeoutMs = min(60s, 10s * max(1, floor(view))) [0.09ms]
+(pass) entity-consensus-2: timeout certificate and certified view change (ER-18) [SEEDX=0] > MATCH: votes are og-signed timeout votes; the certificate equals og buildEntityLeaderCertificate and og verifyEntityLeaderCertificate accepts B's frame leader [34.57ms]
+(pass) entity-consensus-2: timeout certificate and certified view change (ER-18) [SEEDX=0] > MATCH: C signs and commits the certified frame, B commits with leaderState {B, view 1, changedAtHeight 1}; the stale CEO A accepts the certified proposal and follows B [69.58ms]
+(pass) entity-consensus-2: timeout certificate and certified view change (ER-18) [SEEDX=0] > MATCH (og assertEntityLeaderVoteMatchesState): a vote for the wrong view is refused (ENTITY_LEADER_VOTE_STALE_OR_INVALID) [4.02ms]
+(pass) entity-consensus-2: timeout certificate and certified view change (ER-18) [SEEDX=0] > MATCH (og nextReplicaDeadline): only a non-leader with leader work votes; the CEO never times itself out [1.60ms]
+(pass) entity-consensus-2: account Hankos through hashesToSign (ER-4) [SEEDX=0] > MATCH (og proposePendingAccountFrames + buildQuorumHanko): the view-1 frame signs the Account frame as a secondary hash and the committed Account carries the quorum Hanko [9.74ms]
+(pass) entity-consensus-2: board Hanko refresh and the previous-board grace (AC-13) [SEEDX=0] > MATCH (og incoming/board-hanko-refresh.ts handleBoardHankoRefresh): 800 random refreshes -- same verdict, same refusal, same installed frame Hanko and refresh record, frame Hanko checked under the current board only [14.22ms]
+(pass) entity-consensus-2: board Hanko refresh and the previous-board grace (AC-13) [SEEDX=0] > MATCH (og ack-commit.ts allowPreviousBoard: true, preflight.ts false): ACK Hankos are checked with the previous-board grace, a fresh frame's Hanko without it [1.91ms]
+(pass) entity-consensus-2: entity txs chat, chatMessage, requestCollateral, profile-update [SEEDX=0] > MATCH (og handleProfileUpdateEntityTx): 300 random updates -- same refusal or the same committed profile [933.11ms]
+[WARN][entity.tx.account-admin] collateral_request.missing_account {"counterparty":"8d47","entity":"baef"}
+(pass) entity-consensus-2: entity txs chat, chatMessage, requestCollateral, profile-update [SEEDX=0] > MATCH (og handleRequestCollateralEntityTx): a missing Account is a no-op; otherwise the request_collateral Account tx is queued and proposed in the same frame [4.74ms]
+(pass) entity-consensus-2: entity txs chat, chatMessage, requestCollateral, profile-update [SEEDX=0] > MATCH (og createEntityFrameHashFromStateRoot): chat, chatMessage, requestCollateral and profile-update txs hash into the frame exactly as og's wire txs [24.96ms]
+(pass) entity-consensus-2: publicPinned (H7) [SEEDX=0] > MATCH (og resolveOpenAccountPublicPin): the opener pins unless pinPublic is false; the leaf commits it (hashes.test.ts H7 compares the root with og) [13.36ms]
+(pass) entity-consensus-2: trusted gateway payments (ER-15) [SEEDX=0] > MATCH (og direct-payment.ts requireTrustedPaymentGateway + applyDirectPaymentForwardFollowups): Alice pays Carol through gateway Bob; Bob forwards the committed first leg once [128.66ms]
+
+pure/diff/final-sweep.test.ts:
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_HASH_UNEXPECTED","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID:0x1","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HOLD_CAPACITY:left:token=[REDACTED]","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_TOKEN_INVALID:workspace-op=0:70000","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=1:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HOLD_CAPACITY:left:token=[REDACTED]","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_HASH_INVALID:0x12","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID:0x1","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_ALREADY_EXISTS","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HOLD_CAPACITY:left:token=[REDACTED]","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID:0x1","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=1:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=1:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_TARGET_HASH_MISMATCH:0x96036de4722546fba59a219980b26a90a786f6bd1b2b6fb6e9369d87693be28e:0x7878787878787878787878787878787878787878787878787878787878787878","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID:0x1","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID:0x1","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_SUBMIT_EXECUTOR_MISMATCH","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID:0x1","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=1:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_TOKEN_INVALID:workspace-op=1:70000","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_HASH_UNEXPECTED","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=1:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_TOKEN_INVALID:workspace-op=0:70000","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=1:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HOLD_CAPACITY:left:token=[REDACTED]","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HOLD_CAPACITY:right:token=[REDACTED]","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_ALREADY_EXISTS","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(2) + rightDiff(0) + collateralDiff(0) = 2 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_DUPLICATE_FORGIVENESS_TOKEN:2","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_HASH_UNEXPECTED","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=0","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OP_INVALID:index=0:type=swap","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"clear"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_TOKEN_INVALID:workspace-op=0:70000","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_VERSION_INVALID:0","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_PREVIOUS_MISSING","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_MISSING","kind":"submit"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_OPS_EMPTY","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_TOKEN_INVALID:workspace-op=0:70000","kind":"upsert"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_INVARIANT_VIOLATION: leftDiff(1) + rightDiff(0) + collateralDiff(0) = 1 !== 0 for tokenId 1","kind":"upsert"}
+(pass) final-sweep: og per-tx failure text for every Account tx handler [SEEDX=0] > MATCH: 80 random lockstep sequences over every same-j handler: og's rejection text (or thrown Error) equals accountTxFailure at every refusal [613.48ms]
+(pass) final-sweep: og per-tx failure text for every Account tx handler [SEEDX=0] > MATCH: targeted failures (128-row cap caught vs thrown, expired and malformed HTLC secrets, lending replay, maker limit price) carry og's text [20.44ms]
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HANKO_NONCE_MISMATCH:7:1:j=0:next=1:local=0:peer=0","kind":"hanko"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HANKO_NONCE_INVALID:0","kind":"hanko"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HANKO_HASH_INVALID:0x12","kind":"hanko"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HANKO_HASH_MISMATCH:0x0000000000000000000000000000000000000000000000000000000000000000:0xf5c467d88cbdf42fbeeb10368fc0e9d302342dd5ed15f70a33b34d3afa968e43","kind":"hanko"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_WORKSPACE_TARGET_HASH_MISMATCH:0x5d2a9dcc3bd1493f55e403316591c42b88e696400abb23746f860779bc2cc275:0x9999999999999999999999999999999999999999999999999999999999999999","kind":"hanko"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HANKO_HASH_MISMATCH:0x0000000000000000000000000000000000000000000000000000000000000000:0xf5c467d88cbdf42fbeeb10368fc0e9d302342dd5ed15f70a33b34d3afa968e43","kind":"hanko"}
+[WARN][account.settle] workspace.transition_rejected {"error":"POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH:0x0000000000000000000000000000000000000000000000000000000000000000:0x4d0ef2e3eda1ad7f64191ba4c579d1ec0bbaa3c70286c5d592fd1e63a13d7495","kind":"hanko"}
+[WARN][account.settle] workspace.transition_rejected {"error":"POST_SETTLEMENT_DISPUTE_HASH_MISMATCH:0x0000000000000000000000000000000000000000000000000000000000000000:0xf2861795f961fb9aab7dfef67553b6b216934c89676cbb5c8d830376250434a9","kind":"hanko"}
+[WARN][account.settle] workspace.transition_rejected {"error":"SETTLEMENT_HANKO_NONCE_MISMATCH:1:3","kind":"hanko"}
+(pass) final-sweep: og per-tx failure text for every Account tx handler [SEEDX=0] > MATCH: settlement hanko failures carry og's texts (context, nonce against the account and workspace basis, hash, post-proof nonce, body and dispute hash) [8.43ms]
+(pass) final-sweep: RF-18 outbox signer (og resolveEntityOutputSignerId) [SEEDX=0] > MATCH: an Account message to an Entity with no local replica binds og's certified counterparty proposer (the frame Hanko's first member); without a Hanko og falls to the gossip route, and with neither refuses SIGNER_RESOLUTION_FAILED [29.12ms]
+(pass) final-sweep: SJ-18 settlement board authority fallback (og resolveSettlementBoardAuthority) [SEEDX=0] > MATCH: 300 random replica sets (lazy, certified, mismatched, unregistered, no registry, no jurisdiction, diverging configs, diverging stacks, none) give og's authority or refusal [306.15ms]
+(pass) final-sweep: RF-18 retained network outbox (og applyRecoveryRuntimeOutputPlan) [SEEDX=0] > MATCH: 400 random frames (prior retained outputs + new outputs of every lane, local / remote / unroutable / self-hinted targets, settled and live proposals) commit og's retained outbox or og's refusal [72.06ms]
+(pass) final-sweep: RF-18 retained network outbox (og applyRecoveryRuntimeOutputPlan) [SEEDX=0] > MATCH: transport retirement and og selectRetainedRecoveryOutbox (retained rows re-proven from prior evidence, in order; new rows skipped; forged or reordered rows refused) [0.96ms]
+
+ 35 pass
+ 0 fail
+ 8866 expect() calls
+Ran 35 tests across 3 files. [4.29s]

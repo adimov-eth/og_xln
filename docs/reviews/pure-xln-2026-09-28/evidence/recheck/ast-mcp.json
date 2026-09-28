@@ -1,0 +1,714 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "capabilities": {
+        "experimental": {},
+        "prompts": {
+          "listChanged": false
+        },
+        "resources": {
+          "listChanged": false,
+          "subscribe": false
+        },
+        "tools": {
+          "listChanged": false
+        }
+      },
+      "protocolVersion": "2024-11-05",
+      "serverInfo": {
+        "name": "ast-grep",
+        "version": ""
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "tools": [
+        {
+          "description": "\nDump code's syntax structure or dump a query's pattern structure.\nThis is useful to discover correct syntax kind and syntax tree structure. Call it when debugging a rule.\nThe tool requires three arguments: code, language and format. The first two are self-explanatory.\n`format` is the output format of the syntax tree.\nuse `format=cst` to inspect the code's concrete syntax tree structure, useful to debug target code.\nuse `format=pattern` to inspect how ast-grep interprets a pattern, useful to debug pattern rule.\n\nInternally calls: ast-grep run --pattern <code> --lang <language> --debug-query=<format>\n",
+          "inputSchema": {
+            "properties": {
+              "code": {
+                "description": "The code you need",
+                "title": "Code",
+                "type": "string"
+              },
+              "language": {
+                "description": "The language of the code. Supported: bash, c, cpp, csharp, css, elixir, go, haskell, html, java, javascript, json, jsx, kotlin, lua, nix, php, python, ruby, rust, scala, solidity, swift, tsx, typescript, yaml",
+                "title": "Language",
+                "type": "string"
+              },
+              "format": {
+                "default": "cst",
+                "description": "Code dump format. Available values: pattern, ast, cst",
+                "enum": [
+                  "pattern",
+                  "cst",
+                  "ast"
+                ],
+                "title": "Format",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "language"
+            ],
+            "type": "object",
+            "title": "dump_syntax_treeArguments"
+          },
+          "name": "dump_syntax_tree",
+          "outputSchema": {
+            "properties": {
+              "result": {
+                "title": "Result",
+                "type": "string"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object",
+            "title": "dump_syntax_treeOutput"
+          }
+        },
+        {
+          "description": "\nTest a code against an ast-grep YAML rule.\nThis is useful to test a rule before using it in a project.\n\nInternally calls: ast-grep scan --inline-rules <yaml> --json --stdin\n",
+          "inputSchema": {
+            "properties": {
+              "code": {
+                "description": "The code to test against the rule",
+                "title": "Code",
+                "type": "string"
+              },
+              "yaml": {
+                "description": "The ast-grep YAML rule to search. It must have id, language, rule fields.",
+                "title": "Yaml",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "yaml"
+            ],
+            "type": "object",
+            "title": "test_match_code_ruleArguments"
+          },
+          "name": "test_match_code_rule",
+          "outputSchema": {
+            "properties": {
+              "result": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Result",
+                "type": "array"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object",
+            "title": "test_match_code_ruleOutput"
+          }
+        },
+        {
+          "description": "\nFind code in a project folder that matches the given ast-grep pattern.\nPattern is good for simple and single-AST node result.\nFor more complex usage, please use YAML by `find_code_by_rule`.\n\nInternally calls: ast-grep run --pattern <pattern> [--json] <project_folder>\n\nOutput formats:\n- text (default): Compact text format with file:line-range headers and complete match text\n  Example:\n    Found 2 matches:\n\n    path/to/file.py:10-15\n    def example_function():\n        # function body\n        return result\n\n    path/to/file.py:20-22\n    def another_function():\n        pass\n\n- json: Full match objects with metadata including ranges, meta-variables, etc.\n\nThe max_results parameter limits the number of complete matches returned (not individual lines).\nWhen limited, the header shows \"Found X matches (showing first Y of Z)\".\n\nExample usage:\n  find_code(pattern=\"class $NAME\", max_results=20)  # Returns text format\n  find_code(pattern=\"class $NAME\", output_format=\"json\")  # Returns JSON with metadata\n",
+          "inputSchema": {
+            "properties": {
+              "project_folder": {
+                "description": "The absolute path to the project folder. It must be absolute path.",
+                "title": "Project Folder",
+                "type": "string"
+              },
+              "pattern": {
+                "description": "The ast-grep pattern to search for. Note, the pattern must have valid AST structure.",
+                "title": "Pattern",
+                "type": "string"
+              },
+              "language": {
+                "default": "",
+                "description": "The language of the code. Supported: bash, c, cpp, csharp, css, elixir, go, haskell, html, java, javascript, json, jsx, kotlin, lua, nix, php, python, ruby, rust, scala, solidity, swift, tsx, typescript, yaml. If not specified, will be auto-detected based on file extensions.",
+                "title": "Language",
+                "type": "string"
+              },
+              "max_results": {
+                "default": 0,
+                "description": "Maximum results to return",
+                "title": "Max Results",
+                "type": "integer"
+              },
+              "output_format": {
+                "default": "text",
+                "description": "'text' or 'json'",
+                "title": "Output Format",
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_folder",
+              "pattern"
+            ],
+            "type": "object",
+            "title": "find_codeArguments"
+          },
+          "name": "find_code",
+          "outputSchema": {
+            "properties": {
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                ],
+                "title": "Result"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object",
+            "title": "find_codeOutput"
+          }
+        },
+        {
+          "description": "\nFind code using ast-grep's YAML rule in a project folder.\nYAML rule is more powerful than simple pattern and can perform complex search like find AST inside/having another AST.\nIt is a more advanced search tool than the simple `find_code`.\n\nTip: When using relational rules (inside/has), add `stopBy: end` to ensure complete traversal.\n\nInternally calls: ast-grep scan --inline-rules <yaml> [--json] <project_folder>\n\nOutput formats:\n- text (default): Compact text format with file:line-range headers and complete match text\n  Example:\n    Found 2 matches:\n\n    src/models.py:45-52\n    class UserModel:\n        def __init__(self):\n            self.id = None\n            self.name = None\n\n    src/views.py:12\n    class SimpleView: pass\n\n- json: Full match objects with metadata including ranges, meta-variables, etc.\n\nThe max_results parameter limits the number of complete matches returned (not individual lines).\nWhen limited, the header shows \"Found X matches (showing first Y of Z)\".\n\nExample usage:\n  find_code_by_rule(yaml=\"id: x\\nlanguage: python\\nrule: {pattern: 'class $NAME'}\", max_results=20)\n  find_code_by_rule(yaml=\"...\", output_format=\"json\")  # For full metadata\n",
+          "inputSchema": {
+            "properties": {
+              "project_folder": {
+                "description": "The absolute path to the project folder. It must be absolute path.",
+                "title": "Project Folder",
+                "type": "string"
+              },
+              "yaml": {
+                "description": "The ast-grep YAML rule to search. It must have id, language, rule fields.",
+                "title": "Yaml",
+                "type": "string"
+              },
+              "max_results": {
+                "default": 0,
+                "description": "Maximum results to return",
+                "title": "Max Results",
+                "type": "integer"
+              },
+              "output_format": {
+                "default": "text",
+                "description": "'text' or 'json'",
+                "title": "Output Format",
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_folder",
+              "yaml"
+            ],
+            "type": "object",
+            "title": "find_code_by_ruleArguments"
+          },
+          "name": "find_code_by_rule",
+          "outputSchema": {
+            "properties": {
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                ],
+                "title": "Result"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object",
+            "title": "find_code_by_ruleOutput"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "find_code",
+    "result": {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "result": {
+        "content": [
+          {
+            "text": "{\n  \"text\": \"afterCommit(a, ctx)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1523021,\n      \"end\": 1523040\n    },\n    \"start\": {\n      \"line\": 29074,\n      \"column\": 72\n    },\n    \"end\": {\n      \"line\": 29074,\n      \"column\": 91\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  return chain(applied, (a) => (a.replica.head.height > r.head.height ? afterCommit(a, ctx) : ok(a)));\",\n  \"charCount\": {\n    \"leading\": 72,\n    \"trailing\": 11\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {},\n    \"multi\": {\n      \"ARGS\": [\n        {\n          \"text\": \"a\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1523033,\n              \"end\": 1523034\n            },\n            \"start\": {\n              \"line\": 29074,\n              \"column\": 84\n            },\n            \"end\": {\n              \"line\": 29074,\n              \"column\": 85\n            }\n          }\n        },\n        {\n          \"text\": \",\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1523034,\n              \"end\": 1523035\n            },\n            \"start\": {\n              \"line\": 29074,\n              \"column\": 85\n            },\n            \"end\": {\n              \"line\": 29074,\n              \"column\": 86\n            }\n          }\n        },\n        {\n          \"text\": \"ctx\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1523036,\n              \"end\": 1523039\n            },\n            \"start\": {\n              \"line\": 29074,\n              \"column\": 87\n            },\n            \"end\": {\n              \"line\": 29074,\n              \"column\": 90\n            }\n          }\n        }\n      ]\n    },\n    \"transformed\": {}\n  }\n}",
+            "type": "text"
+          }
+        ],
+        "isError": false,
+        "structuredContent": {
+          "result": [
+            {
+              "text": "afterCommit(a, ctx)",
+              "range": {
+                "byteOffset": {
+                  "start": 1523021,
+                  "end": 1523040
+                },
+                "start": {
+                  "line": 29074,
+                  "column": 72
+                },
+                "end": {
+                  "line": 29074,
+                  "column": 91
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  return chain(applied, (a) => (a.replica.head.height > r.head.height ? afterCommit(a, ctx) : ok(a)));",
+              "charCount": {
+                "leading": 72,
+                "trailing": 11
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {},
+                "multi": {
+                  "ARGS": [
+                    {
+                      "text": "a",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1523033,
+                          "end": 1523034
+                        },
+                        "start": {
+                          "line": 29074,
+                          "column": 84
+                        },
+                        "end": {
+                          "line": 29074,
+                          "column": 85
+                        }
+                      }
+                    },
+                    {
+                      "text": ",",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1523034,
+                          "end": 1523035
+                        },
+                        "start": {
+                          "line": 29074,
+                          "column": 85
+                        },
+                        "end": {
+                          "line": 29074,
+                          "column": 86
+                        }
+                      }
+                    },
+                    {
+                      "text": "ctx",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1523036,
+                          "end": 1523039
+                        },
+                        "start": {
+                          "line": 29074,
+                          "column": 87
+                        },
+                        "end": {
+                          "line": 29074,
+                          "column": 90
+                        }
+                      }
+                    }
+                  ]
+                },
+                "transformed": {}
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "find_code",
+    "result": {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "result": {
+        "content": [
+          {
+            "text": "{\n  \"text\": \"pruneFinalizedJHistory(ctx.jHistory, jpFinalized(jpView(r)))\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1484410,\n      \"end\": 1484470\n    },\n    \"start\": {\n      \"line\": 28251,\n      \"column\": 19\n    },\n    \"end\": {\n      \"line\": 28251,\n      \"column\": 79\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  return chain(jpE(pruneFinalizedJHistory(ctx.jHistory, jpFinalized(jpView(r)))), (history) =>\",\n  \"charCount\": {\n    \"leading\": 19,\n    \"trailing\": 15\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {},\n    \"multi\": {\n      \"ARGS\": [\n        {\n          \"text\": \"ctx.jHistory\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1484433,\n              \"end\": 1484445\n            },\n            \"start\": {\n              \"line\": 28251,\n              \"column\": 42\n            },\n            \"end\": {\n              \"line\": 28251,\n              \"column\": 54\n            }\n          }\n        },\n        {\n          \"text\": \",\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1484445,\n              \"end\": 1484446\n            },\n            \"start\": {\n              \"line\": 28251,\n              \"column\": 54\n            },\n            \"end\": {\n              \"line\": 28251,\n              \"column\": 55\n            }\n          }\n        },\n        {\n          \"text\": \"jpFinalized(jpView(r))\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1484447,\n              \"end\": 1484469\n            },\n            \"start\": {\n              \"line\": 28251,\n              \"column\": 56\n            },\n            \"end\": {\n              \"line\": 28251,\n              \"column\": 78\n            }\n          }\n        }\n      ]\n    },\n    \"transformed\": {}\n  }\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"pruneFinalizedJHistory(h, r.state.jFinality.height)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1994024,\n      \"end\": 1994075\n    },\n    \"start\": {\n      \"line\": 39022,\n      \"column\": 18\n    },\n    \"end\": {\n      \"line\": 39022,\n      \"column\": 69\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  return unwrapOr(pruneFinalizedJHistory(h, r.state.jFinality.height), () => h);\",\n  \"charCount\": {\n    \"leading\": 18,\n    \"trailing\": 11\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {},\n    \"multi\": {\n      \"ARGS\": [\n        {\n          \"text\": \"h\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1994047,\n              \"end\": 1994048\n            },\n            \"start\": {\n              \"line\": 39022,\n              \"column\": 41\n            },\n            \"end\": {\n              \"line\": 39022,\n              \"column\": 42\n            }\n          }\n        },\n        {\n          \"text\": \",\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1994048,\n              \"end\": 1994049\n            },\n            \"start\": {\n              \"line\": 39022,\n              \"column\": 42\n            },\n            \"end\": {\n              \"line\": 39022,\n              \"column\": 43\n            }\n          }\n        },\n        {\n          \"text\": \"r.state.jFinality.height\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1994050,\n              \"end\": 1994074\n            },\n            \"start\": {\n              \"line\": 39022,\n              \"column\": 44\n            },\n            \"end\": {\n              \"line\": 39022,\n              \"column\": 68\n            }\n          }\n        }\n      ]\n    },\n    \"transformed\": {}\n  }\n}",
+            "type": "text"
+          }
+        ],
+        "isError": false,
+        "structuredContent": {
+          "result": [
+            {
+              "text": "pruneFinalizedJHistory(ctx.jHistory, jpFinalized(jpView(r)))",
+              "range": {
+                "byteOffset": {
+                  "start": 1484410,
+                  "end": 1484470
+                },
+                "start": {
+                  "line": 28251,
+                  "column": 19
+                },
+                "end": {
+                  "line": 28251,
+                  "column": 79
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  return chain(jpE(pruneFinalizedJHistory(ctx.jHistory, jpFinalized(jpView(r)))), (history) =>",
+              "charCount": {
+                "leading": 19,
+                "trailing": 15
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {},
+                "multi": {
+                  "ARGS": [
+                    {
+                      "text": "ctx.jHistory",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1484433,
+                          "end": 1484445
+                        },
+                        "start": {
+                          "line": 28251,
+                          "column": 42
+                        },
+                        "end": {
+                          "line": 28251,
+                          "column": 54
+                        }
+                      }
+                    },
+                    {
+                      "text": ",",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1484445,
+                          "end": 1484446
+                        },
+                        "start": {
+                          "line": 28251,
+                          "column": 54
+                        },
+                        "end": {
+                          "line": 28251,
+                          "column": 55
+                        }
+                      }
+                    },
+                    {
+                      "text": "jpFinalized(jpView(r))",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1484447,
+                          "end": 1484469
+                        },
+                        "start": {
+                          "line": 28251,
+                          "column": 56
+                        },
+                        "end": {
+                          "line": 28251,
+                          "column": 78
+                        }
+                      }
+                    }
+                  ]
+                },
+                "transformed": {}
+              }
+            },
+            {
+              "text": "pruneFinalizedJHistory(h, r.state.jFinality.height)",
+              "range": {
+                "byteOffset": {
+                  "start": 1994024,
+                  "end": 1994075
+                },
+                "start": {
+                  "line": 39022,
+                  "column": 18
+                },
+                "end": {
+                  "line": 39022,
+                  "column": 69
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  return unwrapOr(pruneFinalizedJHistory(h, r.state.jFinality.height), () => h);",
+              "charCount": {
+                "leading": 18,
+                "trailing": 11
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {},
+                "multi": {
+                  "ARGS": [
+                    {
+                      "text": "h",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1994047,
+                          "end": 1994048
+                        },
+                        "start": {
+                          "line": 39022,
+                          "column": 41
+                        },
+                        "end": {
+                          "line": 39022,
+                          "column": 42
+                        }
+                      }
+                    },
+                    {
+                      "text": ",",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1994048,
+                          "end": 1994049
+                        },
+                        "start": {
+                          "line": 39022,
+                          "column": 42
+                        },
+                        "end": {
+                          "line": 39022,
+                          "column": 43
+                        }
+                      }
+                    },
+                    {
+                      "text": "r.state.jFinality.height",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1994050,
+                          "end": 1994074
+                        },
+                        "start": {
+                          "line": 39022,
+                          "column": 44
+                        },
+                        "end": {
+                          "line": 39022,
+                          "column": 68
+                        }
+                      }
+                    }
+                  ]
+                },
+                "transformed": {}
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "find_code",
+    "result": {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "result": {
+        "content": [
+          {
+            "text": "{\n  \"text\": \"withOgSections(s, { ...ogSections(s), ...patch } as EntityCommitted)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1106,\n      \"end\": 1174\n    },\n    \"start\": {\n      \"line\": 16,\n      \"column\": 9\n    },\n    \"end\": {\n      \"line\": 16,\n      \"column\": 77\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/diff/og-state.ts\",\n  \"lines\": \"  unwrap(withOgSections(s, { ...ogSections(s), ...patch } as EntityCommitted));\",\n  \"charCount\": {\n    \"leading\": 9,\n    \"trailing\": 2\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {},\n    \"multi\": {\n      \"ARGS\": [\n        {\n          \"text\": \"s\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1121,\n              \"end\": 1122\n            },\n            \"start\": {\n              \"line\": 16,\n              \"column\": 24\n            },\n            \"end\": {\n              \"line\": 16,\n              \"column\": 25\n            }\n          }\n        },\n        {\n          \"text\": \",\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1122,\n              \"end\": 1123\n            },\n            \"start\": {\n              \"line\": 16,\n              \"column\": 25\n            },\n            \"end\": {\n              \"line\": 16,\n              \"column\": 26\n            }\n          }\n        },\n        {\n          \"text\": \"{ ...ogSections(s), ...patch } as EntityCommitted\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1124,\n              \"end\": 1173\n            },\n            \"start\": {\n              \"line\": 16,\n              \"column\": 27\n            },\n            \"end\": {\n              \"line\": 16,\n              \"column\": 76\n            }\n          }\n        }\n      ]\n    },\n    \"transformed\": {}\n  }\n}",
+            "type": "text"
+          }
+        ],
+        "isError": false,
+        "structuredContent": {
+          "result": [
+            {
+              "text": "withOgSections(s, { ...ogSections(s), ...patch } as EntityCommitted)",
+              "range": {
+                "byteOffset": {
+                  "start": 1106,
+                  "end": 1174
+                },
+                "start": {
+                  "line": 16,
+                  "column": 9
+                },
+                "end": {
+                  "line": 16,
+                  "column": 77
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/diff/og-state.ts",
+              "lines": "  unwrap(withOgSections(s, { ...ogSections(s), ...patch } as EntityCommitted));",
+              "charCount": {
+                "leading": 9,
+                "trailing": 2
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {},
+                "multi": {
+                  "ARGS": [
+                    {
+                      "text": "s",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1121,
+                          "end": 1122
+                        },
+                        "start": {
+                          "line": 16,
+                          "column": 24
+                        },
+                        "end": {
+                          "line": 16,
+                          "column": 25
+                        }
+                      }
+                    },
+                    {
+                      "text": ",",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1122,
+                          "end": 1123
+                        },
+                        "start": {
+                          "line": 16,
+                          "column": 25
+                        },
+                        "end": {
+                          "line": 16,
+                          "column": 26
+                        }
+                      }
+                    },
+                    {
+                      "text": "{ ...ogSections(s), ...patch } as EntityCommitted",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1124,
+                          "end": 1173
+                        },
+                        "start": {
+                          "line": 16,
+                          "column": 27
+                        },
+                        "end": {
+                          "line": 16,
+                          "column": 76
+                        }
+                      }
+                    }
+                  ]
+                },
+                "transformed": {}
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "find_code",
+    "result": {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "result": {
+        "content": [
+          {
+            "text": "{\n  \"text\": \"createEntity({\\n    id: im.entity as EntityId,\\n    jurisdiction: im.domain,\\n    threshold: im.tx.data.config.threshold,\\n    members: im.authority.members,\\n    signerId: im.signer as Address,\\n    timestamp: im.rt.timestamp,\\n    jurisdictionConfig: im.jurisdictionConfig,\\n    committed: genesisCommitted(im),\\n  })\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1582448,\n      \"end\": 1582758\n    },\n    \"start\": {\n      \"line\": 30365,\n      \"column\": 18\n    },\n    \"end\": {\n      \"line\": 30374,\n      \"column\": 4\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  const created = createEntity({\\n    id: im.entity as EntityId,\\n    jurisdiction: im.domain,\\n    threshold: im.tx.data.config.threshold,\\n    members: im.authority.members,\\n    signerId: im.signer as Address,\\n    timestamp: im.rt.timestamp,\\n    jurisdictionConfig: im.jurisdictionConfig,\\n    committed: genesisCommitted(im),\\n  });\",\n  \"charCount\": {\n    \"leading\": 18,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {},\n    \"multi\": {\n      \"ARGS\": [\n        {\n          \"text\": \"{\\n    id: im.entity as EntityId,\\n    jurisdiction: im.domain,\\n    threshold: im.tx.data.config.threshold,\\n    members: im.authority.members,\\n    signerId: im.signer as Address,\\n    timestamp: im.rt.timestamp,\\n    jurisdictionConfig: im.jurisdictionConfig,\\n    committed: genesisCommitted(im),\\n  }\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 1582461,\n              \"end\": 1582757\n            },\n            \"start\": {\n              \"line\": 30365,\n              \"column\": 31\n            },\n            \"end\": {\n              \"line\": 30374,\n              \"column\": 3\n            }\n          }\n        }\n      ]\n    },\n    \"transformed\": {}\n  }\n}",
+            "type": "text"
+          }
+        ],
+        "isError": false,
+        "structuredContent": {
+          "result": [
+            {
+              "text": "createEntity({\n    id: im.entity as EntityId,\n    jurisdiction: im.domain,\n    threshold: im.tx.data.config.threshold,\n    members: im.authority.members,\n    signerId: im.signer as Address,\n    timestamp: im.rt.timestamp,\n    jurisdictionConfig: im.jurisdictionConfig,\n    committed: genesisCommitted(im),\n  })",
+              "range": {
+                "byteOffset": {
+                  "start": 1582448,
+                  "end": 1582758
+                },
+                "start": {
+                  "line": 30365,
+                  "column": 18
+                },
+                "end": {
+                  "line": 30374,
+                  "column": 4
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  const created = createEntity({\n    id: im.entity as EntityId,\n    jurisdiction: im.domain,\n    threshold: im.tx.data.config.threshold,\n    members: im.authority.members,\n    signerId: im.signer as Address,\n    timestamp: im.rt.timestamp,\n    jurisdictionConfig: im.jurisdictionConfig,\n    committed: genesisCommitted(im),\n  });",
+              "charCount": {
+                "leading": 18,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {},
+                "multi": {
+                  "ARGS": [
+                    {
+                      "text": "{\n    id: im.entity as EntityId,\n    jurisdiction: im.domain,\n    threshold: im.tx.data.config.threshold,\n    members: im.authority.members,\n    signerId: im.signer as Address,\n    timestamp: im.rt.timestamp,\n    jurisdictionConfig: im.jurisdictionConfig,\n    committed: genesisCommitted(im),\n  }",
+                      "range": {
+                        "byteOffset": {
+                          "start": 1582461,
+                          "end": 1582757
+                        },
+                        "start": {
+                          "line": 30365,
+                          "column": 31
+                        },
+                        "end": {
+                          "line": 30374,
+                          "column": 3
+                        }
+                      }
+                    }
+                  ]
+                },
+                "transformed": {}
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+]

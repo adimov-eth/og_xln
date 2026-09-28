@@ -1,0 +1,48 @@
+{
+  "reviewedSha": "0d3a097b782b65b08358299fa0419e65498edc57",
+  "sourceSha256": "6c92501b4550f06af462fda8e10b9b47aab64a9de60e9e9a44b85d75a056346b",
+  "sourceUnchanged": true,
+  "agentReports": [
+    "adversarial.md",
+    "architecture.md",
+    "code-simplifier.md",
+    "creative.md",
+    "critic.md",
+    "defect-review.md",
+    "overbuild.md",
+    "ponytail-audit.md",
+    "simplify.md",
+    "type-hardening.md"
+  ],
+  "agentReportCount": 10,
+  "missingReportLinks": [],
+  "selectedTests": {
+    "pass": 114,
+    "fail": 0,
+    "assertions": 15553,
+    "files": 5
+  },
+  "pureTypecheck": {
+    "exit": 0,
+    "typescript": "5.9.3"
+  },
+  "counterexampleTypecheck": {
+    "exit": 0,
+    "typescript": "5.9.3"
+  },
+  "style": {
+    "exit": 0,
+    "rules": 7
+  },
+  "repoCheck": {
+    "exit": 1,
+    "cause": "Missing forge-std source files; sibling checks cancelled"
+  },
+  "productionCodeChanged": false,
+  "independentArtifactReview": {
+    "reviewer": "defect_review",
+    "requiredCorrections": 1,
+    "correctionsApplied": 1,
+    "remaining": 0
+  }
+}

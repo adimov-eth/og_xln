@@ -1,0 +1,14 @@
+$ bun run check:short && bun run check:long
+$ bun tools/run-parallel-checks.ts check:contract-artifact-drift check:frontend-file-size
+$ bun run contracts:sync && git diff --exit-code -- frontend/static/contracts jurisdictions/typechain-types
+$ bun core/scripts/checks/policy/check-frontend-file-size.ts
+$ ./scripts/sync-contract-artifacts.sh
+Source file-size invariant passed (2782 files, max 3000 lines)
+PASS check:frontend-file-size 421ms
+[contracts-sync] compiling jurisdictions contracts
+./scripts/sync-contract-artifacts.sh: line 144: /Users/adimov/XLN/og_xln/node_modules/.bin/hardhat: No such file or directory
+error: script "contracts:sync" exited with code 1
+error: script "check:contract-artifact-drift" exited with code 1
+FAIL check:contract-artifact-drift 722ms
+error: script "check:short" exited with code 1
+error: script "check" exited with code 1

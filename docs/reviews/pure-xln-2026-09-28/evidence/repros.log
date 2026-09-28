@@ -1,0 +1,4 @@
+CONFIRMED held retry: changed credit limit 7 -> 999, stale signed hash, accepted=true; cached state preserved
+CONFIRMED foldResult: first callback rejects, iterable still fully consumed (3/3)
+J-history runtime outcome: {"ok":true,"advanced":false,"retainedHistory":true}
+CONFIRMED J-history: production prune throws; pure prune refuses; Runtime accepts the same invalid local history

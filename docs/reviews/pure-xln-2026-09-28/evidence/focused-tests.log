@@ -1,0 +1,22 @@
+bun test v1.4.2 (744846f84)
+
+pure/diff/hashes.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: Cannot find package 'ethers' from '/Users/adimov/XLN/og_xln/pure/diff/hashes.test.ts'
+-------------------------------
+
+
+pure/diff/account-consensus.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: Cannot find package 'ethers' from '/Users/adimov/XLN/og_xln/core/account/commitment/state-root.ts'
+-------------------------------
+
+
+ 0 pass
+ 2 fail
+ 2 errors
+Ran 2 tests across 2 files. [133.00ms]

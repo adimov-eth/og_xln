@@ -1,0 +1,2738 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "capabilities": {
+        "experimental": {},
+        "prompts": {
+          "listChanged": false
+        },
+        "resources": {
+          "listChanged": false,
+          "subscribe": false
+        },
+        "tools": {
+          "listChanged": false
+        }
+      },
+      "protocolVersion": "2024-11-05",
+      "serverInfo": {
+        "name": "ast-grep",
+        "version": ""
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "tools": [
+        {
+          "description": "\nDump code's syntax structure or dump a query's pattern structure.\nThis is useful to discover correct syntax kind and syntax tree structure. Call it when debugging a rule.\nThe tool requires three arguments: code, language and format. The first two are self-explanatory.\n`format` is the output format of the syntax tree.\nuse `format=cst` to inspect the code's concrete syntax tree structure, useful to debug target code.\nuse `format=pattern` to inspect how ast-grep interprets a pattern, useful to debug pattern rule.\n\nInternally calls: ast-grep run --pattern <code> --lang <language> --debug-query=<format>\n",
+          "inputSchema": {
+            "properties": {
+              "code": {
+                "description": "The code you need",
+                "title": "Code",
+                "type": "string"
+              },
+              "language": {
+                "description": "The language of the code. Supported: bash, c, cpp, csharp, css, elixir, go, haskell, html, java, javascript, json, jsx, kotlin, lua, nix, php, python, ruby, rust, scala, solidity, swift, tsx, typescript, yaml",
+                "title": "Language",
+                "type": "string"
+              },
+              "format": {
+                "default": "cst",
+                "description": "Code dump format. Available values: pattern, ast, cst",
+                "enum": [
+                  "pattern",
+                  "cst",
+                  "ast"
+                ],
+                "title": "Format",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "language"
+            ],
+            "type": "object",
+            "title": "dump_syntax_treeArguments"
+          },
+          "name": "dump_syntax_tree",
+          "outputSchema": {
+            "properties": {
+              "result": {
+                "title": "Result",
+                "type": "string"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object",
+            "title": "dump_syntax_treeOutput"
+          }
+        },
+        {
+          "description": "\nTest a code against an ast-grep YAML rule.\nThis is useful to test a rule before using it in a project.\n\nInternally calls: ast-grep scan --inline-rules <yaml> --json --stdin\n",
+          "inputSchema": {
+            "properties": {
+              "code": {
+                "description": "The code to test against the rule",
+                "title": "Code",
+                "type": "string"
+              },
+              "yaml": {
+                "description": "The ast-grep YAML rule to search. It must have id, language, rule fields.",
+                "title": "Yaml",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "yaml"
+            ],
+            "type": "object",
+            "title": "test_match_code_ruleArguments"
+          },
+          "name": "test_match_code_rule",
+          "outputSchema": {
+            "properties": {
+              "result": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Result",
+                "type": "array"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object",
+            "title": "test_match_code_ruleOutput"
+          }
+        },
+        {
+          "description": "\nFind code in a project folder that matches the given ast-grep pattern.\nPattern is good for simple and single-AST node result.\nFor more complex usage, please use YAML by `find_code_by_rule`.\n\nInternally calls: ast-grep run --pattern <pattern> [--json] <project_folder>\n\nOutput formats:\n- text (default): Compact text format with file:line-range headers and complete match text\n  Example:\n    Found 2 matches:\n\n    path/to/file.py:10-15\n    def example_function():\n        # function body\n        return result\n\n    path/to/file.py:20-22\n    def another_function():\n        pass\n\n- json: Full match objects with metadata including ranges, meta-variables, etc.\n\nThe max_results parameter limits the number of complete matches returned (not individual lines).\nWhen limited, the header shows \"Found X matches (showing first Y of Z)\".\n\nExample usage:\n  find_code(pattern=\"class $NAME\", max_results=20)  # Returns text format\n  find_code(pattern=\"class $NAME\", output_format=\"json\")  # Returns JSON with metadata\n",
+          "inputSchema": {
+            "properties": {
+              "project_folder": {
+                "description": "The absolute path to the project folder. It must be absolute path.",
+                "title": "Project Folder",
+                "type": "string"
+              },
+              "pattern": {
+                "description": "The ast-grep pattern to search for. Note, the pattern must have valid AST structure.",
+                "title": "Pattern",
+                "type": "string"
+              },
+              "language": {
+                "default": "",
+                "description": "The language of the code. Supported: bash, c, cpp, csharp, css, elixir, go, haskell, html, java, javascript, json, jsx, kotlin, lua, nix, php, python, ruby, rust, scala, solidity, swift, tsx, typescript, yaml. If not specified, will be auto-detected based on file extensions.",
+                "title": "Language",
+                "type": "string"
+              },
+              "max_results": {
+                "default": 0,
+                "description": "Maximum results to return",
+                "title": "Max Results",
+                "type": "integer"
+              },
+              "output_format": {
+                "default": "text",
+                "description": "'text' or 'json'",
+                "title": "Output Format",
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_folder",
+              "pattern"
+            ],
+            "type": "object",
+            "title": "find_codeArguments"
+          },
+          "name": "find_code",
+          "outputSchema": {
+            "properties": {
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                ],
+                "title": "Result"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object",
+            "title": "find_codeOutput"
+          }
+        },
+        {
+          "description": "\nFind code using ast-grep's YAML rule in a project folder.\nYAML rule is more powerful than simple pattern and can perform complex search like find AST inside/having another AST.\nIt is a more advanced search tool than the simple `find_code`.\n\nTip: When using relational rules (inside/has), add `stopBy: end` to ensure complete traversal.\n\nInternally calls: ast-grep scan --inline-rules <yaml> [--json] <project_folder>\n\nOutput formats:\n- text (default): Compact text format with file:line-range headers and complete match text\n  Example:\n    Found 2 matches:\n\n    src/models.py:45-52\n    class UserModel:\n        def __init__(self):\n            self.id = None\n            self.name = None\n\n    src/views.py:12\n    class SimpleView: pass\n\n- json: Full match objects with metadata including ranges, meta-variables, etc.\n\nThe max_results parameter limits the number of complete matches returned (not individual lines).\nWhen limited, the header shows \"Found X matches (showing first Y of Z)\".\n\nExample usage:\n  find_code_by_rule(yaml=\"id: x\\nlanguage: python\\nrule: {pattern: 'class $NAME'}\", max_results=20)\n  find_code_by_rule(yaml=\"...\", output_format=\"json\")  # For full metadata\n",
+          "inputSchema": {
+            "properties": {
+              "project_folder": {
+                "description": "The absolute path to the project folder. It must be absolute path.",
+                "title": "Project Folder",
+                "type": "string"
+              },
+              "yaml": {
+                "description": "The ast-grep YAML rule to search. It must have id, language, rule fields.",
+                "title": "Yaml",
+                "type": "string"
+              },
+              "max_results": {
+                "default": 0,
+                "description": "Maximum results to return",
+                "title": "Max Results",
+                "type": "integer"
+              },
+              "output_format": {
+                "default": "text",
+                "description": "'text' or 'json'",
+                "title": "Output Format",
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_folder",
+              "yaml"
+            ],
+            "type": "object",
+            "title": "find_code_by_ruleArguments"
+          },
+          "name": "find_code_by_rule",
+          "outputSchema": {
+            "properties": {
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                ],
+                "title": "Result"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object",
+            "title": "find_code_by_ruleOutput"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "dump_syntax_tree",
+    "result": {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "result": {
+        "content": [
+          {
+            "text": "Debug AST:\nprogram (0,0)-(0,52)\n  expression_statement (0,0)-(0,52)\n    call_expression (0,0)-(0,52)\n      function: identifier (0,0)-(0,8)\n      arguments: arguments (0,8)-(0,52)\n        call_expression (0,9)-(0,42)\n          function: identifier (0,9)-(0,31)\n          arguments: arguments (0,31)-(0,42)\n            identifier (0,32)-(0,33)\n            identifier (0,35)-(0,41)\n        arrow_function (0,44)-(0,51)\n          parameters: formal_parameters (0,44)-(0,46)\n          body: identifier (0,50)-(0,51)",
+            "type": "text"
+          }
+        ],
+        "isError": false,
+        "structuredContent": {
+          "result": "Debug AST:\nprogram (0,0)-(0,52)\n  expression_statement (0,0)-(0,52)\n    call_expression (0,0)-(0,52)\n      function: identifier (0,0)-(0,8)\n      arguments: arguments (0,8)-(0,52)\n        call_expression (0,9)-(0,42)\n          function: identifier (0,9)-(0,31)\n          arguments: arguments (0,31)-(0,42)\n            identifier (0,32)-(0,33)\n            identifier (0,35)-(0,41)\n        arrow_function (0,44)-(0,51)\n          parameters: formal_parameters (0,44)-(0,46)\n          body: identifier (0,50)-(0,51)"
+        }
+      }
+    }
+  },
+  {
+    "name": "test_match_code_rule",
+    "result": {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "result": {
+        "content": [
+          {
+            "text": "{\n  \"text\": \"unwrapOr(pruneFinalizedJHistory(h, height), () => h)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 10,\n      \"end\": 62\n    },\n    \"start\": {\n      \"line\": 0,\n      \"column\": 10\n    },\n    \"end\": {\n      \"line\": 0,\n      \"column\": 62\n    }\n  },\n  \"file\": \"STDIN\",\n  \"lines\": \"const x = unwrapOr(pruneFinalizedJHistory(h, height), () => h);\",\n  \"charCount\": {\n    \"leading\": 10,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"h\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 60,\n            \"end\": 61\n          },\n          \"start\": {\n            \"line\": 0,\n            \"column\": 60\n          },\n          \"end\": {\n            \"line\": 0,\n            \"column\": 61\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"pruneFinalizedJHistory(h, height)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 19,\n            \"end\": 52\n          },\n          \"start\": {\n            \"line\": 0,\n            \"column\": 19\n          },\n          \"end\": {\n            \"line\": 0,\n            \"column\": 52\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(pruneFinalizedJHistory(h, height), () => h)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 10,\n          \"end\": 62\n        },\n        \"start\": {\n          \"line\": 0,\n          \"column\": 10\n        },\n        \"end\": {\n          \"line\": 0,\n          \"column\": 62\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          }
+        ],
+        "isError": false,
+        "structuredContent": {
+          "result": [
+            {
+              "text": "unwrapOr(pruneFinalizedJHistory(h, height), () => h)",
+              "range": {
+                "byteOffset": {
+                  "start": 10,
+                  "end": 62
+                },
+                "start": {
+                  "line": 0,
+                  "column": 10
+                },
+                "end": {
+                  "line": 0,
+                  "column": 62
+                }
+              },
+              "file": "STDIN",
+              "lines": "const x = unwrapOr(pruneFinalizedJHistory(h, height), () => h);",
+              "charCount": {
+                "leading": 10,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "h",
+                    "range": {
+                      "byteOffset": {
+                        "start": 60,
+                        "end": 61
+                      },
+                      "start": {
+                        "line": 0,
+                        "column": 60
+                      },
+                      "end": {
+                        "line": 0,
+                        "column": 61
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "pruneFinalizedJHistory(h, height)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 19,
+                        "end": 52
+                      },
+                      "start": {
+                        "line": 0,
+                        "column": 19
+                      },
+                      "end": {
+                        "line": 0,
+                        "column": 52
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(pruneFinalizedJHistory(h, height), () => h)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 10,
+                      "end": 62
+                    },
+                    "start": {
+                      "line": 0,
+                      "column": 10
+                    },
+                    "end": {
+                      "line": 0,
+                      "column": 62
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "find_code_by_rule",
+    "result": {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "result": {
+        "content": [
+          {
+            "text": "{\n  \"text\": \"unwrapOr(r, () => INVALID)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 187242,\n      \"end\": 187268\n    },\n    \"start\": {\n      \"line\": 3389,\n      \"column\": 63\n    },\n    \"end\": {\n      \"line\": 3389,\n      \"column\": 89\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"const verdictOf = (r: Result<Verdict, HankoError>): Verdict => unwrapOr(r, () => INVALID);\",\n  \"charCount\": {\n    \"leading\": 63,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"INVALID\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 187260,\n            \"end\": 187267\n          },\n          \"start\": {\n            \"line\": 3389,\n            \"column\": 81\n          },\n          \"end\": {\n            \"line\": 3389,\n            \"column\": 88\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"r\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 187251,\n            \"end\": 187252\n          },\n          \"start\": {\n            \"line\": 3389,\n            \"column\": 72\n          },\n          \"end\": {\n            \"line\": 3389,\n            \"column\": 73\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(r, () => INVALID)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 187242,\n          \"end\": 187268\n        },\n        \"start\": {\n          \"line\": 3389,\n          \"column\": 63\n        },\n        \"end\": {\n          \"line\": 3389,\n          \"column\": 89\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs), () => [])\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 359229,\n      \"end\": 359309\n    },\n    \"start\": {\n      \"line\": 6240,\n      \"column\": 2\n    },\n    \"end\": {\n      \"line\": 6240,\n      \"column\": 82\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  unwrapOr(map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs), () => []);\",\n  \"charCount\": {\n    \"leading\": 2,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 359238,\n            \"end\": 359298\n          },\n          \"start\": {\n            \"line\": 6240,\n            \"column\": 11\n          },\n          \"end\": {\n            \"line\": 6240,\n            \"column\": 71\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"[]\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 359306,\n            \"end\": 359308\n          },\n          \"start\": {\n            \"line\": 6240,\n            \"column\": 79\n          },\n          \"end\": {\n            \"line\": 6240,\n            \"column\": 81\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs), () => [])\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 359229,\n          \"end\": 359309\n        },\n        \"start\": {\n          \"line\": 6240,\n          \"column\": 2\n        },\n        \"end\": {\n          \"line\": 6240,\n          \"column\": 82\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(map(foldResult(f.txs, { body: s, messages: [] }, replay), (r) => r.messages), () => [])\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 455679,\n      \"end\": 455775\n    },\n    \"start\": {\n      \"line\": 7789,\n      \"column\": 9\n    },\n    \"end\": {\n      \"line\": 7789,\n      \"column\": 105\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  return unwrapOr(map(foldResult(f.txs, { body: s, messages: [] }, replay), (r) => r.messages), () => []);\",\n  \"charCount\": {\n    \"leading\": 9,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"map(foldResult(f.txs, { body: s, messages: [] }, replay), (r) => r.messages)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 455688,\n            \"end\": 455764\n          },\n          \"start\": {\n            \"line\": 7789,\n            \"column\": 18\n          },\n          \"end\": {\n            \"line\": 7789,\n            \"column\": 94\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"[]\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 455772,\n            \"end\": 455774\n          },\n          \"start\": {\n            \"line\": 7789,\n            \"column\": 102\n          },\n          \"end\": {\n            \"line\": 7789,\n            \"column\": 104\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(map(foldResult(f.txs, { body: s, messages: [] }, replay), (r) => r.messages), () => [])\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 455679,\n          \"end\": 455775\n        },\n        \"start\": {\n          \"line\": 7789,\n          \"column\": 9\n        },\n        \"end\": {\n          \"line\": 7789,\n          \"column\": 105\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(offerMarketKey(o), () => \\\"\\\")\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 464861,\n      \"end\": 464898\n    },\n    \"start\": {\n      \"line\": 7934,\n      \"column\": 39\n    },\n    \"end\": {\n      \"line\": 7934,\n      \"column\": 76\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  const resting = makers.filter((o) => unwrapOr(offerMarketKey(o), () => \\\"\\\") === key.value).length;\",\n  \"charCount\": {\n    \"leading\": 39,\n    \"trailing\": 23\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"offerMarketKey(o)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 464870,\n            \"end\": 464887\n          },\n          \"start\": {\n            \"line\": 7934,\n            \"column\": 48\n          },\n          \"end\": {\n            \"line\": 7934,\n            \"column\": 65\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"\\\"\\\"\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 464895,\n            \"end\": 464897\n          },\n          \"start\": {\n            \"line\": 7934,\n            \"column\": 73\n          },\n          \"end\": {\n            \"line\": 7934,\n            \"column\": 75\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(offerMarketKey(o), () => \\\"\\\")\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 464861,\n          \"end\": 464898\n        },\n        \"start\": {\n          \"line\": 7934,\n          \"column\": 39\n        },\n        \"end\": {\n          \"line\": 7934,\n          \"column\": 76\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(map(compileOps([op], proposerIsLeft), (c) => c.diffs[0] ?? noDiff), () => noDiff)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 490368,\n      \"end\": 490458\n    },\n    \"start\": {\n      \"line\": 8332,\n      \"column\": 6\n    },\n    \"end\": {\n      \"line\": 8332,\n      \"column\": 96\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"    : unwrapOr(map(compileOps([op], proposerIsLeft), (c) => c.diffs[0] ?? noDiff), () => noDiff);\",\n  \"charCount\": {\n    \"leading\": 6,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"map(compileOps([op], proposerIsLeft), (c) => c.diffs[0] ?? noDiff)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 490377,\n            \"end\": 490443\n          },\n          \"start\": {\n            \"line\": 8332,\n            \"column\": 15\n          },\n          \"end\": {\n            \"line\": 8332,\n            \"column\": 81\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"noDiff\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 490451,\n            \"end\": 490457\n          },\n          \"start\": {\n            \"line\": 8332,\n            \"column\": 89\n          },\n          \"end\": {\n            \"line\": 8332,\n            \"column\": 95\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(map(compileOps([op], proposerIsLeft), (c) => c.diffs[0] ?? noDiff), () => noDiff)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 490368,\n          \"end\": 490458\n        },\n        \"start\": {\n          \"line\": 8332,\n          \"column\": 6\n        },\n        \"end\": {\n          \"line\": 8332,\n          \"column\": 96\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs), () => [])\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 498211,\n      \"end\": 498281\n    },\n    \"start\": {\n      \"line\": 8457,\n      \"column\": 16\n    },\n    \"end\": {\n      \"line\": 8457,\n      \"column\": 86\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  const diffs = unwrapOr(map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs), () => []);\",\n  \"charCount\": {\n    \"leading\": 16,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 498220,\n            \"end\": 498270\n          },\n          \"start\": {\n            \"line\": 8457,\n            \"column\": 25\n          },\n          \"end\": {\n            \"line\": 8457,\n            \"column\": 75\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"[]\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 498278,\n            \"end\": 498280\n          },\n          \"start\": {\n            \"line\": 8457,\n            \"column\": 83\n          },\n          \"end\": {\n            \"line\": 8457,\n            \"column\": 85\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs), () => [])\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 498211,\n          \"end\": 498281\n        },\n        \"start\": {\n          \"line\": 8457,\n          \"column\": 16\n        },\n        \"end\": {\n          \"line\": 8457,\n          \"column\": 86\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(signature(s.startsWith(\\\"0x\\\") ? s.slice(2).toLowerCase() : s), () => undefined)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 755789,\n      \"end\": 755876\n    },\n    \"start\": {\n      \"line\": 13232,\n      \"column\": 2\n    },\n    \"end\": {\n      \"line\": 13232,\n      \"column\": 89\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  unwrapOr(signature(s.startsWith(\\\"0x\\\") ? s.slice(2).toLowerCase() : s), () => undefined);\",\n  \"charCount\": {\n    \"leading\": 2,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"undefined\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 755866,\n            \"end\": 755875\n          },\n          \"start\": {\n            \"line\": 13232,\n            \"column\": 79\n          },\n          \"end\": {\n            \"line\": 13232,\n            \"column\": 88\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"signature(s.startsWith(\\\"0x\\\") ? s.slice(2).toLowerCase() : s)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 755798,\n            \"end\": 755858\n          },\n          \"start\": {\n            \"line\": 13232,\n            \"column\": 11\n          },\n          \"end\": {\n            \"line\": 13232,\n            \"column\": 71\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(signature(s.startsWith(\\\"0x\\\") ? s.slice(2).toLowerCase() : s), () => undefined)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 755789,\n          \"end\": 755876\n        },\n        \"start\": {\n          \"line\": 13232,\n          \"column\": 2\n        },\n        \"end\": {\n          \"line\": 13232,\n          \"column\": 89\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(hashEntityFrame(selected.value.frame), () => \\\"\\\")\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 768419,\n      \"end\": 768476\n    },\n    \"start\": {\n      \"line\": 13446,\n      \"column\": 7\n    },\n    \"end\": {\n      \"line\": 13446,\n      \"column\": 64\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"    && unwrapOr(hashEntityFrame(selected.value.frame), () => \\\"\\\") === frameHash;\",\n  \"charCount\": {\n    \"leading\": 7,\n    \"trailing\": 15\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"\\\"\\\"\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 768473,\n            \"end\": 768475\n          },\n          \"start\": {\n            \"line\": 13446,\n            \"column\": 61\n          },\n          \"end\": {\n            \"line\": 13446,\n            \"column\": 63\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"hashEntityFrame(selected.value.frame)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 768428,\n            \"end\": 768465\n          },\n          \"start\": {\n            \"line\": 13446,\n            \"column\": 16\n          },\n          \"end\": {\n            \"line\": 13446,\n            \"column\": 53\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(hashEntityFrame(selected.value.frame), () => \\\"\\\")\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 768419,\n          \"end\": 768476\n        },\n        \"start\": {\n          \"line\": 13446,\n          \"column\": 7\n        },\n        \"end\": {\n          \"line\": 13446,\n          \"column\": 64\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(\\n    map(uniqueProfile(index, id), (p) => p.entityEncryptionPublicKey),\\n    () => \\\"\\\",\\n  )\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1197221,\n      \"end\": 1197319\n    },\n    \"start\": {\n      \"line\": 22161,\n      \"column\": 2\n    },\n    \"end\": {\n      \"line\": 22164,\n      \"column\": 3\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  unwrapOr(\\n    map(uniqueProfile(index, id), (p) => p.entityEncryptionPublicKey),\\n    () => \\\"\\\",\\n  );\",\n  \"charCount\": {\n    \"leading\": 2,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"\\\"\\\"\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1197312,\n            \"end\": 1197314\n          },\n          \"start\": {\n            \"line\": 22163,\n            \"column\": 10\n          },\n          \"end\": {\n            \"line\": 22163,\n            \"column\": 12\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"map(uniqueProfile(index, id), (p) => p.entityEncryptionPublicKey)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1197235,\n            \"end\": 1197300\n          },\n          \"start\": {\n            \"line\": 22162,\n            \"column\": 4\n          },\n          \"end\": {\n            \"line\": 22162,\n            \"column\": 69\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(\\n    map(uniqueProfile(index, id), (p) => p.entityEncryptionPublicKey),\\n    () => \\\"\\\",\\n  )\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1197221,\n          \"end\": 1197319\n        },\n        \"start\": {\n          \"line\": 22161,\n          \"column\": 2\n        },\n        \"end\": {\n          \"line\": 22164,\n          \"column\": 3\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>()), () => ZERO_WORD)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1427189,\n      \"end\": 1427284\n    },\n    \"start\": {\n      \"line\": 27006,\n      \"column\": 18\n    },\n    \"end\": {\n      \"line\": 27006,\n      \"column\": 113\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"      policyRoot: unwrapOr(mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>()), () => ZERO_WORD),\",\n  \"charCount\": {\n    \"leading\": 18,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>())\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1427198,\n            \"end\": 1427266\n          },\n          \"start\": {\n            \"line\": 27006,\n            \"column\": 27\n          },\n          \"end\": {\n            \"line\": 27006,\n            \"column\": 95\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"ZERO_WORD\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1427274,\n            \"end\": 1427283\n          },\n          \"start\": {\n            \"line\": 27006,\n            \"column\": 103\n          },\n          \"end\": {\n            \"line\": 27006,\n            \"column\": 112\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>()), () => ZERO_WORD)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1427189,\n          \"end\": 1427284\n        },\n        \"start\": {\n          \"line\": 27006,\n          \"column\": 18\n        },\n        \"end\": {\n          \"line\": 27006,\n          \"column\": 113\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(submittedAtRoot(body), () => ZERO_WORD)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1427316,\n      \"end\": 1427364\n    },\n    \"start\": {\n      \"line\": 27007,\n      \"column\": 30\n    },\n    \"end\": {\n      \"line\": 27007,\n      \"column\": 78\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"      submittedAtByTokenRoot: unwrapOr(submittedAtRoot(body), () => ZERO_WORD),\",\n  \"charCount\": {\n    \"leading\": 30,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"ZERO_WORD\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1427354,\n            \"end\": 1427363\n          },\n          \"start\": {\n            \"line\": 27007,\n            \"column\": 68\n          },\n          \"end\": {\n            \"line\": 27007,\n            \"column\": 77\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"submittedAtRoot(body)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1427325,\n            \"end\": 1427346\n          },\n          \"start\": {\n            \"line\": 27007,\n            \"column\": 39\n          },\n          \"end\": {\n            \"line\": 27007,\n            \"column\": 60\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(submittedAtRoot(body), () => ZERO_WORD)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1427316,\n          \"end\": 1427364\n        },\n        \"start\": {\n          \"line\": 27007,\n          \"column\": 30\n        },\n        \"end\": {\n          \"line\": 27007,\n          \"column\": 78\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(isFrozenBaseJPrefixRollAuthorized(jpView(r), r.signerId, r.jPrefixRound, h, c), () => false)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1485207,\n      \"end\": 1485308\n    },\n    \"start\": {\n      \"line\": 28269,\n      \"column\": 9\n    },\n    \"end\": {\n      \"line\": 28269,\n      \"column\": 110\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  return unwrapOr(isFrozenBaseJPrefixRollAuthorized(jpView(r), r.signerId, r.jPrefixRound, h, c), () => false);\",\n  \"charCount\": {\n    \"leading\": 9,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"isFrozenBaseJPrefixRollAuthorized(jpView(r), r.signerId, r.jPrefixRound, h, c)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1485216,\n            \"end\": 1485294\n          },\n          \"start\": {\n            \"line\": 28269,\n            \"column\": 18\n          },\n          \"end\": {\n            \"line\": 28269,\n            \"column\": 96\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"false\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1485302,\n            \"end\": 1485307\n          },\n          \"start\": {\n            \"line\": 28269,\n            \"column\": 104\n          },\n          \"end\": {\n            \"line\": 28269,\n            \"column\": 109\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(isFrozenBaseJPrefixRollAuthorized(jpView(r), r.signerId, r.jPrefixRound, h, c), () => false)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1485207,\n          \"end\": 1485308\n        },\n        \"start\": {\n          \"line\": 28269,\n          \"column\": 9\n        },\n        \"end\": {\n          \"line\": 28269,\n          \"column\": 110\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(hashEntityFrame(held.frame), () => \\\"\\\")\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1502366,\n      \"end\": 1502413\n    },\n    \"start\": {\n      \"line\": 28640,\n      \"column\": 21\n    },\n    \"end\": {\n      \"line\": 28640,\n      \"column\": 68\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"    const heldHash = unwrapOr(hashEntityFrame(held.frame), () => \\\"\\\");\",\n  \"charCount\": {\n    \"leading\": 21,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"hashEntityFrame(held.frame)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1502375,\n            \"end\": 1502402\n          },\n          \"start\": {\n            \"line\": 28640,\n            \"column\": 30\n          },\n          \"end\": {\n            \"line\": 28640,\n            \"column\": 57\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"\\\"\\\"\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1502410,\n            \"end\": 1502412\n          },\n          \"start\": {\n            \"line\": 28640,\n            \"column\": 65\n          },\n          \"end\": {\n            \"line\": 28640,\n            \"column\": 67\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(hashEntityFrame(held.frame), () => \\\"\\\")\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1502366,\n          \"end\": 1502413\n        },\n        \"start\": {\n          \"line\": 28640,\n          \"column\": 21\n        },\n        \"end\": {\n          \"line\": 28640,\n          \"column\": 68\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(collectionKey(first), () => \\\"\\\")\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1513915,\n      \"end\": 1513955\n    },\n    \"start\": {\n      \"line\": 28883,\n      \"column\": 48\n    },\n    \"end\": {\n      \"line\": 28883,\n      \"column\": 88\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  const sameCollection = first === undefined || unwrapOr(collectionKey(first), () => \\\"\\\") === key;\",\n  \"charCount\": {\n    \"leading\": 48,\n    \"trailing\": 9\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"\\\"\\\"\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1513952,\n            \"end\": 1513954\n          },\n          \"start\": {\n            \"line\": 28883,\n            \"column\": 85\n          },\n          \"end\": {\n            \"line\": 28883,\n            \"column\": 87\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"collectionKey(first)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1513924,\n            \"end\": 1513944\n          },\n          \"start\": {\n            \"line\": 28883,\n            \"column\": 57\n          },\n          \"end\": {\n            \"line\": 28883,\n            \"column\": 77\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(collectionKey(first), () => \\\"\\\")\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1513915,\n          \"end\": 1513955\n        },\n        \"start\": {\n          \"line\": 28883,\n          \"column\": 48\n        },\n        \"end\": {\n          \"line\": 28883,\n          \"column\": 88\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(hashEntityFrame(lock.frame), () => \\\"\\\")\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1516526,\n      \"end\": 1516573\n    },\n    \"start\": {\n      \"line\": 28936,\n      \"column\": 54\n    },\n    \"end\": {\n      \"line\": 28936,\n      \"column\": 101\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"    const lockHash = lock === undefined ? undefined : unwrapOr(hashEntityFrame(lock.frame), () => \\\"\\\");\",\n  \"charCount\": {\n    \"leading\": 54,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"\\\"\\\"\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1516570,\n            \"end\": 1516572\n          },\n          \"start\": {\n            \"line\": 28936,\n            \"column\": 98\n          },\n          \"end\": {\n            \"line\": 28936,\n            \"column\": 100\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"hashEntityFrame(lock.frame)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1516535,\n            \"end\": 1516562\n          },\n          \"start\": {\n            \"line\": 28936,\n            \"column\": 63\n          },\n          \"end\": {\n            \"line\": 28936,\n            \"column\": 90\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(hashEntityFrame(lock.frame), () => \\\"\\\")\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1516526,\n          \"end\": 1516573\n        },\n        \"start\": {\n          \"line\": 28936,\n          \"column\": 54\n        },\n        \"end\": {\n          \"line\": 28936,\n          \"column\": 101\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(hashEntityFrame(frame), () => canon(frame))\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1546928,\n      \"end\": 1546980\n    },\n    \"start\": {\n      \"line\": 29612,\n      \"column\": 50\n    },\n    \"end\": {\n      \"line\": 29612,\n      \"column\": 102\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"const frameIdOf = (frame: EntityFrame): string => unwrapOr(hashEntityFrame(frame), () => canon(frame));\",\n  \"charCount\": {\n    \"leading\": 50,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"hashEntityFrame(frame)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1546937,\n            \"end\": 1546959\n          },\n          \"start\": {\n            \"line\": 29612,\n            \"column\": 59\n          },\n          \"end\": {\n            \"line\": 29612,\n            \"column\": 81\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"canon(frame)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1546967,\n            \"end\": 1546979\n          },\n          \"start\": {\n            \"line\": 29612,\n            \"column\": 89\n          },\n          \"end\": {\n            \"line\": 29612,\n            \"column\": 101\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(hashEntityFrame(frame), () => canon(frame))\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1546928,\n          \"end\": 1546980\n        },\n        \"start\": {\n          \"line\": 29612,\n          \"column\": 50\n        },\n        \"end\": {\n          \"line\": 29612,\n          \"column\": 102\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(jPrefixAttestationHash(unsigned), () => canon(unsigned))\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1551205,\n      \"end\": 1551270\n    },\n    \"start\": {\n      \"line\": 29701,\n      \"column\": 19\n    },\n    \"end\": {\n      \"line\": 29701,\n      \"column\": 84\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  const bodyHash = unwrapOr(jPrefixAttestationHash(unsigned), () => canon(unsigned));\",\n  \"charCount\": {\n    \"leading\": 19,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"jPrefixAttestationHash(unsigned)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1551214,\n            \"end\": 1551246\n          },\n          \"start\": {\n            \"line\": 29701,\n            \"column\": 28\n          },\n          \"end\": {\n            \"line\": 29701,\n            \"column\": 60\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"canon(unsigned)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1551254,\n            \"end\": 1551269\n          },\n          \"start\": {\n            \"line\": 29701,\n            \"column\": 68\n          },\n          \"end\": {\n            \"line\": 29701,\n            \"column\": 83\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(jPrefixAttestationHash(unsigned), () => canon(unsigned))\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1551205,\n          \"end\": 1551270\n        },\n        \"start\": {\n          \"line\": 29701,\n          \"column\": 19\n        },\n        \"end\": {\n          \"line\": 29701,\n          \"column\": 84\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(hashLeaderVote(vote), () => canon(vote))\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1551626,\n      \"end\": 1551675\n    },\n    \"start\": {\n      \"line\": 29708,\n      \"column\": 21\n    },\n    \"end\": {\n      \"line\": 29708,\n      \"column\": 70\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"    const voteHash = unwrapOr(hashLeaderVote(vote), () => canon(vote));\",\n  \"charCount\": {\n    \"leading\": 21,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"canon(vote)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1551663,\n            \"end\": 1551674\n          },\n          \"start\": {\n            \"line\": 29708,\n            \"column\": 58\n          },\n          \"end\": {\n            \"line\": 29708,\n            \"column\": 69\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"hashLeaderVote(vote)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1551635,\n            \"end\": 1551655\n          },\n          \"start\": {\n            \"line\": 29708,\n            \"column\": 30\n          },\n          \"end\": {\n            \"line\": 29708,\n            \"column\": 50\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(hashLeaderVote(vote), () => canon(vote))\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1551626,\n          \"end\": 1551675\n        },\n        \"start\": {\n          \"line\": 29708,\n          \"column\": 21\n        },\n        \"end\": {\n          \"line\": 29708,\n          \"column\": 70\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(hashEntityFrame(replica.frame), () => \\\"\\\")\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1722414,\n      \"end\": 1722464\n    },\n    \"start\": {\n      \"line\": 33326,\n      \"column\": 24\n    },\n    \"end\": {\n      \"line\": 33326,\n      \"column\": 74\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"      const frameHash = unwrapOr(hashEntityFrame(replica.frame), () => \\\"\\\");\",\n  \"charCount\": {\n    \"leading\": 24,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"hashEntityFrame(replica.frame)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1722423,\n            \"end\": 1722453\n          },\n          \"start\": {\n            \"line\": 33326,\n            \"column\": 33\n          },\n          \"end\": {\n            \"line\": 33326,\n            \"column\": 63\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"\\\"\\\"\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1722461,\n            \"end\": 1722463\n          },\n          \"start\": {\n            \"line\": 33326,\n            \"column\": 71\n          },\n          \"end\": {\n            \"line\": 33326,\n            \"column\": 73\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(hashEntityFrame(replica.frame), () => \\\"\\\")\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1722414,\n          \"end\": 1722464\n        },\n        \"start\": {\n          \"line\": 33326,\n          \"column\": 24\n        },\n        \"end\": {\n          \"line\": 33326,\n          \"column\": 74\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(map(authConsensusBytes(lower(s)), (b) => b.byteLength), () => 0)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1832936,\n      \"end\": 1833009\n    },\n    \"start\": {\n      \"line\": 35709,\n      \"column\": 44\n    },\n    \"end\": {\n      \"line\": 35709,\n      \"column\": 117\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"const encodedWidth = (s: string): number => unwrapOr(map(authConsensusBytes(lower(s)), (b) => b.byteLength), () => 0);\",\n  \"charCount\": {\n    \"leading\": 44,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"0\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1833007,\n            \"end\": 1833008\n          },\n          \"start\": {\n            \"line\": 35709,\n            \"column\": 115\n          },\n          \"end\": {\n            \"line\": 35709,\n            \"column\": 116\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"map(authConsensusBytes(lower(s)), (b) => b.byteLength)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1832945,\n            \"end\": 1832999\n          },\n          \"start\": {\n            \"line\": 35709,\n            \"column\": 53\n          },\n          \"end\": {\n            \"line\": 35709,\n            \"column\": 107\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(map(authConsensusBytes(lower(s)), (b) => b.byteLength), () => 0)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1832936,\n          \"end\": 1833009\n        },\n        \"start\": {\n          \"line\": 35709,\n          \"column\": 44\n        },\n        \"end\": {\n          \"line\": 35709,\n          \"column\": 117\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(hasCurrentRoundJPrefixAttestation(v, r.signerId, r.jPrefixRound, h), () => false)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1985793,\n      \"end\": 1985883\n    },\n    \"start\": {\n      \"line\": 38834,\n      \"column\": 17\n    },\n    \"end\": {\n      \"line\": 38834,\n      \"column\": 107\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  const signed = unwrapOr(hasCurrentRoundJPrefixAttestation(v, r.signerId, r.jPrefixRound, h), () => false);\",\n  \"charCount\": {\n    \"leading\": 17,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"R\": {\n        \"text\": \"hasCurrentRoundJPrefixAttestation(v, r.signerId, r.jPrefixRound, h)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1985802,\n            \"end\": 1985869\n          },\n          \"start\": {\n            \"line\": 38834,\n            \"column\": 26\n          },\n          \"end\": {\n            \"line\": 38834,\n            \"column\": 93\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"false\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1985877,\n            \"end\": 1985882\n          },\n          \"start\": {\n            \"line\": 38834,\n            \"column\": 101\n          },\n          \"end\": {\n            \"line\": 38834,\n            \"column\": 106\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(hasCurrentRoundJPrefixAttestation(v, r.signerId, r.jPrefixRound, h), () => false)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1985793,\n          \"end\": 1985883\n        },\n        \"start\": {\n          \"line\": 38834,\n          \"column\": 17\n        },\n        \"end\": {\n          \"line\": 38834,\n          \"column\": 107\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(localJPrefixAttestableHeight(v, h), () => null)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1985941,\n      \"end\": 1985997\n    },\n    \"start\": {\n      \"line\": 38836,\n      \"column\": 9\n    },\n    \"end\": {\n      \"line\": 38836,\n      \"column\": 65\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  return unwrapOr(localJPrefixAttestableHeight(v, h), () => null) !== null;\",\n  \"charCount\": {\n    \"leading\": 9,\n    \"trailing\": 10\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"null\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1985992,\n            \"end\": 1985996\n          },\n          \"start\": {\n            \"line\": 38836,\n            \"column\": 60\n          },\n          \"end\": {\n            \"line\": 38836,\n            \"column\": 64\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"localJPrefixAttestableHeight(v, h)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1985950,\n            \"end\": 1985984\n          },\n          \"start\": {\n            \"line\": 38836,\n            \"column\": 18\n          },\n          \"end\": {\n            \"line\": 38836,\n            \"column\": 52\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(localJPrefixAttestableHeight(v, h), () => null)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1985941,\n          \"end\": 1985997\n        },\n        \"start\": {\n          \"line\": 38836,\n          \"column\": 9\n        },\n        \"end\": {\n          \"line\": 38836,\n          \"column\": 65\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(pruneFinalizedJHistory(h, r.state.jFinality.height), () => h)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 1994015,\n      \"end\": 1994085\n    },\n    \"start\": {\n      \"line\": 39022,\n      \"column\": 9\n    },\n    \"end\": {\n      \"line\": 39022,\n      \"column\": 79\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  return unwrapOr(pruneFinalizedJHistory(h, r.state.jFinality.height), () => h);\",\n  \"charCount\": {\n    \"leading\": 9,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"h\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1994083,\n            \"end\": 1994084\n          },\n          \"start\": {\n            \"line\": 39022,\n            \"column\": 77\n          },\n          \"end\": {\n            \"line\": 39022,\n            \"column\": 78\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"pruneFinalizedJHistory(h, r.state.jFinality.height)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 1994024,\n            \"end\": 1994075\n          },\n          \"start\": {\n            \"line\": 39022,\n            \"column\": 18\n          },\n          \"end\": {\n            \"line\": 39022,\n            \"column\": 69\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(pruneFinalizedJHistory(h, r.state.jFinality.height), () => h)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 1994015,\n          \"end\": 1994085\n        },\n        \"start\": {\n          \"line\": 39022,\n          \"column\": 9\n        },\n        \"end\": {\n          \"line\": 39022,\n          \"column\": 79\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          },
+          {
+            "text": "{\n  \"text\": \"unwrapOr(claimLadder(ladder, claim), () => ladder)\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 2013373,\n      \"end\": 2013423\n    },\n    \"start\": {\n      \"line\": 39403,\n      \"column\": 42\n    },\n    \"end\": {\n      \"line\": 39403,\n      \"column\": 92\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"  return claims.reduce((ladder, claim) => unwrapOr(claimLadder(ladder, claim), () => ladder), emptyLadder);\",\n  \"charCount\": {\n    \"leading\": 42,\n    \"trailing\": 15\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"F\": {\n        \"text\": \"ladder\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 2013416,\n            \"end\": 2013422\n          },\n          \"start\": {\n            \"line\": 39403,\n            \"column\": 85\n          },\n          \"end\": {\n            \"line\": 39403,\n            \"column\": 91\n          }\n        }\n      },\n      \"R\": {\n        \"text\": \"claimLadder(ladder, claim)\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 2013382,\n            \"end\": 2013408\n          },\n          \"start\": {\n            \"line\": 39403,\n            \"column\": 51\n          },\n          \"end\": {\n            \"line\": 39403,\n            \"column\": 77\n          }\n        }\n      }\n    },\n    \"multi\": {},\n    \"transformed\": {}\n  },\n  \"ruleId\": \"swallowed-result\",\n  \"severity\": \"hint\",\n  \"note\": null,\n  \"message\": \"\",\n  \"labels\": [\n    {\n      \"text\": \"unwrapOr(claimLadder(ladder, claim), () => ladder)\",\n      \"range\": {\n        \"byteOffset\": {\n          \"start\": 2013373,\n          \"end\": 2013423\n        },\n        \"start\": {\n          \"line\": 39403,\n          \"column\": 42\n        },\n        \"end\": {\n          \"line\": 39403,\n          \"column\": 92\n        }\n      },\n      \"style\": \"primary\"\n    }\n  ]\n}",
+            "type": "text"
+          }
+        ],
+        "isError": false,
+        "structuredContent": {
+          "result": [
+            {
+              "text": "unwrapOr(r, () => INVALID)",
+              "range": {
+                "byteOffset": {
+                  "start": 187242,
+                  "end": 187268
+                },
+                "start": {
+                  "line": 3389,
+                  "column": 63
+                },
+                "end": {
+                  "line": 3389,
+                  "column": 89
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "const verdictOf = (r: Result<Verdict, HankoError>): Verdict => unwrapOr(r, () => INVALID);",
+              "charCount": {
+                "leading": 63,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "INVALID",
+                    "range": {
+                      "byteOffset": {
+                        "start": 187260,
+                        "end": 187267
+                      },
+                      "start": {
+                        "line": 3389,
+                        "column": 81
+                      },
+                      "end": {
+                        "line": 3389,
+                        "column": 88
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "r",
+                    "range": {
+                      "byteOffset": {
+                        "start": 187251,
+                        "end": 187252
+                      },
+                      "start": {
+                        "line": 3389,
+                        "column": 72
+                      },
+                      "end": {
+                        "line": 3389,
+                        "column": 73
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(r, () => INVALID)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 187242,
+                      "end": 187268
+                    },
+                    "start": {
+                      "line": 3389,
+                      "column": 63
+                    },
+                    "end": {
+                      "line": 3389,
+                      "column": 89
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs), () => [])",
+              "range": {
+                "byteOffset": {
+                  "start": 359229,
+                  "end": 359309
+                },
+                "start": {
+                  "line": 6240,
+                  "column": 2
+                },
+                "end": {
+                  "line": 6240,
+                  "column": 82
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  unwrapOr(map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs), () => []);",
+              "charCount": {
+                "leading": 2,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 359238,
+                        "end": 359298
+                      },
+                      "start": {
+                        "line": 6240,
+                        "column": 11
+                      },
+                      "end": {
+                        "line": 6240,
+                        "column": 71
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "[]",
+                    "range": {
+                      "byteOffset": {
+                        "start": 359306,
+                        "end": 359308
+                      },
+                      "start": {
+                        "line": 6240,
+                        "column": 79
+                      },
+                      "end": {
+                        "line": 6240,
+                        "column": 81
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs), () => [])",
+                  "range": {
+                    "byteOffset": {
+                      "start": 359229,
+                      "end": 359309
+                    },
+                    "start": {
+                      "line": 6240,
+                      "column": 2
+                    },
+                    "end": {
+                      "line": 6240,
+                      "column": 82
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(map(foldResult(f.txs, { body: s, messages: [] }, replay), (r) => r.messages), () => [])",
+              "range": {
+                "byteOffset": {
+                  "start": 455679,
+                  "end": 455775
+                },
+                "start": {
+                  "line": 7789,
+                  "column": 9
+                },
+                "end": {
+                  "line": 7789,
+                  "column": 105
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  return unwrapOr(map(foldResult(f.txs, { body: s, messages: [] }, replay), (r) => r.messages), () => []);",
+              "charCount": {
+                "leading": 9,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "map(foldResult(f.txs, { body: s, messages: [] }, replay), (r) => r.messages)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 455688,
+                        "end": 455764
+                      },
+                      "start": {
+                        "line": 7789,
+                        "column": 18
+                      },
+                      "end": {
+                        "line": 7789,
+                        "column": 94
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "[]",
+                    "range": {
+                      "byteOffset": {
+                        "start": 455772,
+                        "end": 455774
+                      },
+                      "start": {
+                        "line": 7789,
+                        "column": 102
+                      },
+                      "end": {
+                        "line": 7789,
+                        "column": 104
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(map(foldResult(f.txs, { body: s, messages: [] }, replay), (r) => r.messages), () => [])",
+                  "range": {
+                    "byteOffset": {
+                      "start": 455679,
+                      "end": 455775
+                    },
+                    "start": {
+                      "line": 7789,
+                      "column": 9
+                    },
+                    "end": {
+                      "line": 7789,
+                      "column": 105
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(offerMarketKey(o), () => \"\")",
+              "range": {
+                "byteOffset": {
+                  "start": 464861,
+                  "end": 464898
+                },
+                "start": {
+                  "line": 7934,
+                  "column": 39
+                },
+                "end": {
+                  "line": 7934,
+                  "column": 76
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  const resting = makers.filter((o) => unwrapOr(offerMarketKey(o), () => \"\") === key.value).length;",
+              "charCount": {
+                "leading": 39,
+                "trailing": 23
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "offerMarketKey(o)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 464870,
+                        "end": 464887
+                      },
+                      "start": {
+                        "line": 7934,
+                        "column": 48
+                      },
+                      "end": {
+                        "line": 7934,
+                        "column": 65
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "\"\"",
+                    "range": {
+                      "byteOffset": {
+                        "start": 464895,
+                        "end": 464897
+                      },
+                      "start": {
+                        "line": 7934,
+                        "column": 73
+                      },
+                      "end": {
+                        "line": 7934,
+                        "column": 75
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(offerMarketKey(o), () => \"\")",
+                  "range": {
+                    "byteOffset": {
+                      "start": 464861,
+                      "end": 464898
+                    },
+                    "start": {
+                      "line": 7934,
+                      "column": 39
+                    },
+                    "end": {
+                      "line": 7934,
+                      "column": 76
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(map(compileOps([op], proposerIsLeft), (c) => c.diffs[0] ?? noDiff), () => noDiff)",
+              "range": {
+                "byteOffset": {
+                  "start": 490368,
+                  "end": 490458
+                },
+                "start": {
+                  "line": 8332,
+                  "column": 6
+                },
+                "end": {
+                  "line": 8332,
+                  "column": 96
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "    : unwrapOr(map(compileOps([op], proposerIsLeft), (c) => c.diffs[0] ?? noDiff), () => noDiff);",
+              "charCount": {
+                "leading": 6,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "map(compileOps([op], proposerIsLeft), (c) => c.diffs[0] ?? noDiff)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 490377,
+                        "end": 490443
+                      },
+                      "start": {
+                        "line": 8332,
+                        "column": 15
+                      },
+                      "end": {
+                        "line": 8332,
+                        "column": 81
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "noDiff",
+                    "range": {
+                      "byteOffset": {
+                        "start": 490451,
+                        "end": 490457
+                      },
+                      "start": {
+                        "line": 8332,
+                        "column": 89
+                      },
+                      "end": {
+                        "line": 8332,
+                        "column": 95
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(map(compileOps([op], proposerIsLeft), (c) => c.diffs[0] ?? noDiff), () => noDiff)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 490368,
+                      "end": 490458
+                    },
+                    "start": {
+                      "line": 8332,
+                      "column": 6
+                    },
+                    "end": {
+                      "line": 8332,
+                      "column": 96
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs), () => [])",
+              "range": {
+                "byteOffset": {
+                  "start": 498211,
+                  "end": 498281
+                },
+                "start": {
+                  "line": 8457,
+                  "column": 16
+                },
+                "end": {
+                  "line": 8457,
+                  "column": 86
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  const diffs = unwrapOr(map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs), () => []);",
+              "charCount": {
+                "leading": 16,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 498220,
+                        "end": 498270
+                      },
+                      "start": {
+                        "line": 8457,
+                        "column": 25
+                      },
+                      "end": {
+                        "line": 8457,
+                        "column": 75
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "[]",
+                    "range": {
+                      "byteOffset": {
+                        "start": 498278,
+                        "end": 498280
+                      },
+                      "start": {
+                        "line": 8457,
+                        "column": 83
+                      },
+                      "end": {
+                        "line": 8457,
+                        "column": 85
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs), () => [])",
+                  "range": {
+                    "byteOffset": {
+                      "start": 498211,
+                      "end": 498281
+                    },
+                    "start": {
+                      "line": 8457,
+                      "column": 16
+                    },
+                    "end": {
+                      "line": 8457,
+                      "column": 86
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(signature(s.startsWith(\"0x\") ? s.slice(2).toLowerCase() : s), () => undefined)",
+              "range": {
+                "byteOffset": {
+                  "start": 755789,
+                  "end": 755876
+                },
+                "start": {
+                  "line": 13232,
+                  "column": 2
+                },
+                "end": {
+                  "line": 13232,
+                  "column": 89
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  unwrapOr(signature(s.startsWith(\"0x\") ? s.slice(2).toLowerCase() : s), () => undefined);",
+              "charCount": {
+                "leading": 2,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "undefined",
+                    "range": {
+                      "byteOffset": {
+                        "start": 755866,
+                        "end": 755875
+                      },
+                      "start": {
+                        "line": 13232,
+                        "column": 79
+                      },
+                      "end": {
+                        "line": 13232,
+                        "column": 88
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "signature(s.startsWith(\"0x\") ? s.slice(2).toLowerCase() : s)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 755798,
+                        "end": 755858
+                      },
+                      "start": {
+                        "line": 13232,
+                        "column": 11
+                      },
+                      "end": {
+                        "line": 13232,
+                        "column": 71
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(signature(s.startsWith(\"0x\") ? s.slice(2).toLowerCase() : s), () => undefined)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 755789,
+                      "end": 755876
+                    },
+                    "start": {
+                      "line": 13232,
+                      "column": 2
+                    },
+                    "end": {
+                      "line": 13232,
+                      "column": 89
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(hashEntityFrame(selected.value.frame), () => \"\")",
+              "range": {
+                "byteOffset": {
+                  "start": 768419,
+                  "end": 768476
+                },
+                "start": {
+                  "line": 13446,
+                  "column": 7
+                },
+                "end": {
+                  "line": 13446,
+                  "column": 64
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "    && unwrapOr(hashEntityFrame(selected.value.frame), () => \"\") === frameHash;",
+              "charCount": {
+                "leading": 7,
+                "trailing": 15
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "\"\"",
+                    "range": {
+                      "byteOffset": {
+                        "start": 768473,
+                        "end": 768475
+                      },
+                      "start": {
+                        "line": 13446,
+                        "column": 61
+                      },
+                      "end": {
+                        "line": 13446,
+                        "column": 63
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "hashEntityFrame(selected.value.frame)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 768428,
+                        "end": 768465
+                      },
+                      "start": {
+                        "line": 13446,
+                        "column": 16
+                      },
+                      "end": {
+                        "line": 13446,
+                        "column": 53
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(hashEntityFrame(selected.value.frame), () => \"\")",
+                  "range": {
+                    "byteOffset": {
+                      "start": 768419,
+                      "end": 768476
+                    },
+                    "start": {
+                      "line": 13446,
+                      "column": 7
+                    },
+                    "end": {
+                      "line": 13446,
+                      "column": 64
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(\n    map(uniqueProfile(index, id), (p) => p.entityEncryptionPublicKey),\n    () => \"\",\n  )",
+              "range": {
+                "byteOffset": {
+                  "start": 1197221,
+                  "end": 1197319
+                },
+                "start": {
+                  "line": 22161,
+                  "column": 2
+                },
+                "end": {
+                  "line": 22164,
+                  "column": 3
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  unwrapOr(\n    map(uniqueProfile(index, id), (p) => p.entityEncryptionPublicKey),\n    () => \"\",\n  );",
+              "charCount": {
+                "leading": 2,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "\"\"",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1197312,
+                        "end": 1197314
+                      },
+                      "start": {
+                        "line": 22163,
+                        "column": 10
+                      },
+                      "end": {
+                        "line": 22163,
+                        "column": 12
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "map(uniqueProfile(index, id), (p) => p.entityEncryptionPublicKey)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1197235,
+                        "end": 1197300
+                      },
+                      "start": {
+                        "line": 22162,
+                        "column": 4
+                      },
+                      "end": {
+                        "line": 22162,
+                        "column": 69
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(\n    map(uniqueProfile(index, id), (p) => p.entityEncryptionPublicKey),\n    () => \"\",\n  )",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1197221,
+                      "end": 1197319
+                    },
+                    "start": {
+                      "line": 22161,
+                      "column": 2
+                    },
+                    "end": {
+                      "line": 22164,
+                      "column": 3
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>()), () => ZERO_WORD)",
+              "range": {
+                "byteOffset": {
+                  "start": 1427189,
+                  "end": 1427284
+                },
+                "start": {
+                  "line": 27006,
+                  "column": 18
+                },
+                "end": {
+                  "line": 27006,
+                  "column": 113
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "      policyRoot: unwrapOr(mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>()), () => ZERO_WORD),",
+              "charCount": {
+                "leading": 18,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>())",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1427198,
+                        "end": 1427266
+                      },
+                      "start": {
+                        "line": 27006,
+                        "column": 27
+                      },
+                      "end": {
+                        "line": 27006,
+                        "column": 95
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "ZERO_WORD",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1427274,
+                        "end": 1427283
+                      },
+                      "start": {
+                        "line": 27006,
+                        "column": 103
+                      },
+                      "end": {
+                        "line": 27006,
+                        "column": 112
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>()), () => ZERO_WORD)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1427189,
+                      "end": 1427284
+                    },
+                    "start": {
+                      "line": 27006,
+                      "column": 18
+                    },
+                    "end": {
+                      "line": 27006,
+                      "column": 113
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(submittedAtRoot(body), () => ZERO_WORD)",
+              "range": {
+                "byteOffset": {
+                  "start": 1427316,
+                  "end": 1427364
+                },
+                "start": {
+                  "line": 27007,
+                  "column": 30
+                },
+                "end": {
+                  "line": 27007,
+                  "column": 78
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "      submittedAtByTokenRoot: unwrapOr(submittedAtRoot(body), () => ZERO_WORD),",
+              "charCount": {
+                "leading": 30,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "ZERO_WORD",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1427354,
+                        "end": 1427363
+                      },
+                      "start": {
+                        "line": 27007,
+                        "column": 68
+                      },
+                      "end": {
+                        "line": 27007,
+                        "column": 77
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "submittedAtRoot(body)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1427325,
+                        "end": 1427346
+                      },
+                      "start": {
+                        "line": 27007,
+                        "column": 39
+                      },
+                      "end": {
+                        "line": 27007,
+                        "column": 60
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(submittedAtRoot(body), () => ZERO_WORD)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1427316,
+                      "end": 1427364
+                    },
+                    "start": {
+                      "line": 27007,
+                      "column": 30
+                    },
+                    "end": {
+                      "line": 27007,
+                      "column": 78
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(isFrozenBaseJPrefixRollAuthorized(jpView(r), r.signerId, r.jPrefixRound, h, c), () => false)",
+              "range": {
+                "byteOffset": {
+                  "start": 1485207,
+                  "end": 1485308
+                },
+                "start": {
+                  "line": 28269,
+                  "column": 9
+                },
+                "end": {
+                  "line": 28269,
+                  "column": 110
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  return unwrapOr(isFrozenBaseJPrefixRollAuthorized(jpView(r), r.signerId, r.jPrefixRound, h, c), () => false);",
+              "charCount": {
+                "leading": 9,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "isFrozenBaseJPrefixRollAuthorized(jpView(r), r.signerId, r.jPrefixRound, h, c)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1485216,
+                        "end": 1485294
+                      },
+                      "start": {
+                        "line": 28269,
+                        "column": 18
+                      },
+                      "end": {
+                        "line": 28269,
+                        "column": 96
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "false",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1485302,
+                        "end": 1485307
+                      },
+                      "start": {
+                        "line": 28269,
+                        "column": 104
+                      },
+                      "end": {
+                        "line": 28269,
+                        "column": 109
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(isFrozenBaseJPrefixRollAuthorized(jpView(r), r.signerId, r.jPrefixRound, h, c), () => false)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1485207,
+                      "end": 1485308
+                    },
+                    "start": {
+                      "line": 28269,
+                      "column": 9
+                    },
+                    "end": {
+                      "line": 28269,
+                      "column": 110
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(hashEntityFrame(held.frame), () => \"\")",
+              "range": {
+                "byteOffset": {
+                  "start": 1502366,
+                  "end": 1502413
+                },
+                "start": {
+                  "line": 28640,
+                  "column": 21
+                },
+                "end": {
+                  "line": 28640,
+                  "column": 68
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "    const heldHash = unwrapOr(hashEntityFrame(held.frame), () => \"\");",
+              "charCount": {
+                "leading": 21,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "hashEntityFrame(held.frame)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1502375,
+                        "end": 1502402
+                      },
+                      "start": {
+                        "line": 28640,
+                        "column": 30
+                      },
+                      "end": {
+                        "line": 28640,
+                        "column": 57
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "\"\"",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1502410,
+                        "end": 1502412
+                      },
+                      "start": {
+                        "line": 28640,
+                        "column": 65
+                      },
+                      "end": {
+                        "line": 28640,
+                        "column": 67
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(hashEntityFrame(held.frame), () => \"\")",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1502366,
+                      "end": 1502413
+                    },
+                    "start": {
+                      "line": 28640,
+                      "column": 21
+                    },
+                    "end": {
+                      "line": 28640,
+                      "column": 68
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(collectionKey(first), () => \"\")",
+              "range": {
+                "byteOffset": {
+                  "start": 1513915,
+                  "end": 1513955
+                },
+                "start": {
+                  "line": 28883,
+                  "column": 48
+                },
+                "end": {
+                  "line": 28883,
+                  "column": 88
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  const sameCollection = first === undefined || unwrapOr(collectionKey(first), () => \"\") === key;",
+              "charCount": {
+                "leading": 48,
+                "trailing": 9
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "\"\"",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1513952,
+                        "end": 1513954
+                      },
+                      "start": {
+                        "line": 28883,
+                        "column": 85
+                      },
+                      "end": {
+                        "line": 28883,
+                        "column": 87
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "collectionKey(first)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1513924,
+                        "end": 1513944
+                      },
+                      "start": {
+                        "line": 28883,
+                        "column": 57
+                      },
+                      "end": {
+                        "line": 28883,
+                        "column": 77
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(collectionKey(first), () => \"\")",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1513915,
+                      "end": 1513955
+                    },
+                    "start": {
+                      "line": 28883,
+                      "column": 48
+                    },
+                    "end": {
+                      "line": 28883,
+                      "column": 88
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(hashEntityFrame(lock.frame), () => \"\")",
+              "range": {
+                "byteOffset": {
+                  "start": 1516526,
+                  "end": 1516573
+                },
+                "start": {
+                  "line": 28936,
+                  "column": 54
+                },
+                "end": {
+                  "line": 28936,
+                  "column": 101
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "    const lockHash = lock === undefined ? undefined : unwrapOr(hashEntityFrame(lock.frame), () => \"\");",
+              "charCount": {
+                "leading": 54,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "\"\"",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1516570,
+                        "end": 1516572
+                      },
+                      "start": {
+                        "line": 28936,
+                        "column": 98
+                      },
+                      "end": {
+                        "line": 28936,
+                        "column": 100
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "hashEntityFrame(lock.frame)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1516535,
+                        "end": 1516562
+                      },
+                      "start": {
+                        "line": 28936,
+                        "column": 63
+                      },
+                      "end": {
+                        "line": 28936,
+                        "column": 90
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(hashEntityFrame(lock.frame), () => \"\")",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1516526,
+                      "end": 1516573
+                    },
+                    "start": {
+                      "line": 28936,
+                      "column": 54
+                    },
+                    "end": {
+                      "line": 28936,
+                      "column": 101
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(hashEntityFrame(frame), () => canon(frame))",
+              "range": {
+                "byteOffset": {
+                  "start": 1546928,
+                  "end": 1546980
+                },
+                "start": {
+                  "line": 29612,
+                  "column": 50
+                },
+                "end": {
+                  "line": 29612,
+                  "column": 102
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "const frameIdOf = (frame: EntityFrame): string => unwrapOr(hashEntityFrame(frame), () => canon(frame));",
+              "charCount": {
+                "leading": 50,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "hashEntityFrame(frame)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1546937,
+                        "end": 1546959
+                      },
+                      "start": {
+                        "line": 29612,
+                        "column": 59
+                      },
+                      "end": {
+                        "line": 29612,
+                        "column": 81
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "canon(frame)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1546967,
+                        "end": 1546979
+                      },
+                      "start": {
+                        "line": 29612,
+                        "column": 89
+                      },
+                      "end": {
+                        "line": 29612,
+                        "column": 101
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(hashEntityFrame(frame), () => canon(frame))",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1546928,
+                      "end": 1546980
+                    },
+                    "start": {
+                      "line": 29612,
+                      "column": 50
+                    },
+                    "end": {
+                      "line": 29612,
+                      "column": 102
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(jPrefixAttestationHash(unsigned), () => canon(unsigned))",
+              "range": {
+                "byteOffset": {
+                  "start": 1551205,
+                  "end": 1551270
+                },
+                "start": {
+                  "line": 29701,
+                  "column": 19
+                },
+                "end": {
+                  "line": 29701,
+                  "column": 84
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  const bodyHash = unwrapOr(jPrefixAttestationHash(unsigned), () => canon(unsigned));",
+              "charCount": {
+                "leading": 19,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "jPrefixAttestationHash(unsigned)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1551214,
+                        "end": 1551246
+                      },
+                      "start": {
+                        "line": 29701,
+                        "column": 28
+                      },
+                      "end": {
+                        "line": 29701,
+                        "column": 60
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "canon(unsigned)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1551254,
+                        "end": 1551269
+                      },
+                      "start": {
+                        "line": 29701,
+                        "column": 68
+                      },
+                      "end": {
+                        "line": 29701,
+                        "column": 83
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(jPrefixAttestationHash(unsigned), () => canon(unsigned))",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1551205,
+                      "end": 1551270
+                    },
+                    "start": {
+                      "line": 29701,
+                      "column": 19
+                    },
+                    "end": {
+                      "line": 29701,
+                      "column": 84
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(hashLeaderVote(vote), () => canon(vote))",
+              "range": {
+                "byteOffset": {
+                  "start": 1551626,
+                  "end": 1551675
+                },
+                "start": {
+                  "line": 29708,
+                  "column": 21
+                },
+                "end": {
+                  "line": 29708,
+                  "column": 70
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "    const voteHash = unwrapOr(hashLeaderVote(vote), () => canon(vote));",
+              "charCount": {
+                "leading": 21,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "canon(vote)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1551663,
+                        "end": 1551674
+                      },
+                      "start": {
+                        "line": 29708,
+                        "column": 58
+                      },
+                      "end": {
+                        "line": 29708,
+                        "column": 69
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "hashLeaderVote(vote)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1551635,
+                        "end": 1551655
+                      },
+                      "start": {
+                        "line": 29708,
+                        "column": 30
+                      },
+                      "end": {
+                        "line": 29708,
+                        "column": 50
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(hashLeaderVote(vote), () => canon(vote))",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1551626,
+                      "end": 1551675
+                    },
+                    "start": {
+                      "line": 29708,
+                      "column": 21
+                    },
+                    "end": {
+                      "line": 29708,
+                      "column": 70
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(hashEntityFrame(replica.frame), () => \"\")",
+              "range": {
+                "byteOffset": {
+                  "start": 1722414,
+                  "end": 1722464
+                },
+                "start": {
+                  "line": 33326,
+                  "column": 24
+                },
+                "end": {
+                  "line": 33326,
+                  "column": 74
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "      const frameHash = unwrapOr(hashEntityFrame(replica.frame), () => \"\");",
+              "charCount": {
+                "leading": 24,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "hashEntityFrame(replica.frame)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1722423,
+                        "end": 1722453
+                      },
+                      "start": {
+                        "line": 33326,
+                        "column": 33
+                      },
+                      "end": {
+                        "line": 33326,
+                        "column": 63
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "\"\"",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1722461,
+                        "end": 1722463
+                      },
+                      "start": {
+                        "line": 33326,
+                        "column": 71
+                      },
+                      "end": {
+                        "line": 33326,
+                        "column": 73
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(hashEntityFrame(replica.frame), () => \"\")",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1722414,
+                      "end": 1722464
+                    },
+                    "start": {
+                      "line": 33326,
+                      "column": 24
+                    },
+                    "end": {
+                      "line": 33326,
+                      "column": 74
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(map(authConsensusBytes(lower(s)), (b) => b.byteLength), () => 0)",
+              "range": {
+                "byteOffset": {
+                  "start": 1832936,
+                  "end": 1833009
+                },
+                "start": {
+                  "line": 35709,
+                  "column": 44
+                },
+                "end": {
+                  "line": 35709,
+                  "column": 117
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "const encodedWidth = (s: string): number => unwrapOr(map(authConsensusBytes(lower(s)), (b) => b.byteLength), () => 0);",
+              "charCount": {
+                "leading": 44,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "0",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1833007,
+                        "end": 1833008
+                      },
+                      "start": {
+                        "line": 35709,
+                        "column": 115
+                      },
+                      "end": {
+                        "line": 35709,
+                        "column": 116
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "map(authConsensusBytes(lower(s)), (b) => b.byteLength)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1832945,
+                        "end": 1832999
+                      },
+                      "start": {
+                        "line": 35709,
+                        "column": 53
+                      },
+                      "end": {
+                        "line": 35709,
+                        "column": 107
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(map(authConsensusBytes(lower(s)), (b) => b.byteLength), () => 0)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1832936,
+                      "end": 1833009
+                    },
+                    "start": {
+                      "line": 35709,
+                      "column": 44
+                    },
+                    "end": {
+                      "line": 35709,
+                      "column": 117
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(hasCurrentRoundJPrefixAttestation(v, r.signerId, r.jPrefixRound, h), () => false)",
+              "range": {
+                "byteOffset": {
+                  "start": 1985793,
+                  "end": 1985883
+                },
+                "start": {
+                  "line": 38834,
+                  "column": 17
+                },
+                "end": {
+                  "line": 38834,
+                  "column": 107
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  const signed = unwrapOr(hasCurrentRoundJPrefixAttestation(v, r.signerId, r.jPrefixRound, h), () => false);",
+              "charCount": {
+                "leading": 17,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "R": {
+                    "text": "hasCurrentRoundJPrefixAttestation(v, r.signerId, r.jPrefixRound, h)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1985802,
+                        "end": 1985869
+                      },
+                      "start": {
+                        "line": 38834,
+                        "column": 26
+                      },
+                      "end": {
+                        "line": 38834,
+                        "column": 93
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "false",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1985877,
+                        "end": 1985882
+                      },
+                      "start": {
+                        "line": 38834,
+                        "column": 101
+                      },
+                      "end": {
+                        "line": 38834,
+                        "column": 106
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(hasCurrentRoundJPrefixAttestation(v, r.signerId, r.jPrefixRound, h), () => false)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1985793,
+                      "end": 1985883
+                    },
+                    "start": {
+                      "line": 38834,
+                      "column": 17
+                    },
+                    "end": {
+                      "line": 38834,
+                      "column": 107
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(localJPrefixAttestableHeight(v, h), () => null)",
+              "range": {
+                "byteOffset": {
+                  "start": 1985941,
+                  "end": 1985997
+                },
+                "start": {
+                  "line": 38836,
+                  "column": 9
+                },
+                "end": {
+                  "line": 38836,
+                  "column": 65
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  return unwrapOr(localJPrefixAttestableHeight(v, h), () => null) !== null;",
+              "charCount": {
+                "leading": 9,
+                "trailing": 10
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "null",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1985992,
+                        "end": 1985996
+                      },
+                      "start": {
+                        "line": 38836,
+                        "column": 60
+                      },
+                      "end": {
+                        "line": 38836,
+                        "column": 64
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "localJPrefixAttestableHeight(v, h)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1985950,
+                        "end": 1985984
+                      },
+                      "start": {
+                        "line": 38836,
+                        "column": 18
+                      },
+                      "end": {
+                        "line": 38836,
+                        "column": 52
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(localJPrefixAttestableHeight(v, h), () => null)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1985941,
+                      "end": 1985997
+                    },
+                    "start": {
+                      "line": 38836,
+                      "column": 9
+                    },
+                    "end": {
+                      "line": 38836,
+                      "column": 65
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(pruneFinalizedJHistory(h, r.state.jFinality.height), () => h)",
+              "range": {
+                "byteOffset": {
+                  "start": 1994015,
+                  "end": 1994085
+                },
+                "start": {
+                  "line": 39022,
+                  "column": 9
+                },
+                "end": {
+                  "line": 39022,
+                  "column": 79
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  return unwrapOr(pruneFinalizedJHistory(h, r.state.jFinality.height), () => h);",
+              "charCount": {
+                "leading": 9,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "h",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1994083,
+                        "end": 1994084
+                      },
+                      "start": {
+                        "line": 39022,
+                        "column": 77
+                      },
+                      "end": {
+                        "line": 39022,
+                        "column": 78
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "pruneFinalizedJHistory(h, r.state.jFinality.height)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 1994024,
+                        "end": 1994075
+                      },
+                      "start": {
+                        "line": 39022,
+                        "column": 18
+                      },
+                      "end": {
+                        "line": 39022,
+                        "column": 69
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(pruneFinalizedJHistory(h, r.state.jFinality.height), () => h)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 1994015,
+                      "end": 1994085
+                    },
+                    "start": {
+                      "line": 39022,
+                      "column": 9
+                    },
+                    "end": {
+                      "line": 39022,
+                      "column": 79
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            },
+            {
+              "text": "unwrapOr(claimLadder(ladder, claim), () => ladder)",
+              "range": {
+                "byteOffset": {
+                  "start": 2013373,
+                  "end": 2013423
+                },
+                "start": {
+                  "line": 39403,
+                  "column": 42
+                },
+                "end": {
+                  "line": 39403,
+                  "column": 92
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "  return claims.reduce((ladder, claim) => unwrapOr(claimLadder(ladder, claim), () => ladder), emptyLadder);",
+              "charCount": {
+                "leading": 42,
+                "trailing": 15
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "F": {
+                    "text": "ladder",
+                    "range": {
+                      "byteOffset": {
+                        "start": 2013416,
+                        "end": 2013422
+                      },
+                      "start": {
+                        "line": 39403,
+                        "column": 85
+                      },
+                      "end": {
+                        "line": 39403,
+                        "column": 91
+                      }
+                    }
+                  },
+                  "R": {
+                    "text": "claimLadder(ladder, claim)",
+                    "range": {
+                      "byteOffset": {
+                        "start": 2013382,
+                        "end": 2013408
+                      },
+                      "start": {
+                        "line": 39403,
+                        "column": 51
+                      },
+                      "end": {
+                        "line": 39403,
+                        "column": 77
+                      }
+                    }
+                  }
+                },
+                "multi": {},
+                "transformed": {}
+              },
+              "ruleId": "swallowed-result",
+              "severity": "hint",
+              "note": null,
+              "message": "",
+              "labels": [
+                {
+                  "text": "unwrapOr(claimLadder(ladder, claim), () => ladder)",
+                  "range": {
+                    "byteOffset": {
+                      "start": 2013373,
+                      "end": 2013423
+                    },
+                    "start": {
+                      "line": 39403,
+                      "column": 42
+                    },
+                    "end": {
+                      "line": 39403,
+                      "column": 92
+                    }
+                  },
+                  "style": "primary"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "find_code",
+    "result": {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "result": {
+        "content": [
+          {
+            "text": "{\n  \"text\": \"mapSet(m, h.tokenId, addHold(m.get(h.tokenId) ?? NO_TOTALS, h))\",\n  \"range\": {\n    \"byteOffset\": {\n      \"start\": 522988,\n      \"end\": 523051\n    },\n    \"start\": {\n      \"line\": 8856,\n      \"column\": 14\n    },\n    \"end\": {\n      \"line\": 8856,\n      \"column\": 77\n    }\n  },\n  \"file\": \"/Users/adimov/XLN/og_xln/pure/xln.ts\",\n  \"lines\": \"    (m, h) => mapSet(m, h.tokenId, addHold(m.get(h.tokenId) ?? NO_TOTALS, h)),\",\n  \"charCount\": {\n    \"leading\": 14,\n    \"trailing\": 1\n  },\n  \"language\": \"TypeScript\",\n  \"metaVariables\": {\n    \"single\": {\n      \"K\": {\n        \"text\": \"h.tokenId\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 523023,\n            \"end\": 523032\n          },\n          \"start\": {\n            \"line\": 8856,\n            \"column\": 49\n          },\n          \"end\": {\n            \"line\": 8856,\n            \"column\": 58\n          }\n        }\n      },\n      \"M\": {\n        \"text\": \"m\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 523017,\n            \"end\": 523018\n          },\n          \"start\": {\n            \"line\": 8856,\n            \"column\": 43\n          },\n          \"end\": {\n            \"line\": 8856,\n            \"column\": 44\n          }\n        }\n      },\n      \"F\": {\n        \"text\": \"addHold\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 523009,\n            \"end\": 523016\n          },\n          \"start\": {\n            \"line\": 8856,\n            \"column\": 35\n          },\n          \"end\": {\n            \"line\": 8856,\n            \"column\": 42\n          }\n        }\n      },\n      \"D\": {\n        \"text\": \"NO_TOTALS\",\n        \"range\": {\n          \"byteOffset\": {\n            \"start\": 523037,\n            \"end\": 523046\n          },\n          \"start\": {\n            \"line\": 8856,\n            \"column\": 63\n          },\n          \"end\": {\n            \"line\": 8856,\n            \"column\": 72\n          }\n        }\n      }\n    },\n    \"multi\": {\n      \"ARGS\": [\n        {\n          \"text\": \"h\",\n          \"range\": {\n            \"byteOffset\": {\n              \"start\": 523048,\n              \"end\": 523049\n            },\n            \"start\": {\n              \"line\": 8856,\n              \"column\": 74\n            },\n            \"end\": {\n              \"line\": 8856,\n              \"column\": 75\n            }\n          }\n        }\n      ]\n    },\n    \"transformed\": {}\n  }\n}",
+            "type": "text"
+          }
+        ],
+        "isError": false,
+        "structuredContent": {
+          "result": [
+            {
+              "text": "mapSet(m, h.tokenId, addHold(m.get(h.tokenId) ?? NO_TOTALS, h))",
+              "range": {
+                "byteOffset": {
+                  "start": 522988,
+                  "end": 523051
+                },
+                "start": {
+                  "line": 8856,
+                  "column": 14
+                },
+                "end": {
+                  "line": 8856,
+                  "column": 77
+                }
+              },
+              "file": "/Users/adimov/XLN/og_xln/pure/xln.ts",
+              "lines": "    (m, h) => mapSet(m, h.tokenId, addHold(m.get(h.tokenId) ?? NO_TOTALS, h)),",
+              "charCount": {
+                "leading": 14,
+                "trailing": 1
+              },
+              "language": "TypeScript",
+              "metaVariables": {
+                "single": {
+                  "K": {
+                    "text": "h.tokenId",
+                    "range": {
+                      "byteOffset": {
+                        "start": 523023,
+                        "end": 523032
+                      },
+                      "start": {
+                        "line": 8856,
+                        "column": 49
+                      },
+                      "end": {
+                        "line": 8856,
+                        "column": 58
+                      }
+                    }
+                  },
+                  "M": {
+                    "text": "m",
+                    "range": {
+                      "byteOffset": {
+                        "start": 523017,
+                        "end": 523018
+                      },
+                      "start": {
+                        "line": 8856,
+                        "column": 43
+                      },
+                      "end": {
+                        "line": 8856,
+                        "column": 44
+                      }
+                    }
+                  },
+                  "F": {
+                    "text": "addHold",
+                    "range": {
+                      "byteOffset": {
+                        "start": 523009,
+                        "end": 523016
+                      },
+                      "start": {
+                        "line": 8856,
+                        "column": 35
+                      },
+                      "end": {
+                        "line": 8856,
+                        "column": 42
+                      }
+                    }
+                  },
+                  "D": {
+                    "text": "NO_TOTALS",
+                    "range": {
+                      "byteOffset": {
+                        "start": 523037,
+                        "end": 523046
+                      },
+                      "start": {
+                        "line": 8856,
+                        "column": 63
+                      },
+                      "end": {
+                        "line": 8856,
+                        "column": 72
+                      }
+                    }
+                  }
+                },
+                "multi": {
+                  "ARGS": [
+                    {
+                      "text": "h",
+                      "range": {
+                        "byteOffset": {
+                          "start": 523048,
+                          "end": 523049
+                        },
+                        "start": {
+                          "line": 8856,
+                          "column": 74
+                        },
+                        "end": {
+                          "line": 8856,
+                          "column": 75
+                        }
+                      }
+                    }
+                  ]
+                },
+                "transformed": {}
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+]

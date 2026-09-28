@@ -1,0 +1,7 @@
+bun install v1.3.10 (30e609e0)
+
++ @noble/curves@1.9.7
++ @noble/hashes@1.8.0
++ msgpackr@1.12.1
+
+7 packages installed [1011.00ms]

@@ -1,0 +1,6 @@
+F1 committing control {"advanced":true,"head":"1"}
+F1 committing invalid history {"advanced":true,"head":"0","rejected":[{"_tag":"j_prefix","code":"J_PREFIX_INVALID","message":"J_HISTORY_LOCAL_PRUNE_HEIGHT_INVALID:2:1","disposition":"reject"}]}
+F3 isolated Account retry {"sameReplica":true,"outputs":[]}
+F3 Entity first {"head":"1","child":"open","childHead":"1"}
+F3 Entity altered retry {"ok":false,"error":{"_tag":"frame_hash_mismatch"}}
+F2 vote throws "TypeError: Spread syntax requires ...iterable not be null or undefined"

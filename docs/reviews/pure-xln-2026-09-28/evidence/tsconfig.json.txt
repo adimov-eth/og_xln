@@ -1,0 +1,9 @@
+{
+  "extends": "/Users/adimov/XLN/og_xln/pure/tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "typeRoots": ["/Users/adimov/XLN/og_xln/node_modules/@types"]
+  },
+  "files": ["/Users/adimov/XLN/og_xln/node_modules/@types/bun/index.d.ts", "./type-proof.ts"],
+  "include": []
+}

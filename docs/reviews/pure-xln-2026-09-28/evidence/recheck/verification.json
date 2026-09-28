@@ -1,0 +1,32 @@
+{
+  "reviewedSha": "0d3a097b782b65b08358299fa0419e65498edc57",
+  "sourceSha256": "6c92501b4550f06af462fda8e10b9b47aab64a9de60e9e9a44b85d75a056346b",
+  "sourceUnchanged": true,
+  "correctedReports": 11,
+  "absoluteLinksChecked": 50,
+  "missingLinks": [],
+  "strictFixtureCompilerVersion": "5.9.3",
+  "strictFixtureTypecheckExit": 0,
+  "expectedTypeErrorsVerified": 3,
+  "newBoundaryProbeExit": 0,
+  "newContractProbeExit": 0,
+  "repositoryGate": "Prior completed bun run check failed on missing forge-std; unchanged candidate not rerun",
+  "forgeStdTestFileExists": false,
+  "withdrawnOrNarrowed": [
+    "F1 P1 fix-first recommendation withdrawn; commit guard missed in first pass",
+    "F3 P2 lowered to standalone API edge case; Entity rejects altered retry",
+    "F2 persistence exposure unproven",
+    "F4 ownership prerequisite",
+    "F5 eager iterable contract",
+    "native Map.delete generic equivalence false",
+    "114 test passes are not 114 parity proofs"
+  ],
+  "gitStatus": "?? docs/reviews/",
+  "originalReportsPreserved": true,
+  "finalReadOnlyQa": {
+    "reviewers": 2,
+    "requiredCorrections": 1,
+    "applied": 1,
+    "remaining": 0
+  }
+}

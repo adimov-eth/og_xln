@@ -1,0 +1,402 @@
+$ bun run check:short && bun run check:long
+$ bun tools/run-parallel-checks.ts check:contract-artifact-drift check:frontend-file-size
+$ bun run contracts:sync && git diff --exit-code -- frontend/static/contracts jurisdictions/typechain-types
+$ bun core/scripts/checks/policy/check-frontend-file-size.ts
+$ ./scripts/sync-contract-artifacts.sh
+[contracts-sync] compiling jurisdictions contracts
+Source file-size invariant passed (2782 files, max 3000 lines)
+PASS check:frontend-file-size 499ms
+
+Warning: "error" will be promoted to keyword in the future and will not be allowed as an identifier anymore.
+   --> ../node_modules/@openzeppelin/contracts/utils/cryptography/ECDSA.sol:125:29:
+    |
+125 |         (address recovered, RecoverError error, bytes32 errorArg) = tryRecover(hash, signature);
+    |                             ^^^^^^^^^^^^^^^^^^
+
+Warning: "error" will be promoted to keyword in the future and will not be allowed as an identifier anymore.
+   --> ../node_modules/@openzeppelin/contracts/utils/cryptography/ECDSA.sol:134:29:
+    |
+134 |         (address recovered, RecoverError error, bytes32 errorArg) = tryRecoverCalldata(hash, signature);
+    |                             ^^^^^^^^^^^^^^^^^^
+
+Warning: "error" will be promoted to keyword in the future and will not be allowed as an identifier anymore.
+   --> ../node_modules/@openzeppelin/contracts/utils/cryptography/ECDSA.sol:161:29:
+    |
+161 |         (address recovered, RecoverError error, bytes32 errorArg) = tryRecover(hash, r, vs);
+    |                             ^^^^^^^^^^^^^^^^^^
+
+Warning: "error" will be promoted to keyword in the future and will not be allowed as an identifier anymore.
+   --> ../node_modules/@openzeppelin/contracts/utils/cryptography/ECDSA.sol:203:29:
+    |
+203 |         (address recovered, RecoverError error, bytes32 errorArg) = tryRecover(hash, v, r, s);
+    |                             ^^^^^^^^^^^^^^^^^^
+
+Warning: "error" will be promoted to keyword in the future and will not be allowed as an identifier anymore.
+   --> ../node_modules/@openzeppelin/contracts/utils/cryptography/ECDSA.sol:273:26:
+    |
+273 |     function _throwError(RecoverError error, bytes32 errorArg) private pure {
+    |                          ^^^^^^^^^^^^^^^^^^
+
+Warning: "at" will be promoted to keyword in the future and will not be allowed as an identifier anymore.
+   --> ../node_modules/@openzeppelin/contracts/utils/structs/Checkpoints.sol:126:5:
+    |
+126 |     function at(Trace256 storage self, uint32 pos) internal view returns (Checkpoint256 memory) {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning: "at" will be promoted to keyword in the future and will not be allowed as an identifier anymore.
+   --> ../node_modules/@openzeppelin/contracts/utils/structs/Checkpoints.sol:329:5:
+    |
+329 |     function at(Trace224 storage self, uint32 pos) internal view returns (Checkpoint224 memory) {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning: "at" will be promoted to keyword in the future and will not be allowed as an identifier anymore.
+   --> ../node_modules/@openzeppelin/contracts/utils/structs/Checkpoints.sol:532:5:
+    |
+532 |     function at(Trace208 storage self, uint32 pos) internal view returns (Checkpoint208 memory) {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning: "at" will be promoted to keyword in the future and will not be allowed as an identifier anymore.
+   --> ../node_modules/@openzeppelin/contracts/utils/structs/Checkpoints.sol:735:5:
+    |
+735 |     function at(Trace160 storage self, uint32 pos) internal view returns (Checkpoint160 memory) {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning: This declaration shadows an existing declaration.
+  --> ./contracts/HashLadderRegistry.sol:19:3:
+   |
+19 |   error E1();
+   |   ^^^^^^^^^^^
+Note: The shadowed declaration is here:
+  --> ./contracts/Types.sol:18:1:
+   |
+18 | error E1(); // ZeroAmount
+   | ^^^^^^^^^^^
+
+Compiled 30 Solidity files with solc 0.8.36 (evm target: Check solc 0.8.36's doc for its default evm version)
+[typechain] generated 100 files into /Users/adimov/XLN/og_xln/jurisdictions/.typechain-types-build-92181
+[contracts-sync] published complete TypeChain generation dependencies-first
+[contracts-sync] copying fresh contract artifacts to frontend/static
+[static] copied ../jurisdictions/artifacts/contracts/Account.sol/Account.json -> static/contracts/Account.json
+[static] copied ../jurisdictions/artifacts/contracts/Depository.sol/Depository.json -> static/contracts/Depository.json
+[static] copied ../jurisdictions/artifacts/contracts/DepositoryBounds.sol/DepositoryBounds.json -> static/contracts/DepositoryBounds.json
+[static] copied ../jurisdictions/artifacts/contracts/EntityProvider.sol/EntityProvider.json -> static/contracts/EntityProvider.json
+[static] copied ../jurisdictions/artifacts/contracts/HankoVerifier.sol/HankoVerifier.json -> static/contracts/HankoVerifier.json
+[static] copied ../jurisdictions/artifacts/contracts/HashLadderRegistry.sol/HashLadderRegistry.json -> static/contracts/HashLadderRegistry.json
+[static] copied ../jurisdictions/artifacts/contracts/custody/NftCustody.sol/NftCustody.json -> static/contracts/NftCustody.json
+[static] copied ../jurisdictions/artifacts/contracts/DeltaTransformer.sol/DeltaTransformer.json -> static/contracts/DeltaTransformer.json
+[static] copied ../jurisdictions/artifacts/contracts/ERC20Mock.sol/ERC20Mock.json -> static/contracts/ERC20Mock.json
+[static] files copied for build
+[contracts-sync] verifying compiler immutable metadata parity
+CONTRACT_IMMUTABLE_METADATA_PARITY_OK contracts=4
+[contracts-sync] done
+PASS check:contract-artifact-drift 23536ms
+PARALLEL_CHECKS_OK gates=2
+$ bun tools/run-parallel-checks.ts check:src check:frontend
+$ bun tools/run-parallel-checks.ts soundcheck:fast rscore:check check:contract-invariants check:dead-code check:audit-registry check:advisor check:single-live-todo check:script-entrypoints check:proof-program frozen-core:check check:e2e-categories check:runtime-doc-paths check:folder-width check:state-machine-size check:production-function-size check:single-runtime-mempool check:frame-candidate-isolation check:no-machine-clones check:no-readonly-account-mutation check:no-hot-full-machine-scans check:patricia-hot-path check:path-keyed-storage check:account-frame-single-transition check:minimal-runtime-wal check:orderbook-price-pages check:canonical-vocabulary check:english-source check:j-event-catalog check:runtime-contract-types check:derive-delta-invariants check:no-manual-delta-math check:no-active-infra-in-state-machine check:no-legacy check:no-vacuous-validation check:unused-surface check:canonical-payment-surface security:failure-taxonomy security:swap-cancel-canonical check:runtime-types
+$ cd frontend && bun run check
+$ bun run check:unsafe-types && bun copy-static-files.js && svelte-kit sync && bun ../tools/run-parallel-checks.ts check:svelte check:build
+$ bun run rscore:fmt && bun run rscore:clippy && bun run rscore:test && bun run rscore:parity
+$ bun tools/soundcheck.ts
+$ bun core/scripts/e2e/runners/run-with-test-cleanup.ts --reason=contract-invariants --child-cwd=jurisdictions --keep-test-artifacts -- forge test --match-contract DepositoryInvariants
+$ bun scripts/check-unsafe-types.ts
+$ cargo fmt --manifest-path rscore/Cargo.toml --all -- --check
+test artifact cleanup (contract-invariants): preserving existing artifacts
+test artifact budget (contract-invariants): workspace=1.16GiB budgeted=0.00GiB / 50GiB
+FRONTEND_UNSAFE_TYPES_OK files=386 findings=0
+[static] copied ../jurisdictions/artifacts/contracts/Account.sol/Account.json -> static/contracts/Account.json
+[static] copied ../jurisdictions/artifacts/contracts/Depository.sol/Depository.json -> static/contracts/Depository.json
+[static] copied ../jurisdictions/artifacts/contracts/DepositoryBounds.sol/DepositoryBounds.json -> static/contracts/DepositoryBounds.json
+[static] copied ../jurisdictions/artifacts/contracts/EntityProvider.sol/EntityProvider.json -> static/contracts/EntityProvider.json
+[static] copied ../jurisdictions/artifacts/contracts/HankoVerifier.sol/HankoVerifier.json -> static/contracts/HankoVerifier.json
+[2m2026-09-28T07:37:43.722285Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722393Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722418Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722440Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722474Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722496Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722515Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Vm.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722530Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722549Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722556Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Vm.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722574Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Base.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722582Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdCheats.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722590Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdUtils.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722609Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Base.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722616Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdCheats.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722628Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdUtils.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722643Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Base.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722686Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdCheats.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722695Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdUtils.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722716Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Base.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722723Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdCheats.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722731Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdUtils.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722744Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Base.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722751Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdCheats.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722758Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdUtils.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722772Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Base.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722779Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdCheats.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722786Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/StdUtils.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722811Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.722841Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.723797Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[2m2026-09-28T07:37:43.723834Z[0m [31mERROR[0m [2mfoundry_compilers_artifacts_solc::sources[0m[2m:[0m [3merror[0m[2m=[0m"/Users/adimov/XLN/og_xln/jurisdictions/lib/forge-std/src/Test.sol": No such file or directory (os error 2)
+[static] copied ../jurisdictions/artifacts/contracts/HashLadderRegistry.sol/HashLadderRegistry.json -> static/contracts/HashLadderRegistry.json
+[static] copied ../jurisdictions/artifacts/contracts/custody/NftCustody.sol/NftCustody.json -> static/contracts/NftCustody.json
+[static] copied ../jurisdictions/artifacts/contracts/DeltaTransformer.sol/DeltaTransformer.json -> static/contracts/DeltaTransformer.json
+[static] copied ../jurisdictions/artifacts/contracts/ERC20Mock.sol/ERC20Mock.json -> static/contracts/ERC20Mock.json
+[static] built brainvault worker (41333 bytes)
+[static] copied docs/ -> static/docs-catalog/ (135 docs)
+Compiler run failed:
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/DebtLifecycle.invariants.t.sol:4:1:
+  |
+4 | import {Test, console} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/Depository.invariants.t.sol:4:1:
+  |
+4 | import {Test, console} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/DepositoryConservation.invariants.t.sol:4:1:
+  |
+4 | import {Test, console} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/HalmosLemmas.t.sol:4:1:
+  |
+4 | import {Test, console} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/HankoThreshold.invariants.t.sol:4:1:
+  |
+4 | import {Test, console} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/HashLadder.invariants.t.sol:4:1:
+  |
+4 | import {Test, console} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Vm.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Vm.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/Lifecycle.t.sol:6:1:
+  |
+6 | import {Vm} from "forge-std/Vm.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/TransformerAllowance.invariants.t.sol:4:1:
+  |
+4 | import {Test, console} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/TransformerFaultModes.t.sol:4:1:
+  |
+4 | import {Test, console} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Vm.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Vm.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/TransformerFaultModes.t.sol:5:1:
+  |
+5 | import {Vm} from "forge-std/Vm.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/ConservationHandler.sol:4:1:
+  |
+4 | import {CommonBase} from "forge-std/Base.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/ConservationHandler.sol:5:1:
+  |
+5 | import {StdCheats} from "forge-std/StdCheats.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/ConservationHandler.sol:6:1:
+  |
+6 | import {StdUtils} from "forge-std/StdUtils.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/DebtLifecycleHandler.sol:4:1:
+  |
+4 | import {CommonBase} from "forge-std/Base.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/DebtLifecycleHandler.sol:5:1:
+  |
+5 | import {StdCheats} from "forge-std/StdCheats.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/DebtLifecycleHandler.sol:6:1:
+  |
+6 | import {StdUtils} from "forge-std/StdUtils.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/DepositoryHandler.sol:4:1:
+  |
+4 | import {CommonBase} from "forge-std/Base.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/DepositoryHandler.sol:5:1:
+  |
+5 | import {StdCheats} from "forge-std/StdCheats.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/DepositoryHandler.sol:6:1:
+  |
+6 | import {StdUtils} from "forge-std/StdUtils.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/HankoThresholdHandler.sol:4:1:
+  |
+4 | import {CommonBase} from "forge-std/Base.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/HankoThresholdHandler.sol:5:1:
+  |
+5 | import {StdCheats} from "forge-std/StdCheats.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/HankoThresholdHandler.sol:6:1:
+  |
+6 | import {StdUtils} from "forge-std/StdUtils.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/HashLadderHandler.sol:4:1:
+  |
+4 | import {CommonBase} from "forge-std/Base.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/HashLadderHandler.sol:5:1:
+  |
+5 | import {StdCheats} from "forge-std/StdCheats.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/HashLadderHandler.sol:6:1:
+  |
+6 | import {StdUtils} from "forge-std/StdUtils.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Base.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/TransformerAllowanceHandler.sol:4:1:
+  |
+4 | import {CommonBase} from "forge-std/Base.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdCheats.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/TransformerAllowanceHandler.sol:5:1:
+  |
+5 | import {StdCheats} from "forge-std/StdCheats.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/StdUtils.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/handlers/TransformerAllowanceHandler.sol:6:1:
+  |
+6 | import {StdUtils} from "forge-std/StdUtils.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/helpers/XlnFixture.sol:4:1:
+  |
+4 | import {Test} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/math/WideMath.t.sol:4:1:
+  |
+4 | import {Test} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/math/WideTransformer.t.sol:4:1:
+  |
+4 | import {Test} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ParserError: Source "lib/forge-std/src/Test.sol" not found: File not found. Searched the following locations: "/Users/adimov/XLN/og_xln/jurisdictions".
+ --> test/foundry/stress/BatchBounds.t.sol:4:1:
+  |
+4 | import {console} from "forge-std/Test.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error: Compilation failed
+error: script "check:contract-invariants" exited with code 1
+FAIL check:contract-invariants 2864ms
+error: script "rscore:check" was terminated by signal SIGTERM (Polite quit request)
+FAIL rscore:check 2869ms
+FAIL eslint-ratchet 2841ms
+PASS unsafe-types 2763ms
+PASS frontend-unsafe-types 1129ms
+PASS determinism 678ms
+PASS no-weak-collections 1763ms
+FAIL runtime-dependencies 1710ms
+FAIL fints-negative-types 390ms
+$ bun core/scripts/checks/fints/check-fints-negative-types.ts
+error: script "check:fints-negative-types" was terminated by signal SIGTERM (Polite quit request)
+FAIL fints-compiler-policy 73ms
+$ bun core/scripts/checks/fints/check-compiler-policy.ts
+error: script "check:fints-compiler-policy" was terminated by signal SIGTERM (Polite quit request)
+SOUNDCHECK_FAILED gates=8
+error: script "soundcheck:fast" exited with code 1
+FAIL soundcheck:fast 2878ms
+error: script "check:src" exited with code 1
+FAIL check:src 2899ms
+error: script "check" was terminated by signal SIGTERM (Polite quit request)
+error: script "check:frontend" was terminated by signal SIGTERM (Polite quit request)
+FAIL check:frontend 2901ms
+error: script "check:long" exited with code 1
+error: script "check" exited with code 1
+[static] llms static context regenerated (set XLN_STATIC_VERBOSE=1 for token breakdowns)
+[static] files copied for build

@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import {
+  admit, applyAccountInput, applyRuntime, createEntity, createRuntime,
+  err, foldResult, frameStateHash, pruneFinalizedJHistory, replicaId, replicaKey,
+} from '/Users/adimov/XLN/og_xln/pure/xln.ts';
+import {
+  ALICE, BOB, CLOCK, NOW, TERMS, TOKEN, UNREGISTERED_J, aliceAddr,
+  genesisAB, hankoVerify, offerOf, partyIn, proposeInput, unwrap, verifiers,
+} from '/Users/adimov/XLN/og_xln/pure/xln_run.ts';
+import { pruneFinalizedValidatorJHistory } from '/Users/adimov/XLN/og_xln/core/jurisdiction/machine/local-history/index.ts';
+
+const admitted = unwrap(admit(genesisAB(), [{ type: 'set_credit_limit', tokenId: TOKEN, limit: 7n }]));
+const proposed = unwrap(applyAccountInput(admitted, proposeInput(admitted, ALICE, CLOCK), { verify: hankoVerify, self: ALICE, now: NOW })).replica;
+assert.equal(proposed._tag, 'proposed');
+if (proposed._tag !== 'proposed') throw Error('fixture');
+const offer = offerOf(proposed, ALICE);
+const received = unwrap(applyAccountInput(genesisAB(), offer, { verify: hankoVerify, self: BOB, now: NOW })).replica;
+assert.equal(received._tag, 'received');
+const altered = { ...offer, frame: { ...offer.frame, txs: [{ type: 'set_credit_limit' as const, tokenId: TOKEN, limit: 999n }] } };
+const recomputed = unwrap(frameStateHash(altered.frame, replicaId(received), partyIn(received, ALICE).left));
+assert.notEqual(recomputed, altered.frame.stateHash);
+const retry = applyAccountInput(received, altered, { verify: hankoVerify, self: BOB, now: NOW });
+assert.equal(retry.ok, true);
+console.log('CONFIRMED held retry: changed credit limit 7 -> 999, stale signed hash, accepted=true; cached state preserved');
+
+const reads: number[] = [];
+function* iterable() { for (const n of [1, 2, 3]) { reads.push(n); yield n; } }
+const stopped = foldResult(iterable(), 0, () => err('stop'));
+assert.equal(stopped.ok, false);
+assert.deepEqual(reads, [1, 2, 3]);
+console.log('CONFIRMED foldResult: first callback rejects, iterable still fully consumed (3/3)');
+
+const entity = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: UNREGISTERED_J }));
+const ahead = { ...entity, state: { ...entity.state, jFinality: { ...entity.state.jFinality, height: 2 } } };
+const history = { jurisdictionRef: 'test', scannedThroughHeight: 1, contiguousThroughHeight: 1, tipBlockHash: '0x' + '11'.repeat(32), eventBlocks: new Map(), blockHashes: new Map() };
+const refused = pruneFinalizedJHistory(history, 2);
+assert.equal(refused.ok, false);
+assert.throws(() => pruneFinalizedValidatorJHistory(history, 2), /J_HISTORY_LOCAL_PRUNE_HEIGHT_INVALID:2:1/);
+const key = replicaKey(ALICE, aliceAddr);
+const rt = { ...createRuntime(), entities: new Map([[key, ahead]]), replicaLocal: new Map([[key, { jHistory: history }]]) };
+const applied = applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: aliceAddr, input: { kind: 'txs', timestamp: NOW, txs: [] } }] }, verifiers);
+console.log('J-history runtime outcome:', JSON.stringify(applied.ok ? { ok: true, advanced: applied.value.advanced, retainedHistory: applied.value.runtime.replicaLocal.get(key)?.jHistory === history } : applied.error));
+assert.equal(applied.ok, true);
+console.log('CONFIRMED J-history: production prune throws; pure prune refuses; Runtime accepts the same invalid local history');

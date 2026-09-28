@@ -1,0 +1,4 @@
+../../../../tmp/xln-review-20260928/recheck/boundaries.ts(44,56): error TS2339: Property 'value' does not exist on type 'never'.
+../../../../tmp/xln-review-20260928/recheck/boundaries.ts(44,93): error TS2339: Property 'value' does not exist on type 'never'.
+../../../../tmp/xln-review-20260928/recheck/boundaries.ts(44,155): error TS2339: Property 'value' does not exist on type 'never'.
+../../../../tmp/xln-review-20260928/recheck/boundaries.ts(44,222): error TS2339: Property 'value' does not exist on type 'never'.

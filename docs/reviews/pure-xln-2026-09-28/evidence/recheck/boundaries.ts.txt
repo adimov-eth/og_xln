@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import { admit, applyAccountInput, applyRuntime, applyEntityInput, createEntity, createRuntime, replicaKey, withOgSections, committedRoot, zeroDelta, tag, foldResult, err, frameStateHash, replicaId } from '/Users/adimov/XLN/og_xln/pure/xln.ts';
+import { ALICE, BOB, CLOCK, NOW, TERMS, TOKEN, UNREGISTERED_J, aliceAddr, bobAddr, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, unwrap, verifiers } from '/Users/adimov/XLN/og_xln/pure/xln_run.ts';
+const report = (name: string, value: unknown) => console.log(name, JSON.stringify(value, (_,v)=>typeof v === 'bigint' ? v.toString() : v));
+const entity = (id = ALICE, signer = aliceAddr) => unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[signer, {shares: 1n}]]), jurisdictionConfig: UNREGISTERED_J }));
+const e = entity();
+const ahead = { ...e, state: { ...e.state, jFinality: { ...e.state.jFinality, height: 2 } } };
+const history = { jurisdictionRef: 'test', scannedThroughHeight: 1, contiguousThroughHeight: 1, tipBlockHash: '0x'+'11'.repeat(32), eventBlocks: new Map(), blockHashes: new Map() };
+const key = replicaKey(ALICE, aliceAddr);
+const rt = { ...createRuntime(), entities: new Map([[key, ahead]]), replicaLocal: new Map([[key, {jHistory: history}]]) };
+const chat = {kind:'txs' as const, timestamp:NOW, txs:[{type:'chat' as const, data:{from:aliceAddr, message:'J-history commit probe'}}]};
+const control = applyRuntime({...rt, replicaLocal:new Map()}, {runtimeTxs:[],entityInputs:[{entityId:ALICE,signerId:aliceAddr,input:chat}]}, verifiers);
+assert.equal(control.ok,true);
+if (control.ok) assert.equal(control.value.runtime.entities.get(key)?.head.height,1n);
+report('F1 committing control', control.ok && {advanced:control.value.advanced,head:control.value.runtime.entities.get(key)?.head.height});
+const commit = applyRuntime(rt, {runtimeTxs:[],entityInputs:[{entityId:ALICE,signerId:aliceAddr,input:chat}]}, verifiers);
+
+assert.equal(commit.ok,true);
+if(commit.ok){assert.equal(commit.value.advanced,true);assert.equal(commit.value.runtime.entities.get(key)?.head.height,0n);assert.equal(commit.value.rejected.length,1);assert.match(JSON.stringify(commit.value.rejected),/J_HISTORY_LOCAL_PRUNE_HEIGHT_INVALID:2:1/);}
+report('F1 committing invalid history',commit.ok ? {advanced:commit.value.advanced,head:commit.value.runtime.entities.get(key)?.head.height,rejected:commit.value.rejected} : commit);
+
+const admitted = unwrap(admit(genesisAB(),[{type:'set_credit_limit',tokenId:TOKEN,limit:7n}]));
+const proposed = unwrap(applyAccountInput(admitted,proposeInput(admitted,ALICE,CLOCK),{verify:hankoVerify,self:ALICE,now:NOW})).replica;
+assert.equal(proposed._tag,'proposed');
+if(proposed._tag !== 'proposed') throw Error('phase');
+const offer = offerOf(proposed,ALICE);
+const received = unwrap(applyAccountInput(genesisAB(),offer,{verify:hankoVerify,self:BOB,now:NOW})).replica;
+const altered = {...offer,frame:{...offer.frame,txs:[{type:'set_credit_limit' as const,tokenId:TOKEN,limit:999n}]}};
+assert.notEqual(unwrap(frameStateHash(altered.frame,replicaId(received),partyIn(received,ALICE).left)),altered.frame.stateHash);
+const retry = unwrap(applyAccountInput(received,altered,{verify:hankoVerify,self:BOB,now:NOW}));
+assert.strictEqual(retry.replica,received);
+assert.deepEqual(retry.outputs,[]);
+report('F3 isolated Account retry',{sameReplica:retry.replica===received,outputs:retry.outputs});
+const b = entity(BOB,bobAddr);
+const first = applyEntityInput(b,{kind:'txs',timestamp:NOW,txs:[{type:'accountInput',data:offer}]},{...verifiers,self:BOB,signerId:bobAddr});
+report('F3 Entity first',first.ok ? {head:first.value.replica.head.height,child:first.value.replica.accountReplicas.get(ALICE)?._tag,childHead:first.value.replica.accountReplicas.get(ALICE)?.head.height} : first);
+assert.equal(first.ok,true);
+if(first.ok){
+ assert.equal(first.value.replica.accountReplicas.get(ALICE)?._tag,'open');
+ assert.equal(first.value.replica.accountReplicas.get(ALICE)?.head.height,1n);
+ const next=applyEntityInput(first.value.replica,{kind:'txs',timestamp:NOW+1n,txs:[{type:'accountInput',data:altered}]},{...verifiers,self:BOB,signerId:bobAddr});
+ assert.equal(next.ok,false);
+ if(!next.ok) assert.equal(next.error._tag,'frame_hash_mismatch');
+ report('F3 Entity altered retry',next);
+}
+const imported=unwrap(withOgSections(e.state,{proposals:new Map([['id','oops']])}));
+assert.equal(typeof imported.proposals.get('id'),'string');
+let voteThrew=false;
+try {
+ const voted=applyEntityInput({...e,state:imported},{kind:'txs',timestamp:NOW,txs:[{type:'vote',data:{proposalId:'id',voter:aliceAddr,choice:'yes'}}]},{...verifiers,self:ALICE,signerId:aliceAddr});
+ report('F2 vote outcome',voted.ok ? {ok:true} : voted);
+} catch(error) { voteThrew=true; assert.ok(error instanceof TypeError); report('F2 vote throws',String(error)); }
+assert.equal(voteThrew,true);

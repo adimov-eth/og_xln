@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict';
+import { committedRoot, zeroDelta, tag, foldResult, err, ok, done, mapAccumResult, mapDelete } from '/Users/adimov/XLN/og_xln/pure/xln.ts';
+import type { AccountBody, AccountGrammar, Handler, ProposedAccount, ReceivedAccount, Result } from '/Users/adimov/XLN/og_xln/pure/xln.ts';
+import { genesisAB, TOKEN, unwrap } from '/Users/adimov/XLN/og_xln/pure/xln_run.ts';
+
+// Positive guarantees are checked as negative compiler tests.
+function negativeChecks(received: ReceivedAccount) {
+  // @ts-expect-error A successful Result must contain value.
+  const missing: Result<number, string> = {ok:true};
+  // @ts-expect-error The proposed phase requires a branded Candidate.
+  const proposed: ProposedAccount = {...genesisAB(), _tag:'proposed'};
+  // @ts-expect-error Proposing from open may not return received.
+  const wrongPhase: Handler<AccountGrammar,'propose','open'> = () => ok(done(received));
+  return [missing,proposed,wrongPhase];
+}
+
+const body0=genesisAB().state;
+const deltas=new Map(body0.account.deltas);
+const body:AccountBody={...body0,account:{...body0.account,deltas}};
+const before=unwrap(committedRoot(body));
+assert.equal(before,unwrap(committedRoot({...body})));
+deltas.set(TOKEN,zeroDelta(TOKEN));
+const cached=unwrap(committedRoot(body));
+const fresh=unwrap(committedRoot({...body}));
+assert.equal(before,cached); assert.notEqual(cached,fresh);
+console.log('F4 alias probe:',JSON.stringify({before,cached,fresh}));
+const reads:number[]=[],calls:number[]=[];
+function* stream(){for(const n of [1,2,3]){reads.push(n);yield n;}}
+foldResult(stream(),0,(_,n)=>{calls.push(n);return err('stop');});
+assert.deepEqual(reads,[1,2,3]);assert.deepEqual(calls,[1]);
+let callbacks=0;
+function* throwing(){yield 1;throw new Error('iterator');}
+assert.throws(()=>foldResult(throwing(),0,()=>{callbacks++;return err('stop');}),/iterator/);
+assert.equal(callbacks,0);
+console.log('F5 iterator reads:',reads,'callback calls:',calls,'throwing iterator callbacks:',callbacks);
+const signed=tag('signed')<{readonly signature:string}>();
+const signature:string=signed.signature;
+assert.equal(signature,undefined);
+const overwritten=tag('expected')({_tag:'unexpected'});
+const claimed:'expected'=overwritten._tag;
+assert.equal(claimed,'unexpected');
+console.log('F6 required payload:',typeof signature,'overwritten discriminant:',claimed);
+const owned=mapAccumResult([1,2,3],0,(s,x)=>ok([s+x,x*2] as const));
+assert.deepEqual(owned,ok([6,[2,4,6]]));
+const m=new Map([[NaN,1],[1,2]]);
+const native=new Map(m);native.delete(NaN);
+assert.equal(mapDelete(m,NaN).has(NaN),true);assert.equal(native.has(NaN),false);
+console.log('Rejected native mapDelete rewrite:',JSON.stringify({existingSize:mapDelete(m,NaN).size,nativeSize:native.size}));

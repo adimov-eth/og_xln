@@ -1,0 +1,5 @@
+MCP tools: [ "dump_syntax_tree", "test_match_code_rule", "find_code", "find_code_by_rule" ]
+dump_syntax_tree ok
+test_match_code_rule ok
+find_code_by_rule ok
+find_code ok

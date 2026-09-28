@@ -1,0 +1,22 @@
+import { withOgSections, committedRoot, zeroDelta, tag } from '/Users/adimov/XLN/og_xln/pure/xln.ts';
+import { genesisAB, TOKEN, unwrap } from '/Users/adimov/XLN/og_xln/pure/xln_run.ts';
+import type { EntityState, AccountBody } from '/Users/adimov/XLN/og_xln/pure/xln.ts';
+
+export function acceptedInvalidProposal(entity: EntityState) {
+  const result = withOgSections(entity, { proposals: new Map([['id', 'oops']]) });
+  if (result.ok) return result.value.proposals.get('id')?.votes.has('signer');
+  return false;
+}
+
+const original = genesisAB().state;
+const deltas = new Map(original.account.deltas);
+const body: AccountBody = { ...original, account: { ...original.account, deltas } };
+const before = unwrap(committedRoot(body));
+deltas.set(TOKEN, zeroDelta(TOKEN));
+const cached = unwrap(committedRoot(body));
+const freshlyWrapped = unwrap(committedRoot({ ...body }));
+console.log(JSON.stringify({ before, cached, freshlyWrapped, staleCache: cached !== freshlyWrapped }));
+
+const signed = tag('signed')<{ readonly signature: string }>();
+const signature: string = signed.signature;
+console.log(JSON.stringify({ tagConstructed: signed, signatureType: typeof signature }));
