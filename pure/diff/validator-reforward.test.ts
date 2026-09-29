@@ -4,7 +4,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 // forwarded in its mempool until the frame carrying it commits (admission.ts:29), so every input it admits meanwhile
 // sends that mempool to the proposer again, ahead of the input's own outputs.
 //
-// A scripted run (fixed inputs, no walk) on the 2-of-3 board B (world.ts, WALK_BOARD=1), SIGNERS[0] proposing:
+// A scripted run (fixed inputs, no walk) on the 2-of-3 board B (world.ts; forced on here), SIGNERS[0] proposing:
 //   1. SIGNERS[2] authors a board proposal; its replica forwards it to the proposer (the txs input);
 //   2. the proposer proposes the frame carrying it to SIGNERS[1] and SIGNERS[2];
 //   3. SIGNERS[2]'s replica receives that proposal while it still holds its propose: og forwards it to the proposer

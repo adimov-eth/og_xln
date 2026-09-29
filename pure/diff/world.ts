@@ -58,7 +58,7 @@ const soleSigner = (name: string, signer: number, kind: Member["kind"]): Member 
 });
 /** Two numbered 1-of-1 Entities, each over a signer of its own; each can target the other. */
 export const NUMBERED = [4, 5] as const;
-/** The 2-of-3 lazy board over SIGNERS 0, 1 and 2, signer 0 proposing; it joins only under WALK_BOARD (see below). */
+/** The 2-of-3 lazy board over SIGNERS 0, 1 and 2, signer 0 proposing; it joins unless WALK_BOARD=0 (see below). */
 export const BOARD = 6;
 const MEMBERS: readonly Member[] = [
   soleSigner("A", 0, "lazy"),
@@ -71,11 +71,11 @@ const MEMBERS: readonly Member[] = [
 ];
 export const NAMES = MEMBERS.map((m) => m.name);
 /**
- * The 2-of-3 board is opt-in (WALK_BOARD=1). Its first Entity frame needs og's frame preparation
+ * The 2-of-3 board joins by default; WALK_BOARD=0 leaves it out. Its first Entity frame needs og's frame preparation
  * (runtime/mempool/entity-height-barrier.ts applyEntityHeightDurabilityBarrier: one merge group per certificate-carrying
  * replica lane in a Runtime frame, the rest requeued), which the rewrite runs as processRuntimeFrame.
  */
-export const boardJoins = (): boolean => process.env["WALK_BOARD"] === "1";
+export const boardJoins = (): boolean => process.env["WALK_BOARD"] !== "0";
 
 type ProfileRow = { counterpartyId: string; tokenCapacities: unknown };
 /** og's committed Account, as far as steps read it. */
@@ -114,7 +114,7 @@ export type World = {
   readonly multiSigner: (x: number) => boolean;
   /** The numbered Entities: registered on chain, so each holds a certified board record. */
   readonly numbered: readonly number[];
-  /** The multi-signer Entities in this world (none unless WALK_BOARD). */
+  /** The multi-signer Entities in this world (none under WALK_BOARD=0). */
   readonly boards: readonly number[];
   /**
    * og finds Entity x's own certified board record in x's registry (og board-registry resolveObserverCertifiedBoardRecord):

@@ -73,6 +73,7 @@ import { SIGNERS } from "../lane.ts";
 import { TOKEN, type World } from "../world.ts";
 import { arises, drawn, pending, type Move, type Moves, type WorldMoves } from "./areas.ts";
 import { amount, one, PARTIES, pick } from "./world-view.ts";
+import { LEADER_TIMEOUT } from "./leader-timeout.ts";
 
 // ---- the domain: an Entity's board, its open proposals, its provider action ----
 
@@ -310,5 +311,5 @@ export const BOARDS: Moves<"boards"> = {
   entityProviderActivateBoard: pending(NUMBERED),
 };
 
-/** World moves: none yet. */
-export const BOARDS_WORLD: WorldMoves = {};
+/** World moves: the board's leader times out (leader-timeout.ts). */
+export const BOARDS_WORLD: WorldMoves = { leaderTimeout: LEADER_TIMEOUT };

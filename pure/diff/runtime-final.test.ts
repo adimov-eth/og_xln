@@ -1074,7 +1074,11 @@ describe(seedTag("runtime-final: live replica-meta rows (og storage/replica/repl
           ...(leaderVotes === undefined ? {} : { leaderVotes }), ...(pendingLeaderCertificate === undefined ? {} : { pendingLeaderCertificate }), ...(jPrefixRound === undefined ? {} : { jPrefixRound }) } as unknown as EntityReplica;
         rt = spawn(rt, r);
         const key = [...rt.entities.keys()].find((k) => rt.entities.get(k) === r) as string;
-        ogReplicas.set(key, { entityId: entity, signerId: signer, isProposer: String(r.state.quorum.proposer).toLowerCase() === signer.toLowerCase(),
+        // og isProposer: getReplicaProposalLeader at admission (input/admission.ts:157; leader/index.ts:73-83), the
+        // certificate's next leader when it targets the next height, else the committed leader (board index 0 here)
+        const certifiedNext = pendingLeaderCertificate !== undefined && pendingLeaderCertificate.targetHeight === height + 1;
+        const leader = certifiedNext ? pendingLeaderCertificate.nextLeaderId : String(r.state.quorum.proposer).toLowerCase();
+        ogReplicas.set(key, { entityId: entity, signerId: signer, isProposer: leader === signer.toLowerCase(),
           state: { entityId: entity, height, timestamp, prevFrameHash: height === 0 ? "" : frameHash }, ...(leaderVotes === undefined ? {} : { leaderVotes }),
           ...(pendingLeaderCertificate === undefined ? {} : { pendingLeaderCertificate }), ...(jPrefixRound === undefined ? {} : { jPrefixRound }) });
         if (leaderVotes !== undefined || pendingLeaderCertificate !== undefined || jPrefixRound !== undefined) withFields += 1;

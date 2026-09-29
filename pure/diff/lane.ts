@@ -585,11 +585,16 @@ export const createLane = (cfg: LaneConfig): Lane => {
     }
     const planWake = c === null ? undefined : runtimeWake(after, Number(after.timestamp), undefined, keyed);
     const pings = planWake?.input.entityInputs ?? [];
-    const pingWire = pings.map((p) => ({
-      entityId: p.entityId,
-      signerId: p.signerId,
-      entityTxs: p.input.kind === "txs" ? p.input.txs.map(wireEntityTx) : [],
-    }));
+    // og createDueScheduledWakeInputs queues a scheduledWake as txs and a due non-leader's own unsigned leader vote
+    // (runtime/mempool/scheduled-wake.ts:229-247)
+    const pingWire = pings.map((p) =>
+      p.input.kind === "leaderTimeoutVote"
+        ? { entityId: p.entityId, signerId: p.signerId, leaderTimeoutVote: p.input.vote }
+        : {
+            entityId: p.entityId,
+            signerId: p.signerId,
+            entityTxs: p.input.kind === "txs" ? p.input.txs.map(wireEntityTx) : [],
+          });
     // og's mempool leads with the inputs its barrier deferred, then the frame's routed continuations
     const rwDeferred = run.ok ? run.value.deferred : [];
     const ogQueue = ogMempool().entityInputs;

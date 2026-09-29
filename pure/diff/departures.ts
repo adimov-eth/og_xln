@@ -73,5 +73,24 @@ export const KNOWN_OG_HALTS: readonly KnownHalt[] = [
     issue: "review/og-issues-halts-2026-09-28.md, issue 2",
     halts: (ogHalt) => /SETTLEMENT_TRANSITION_PROPOSAL_FAILED:hanko:POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH:0x/.test(ogHalt),
   },
+  {
+    // og resolveCommitExecution (entity/consensus/commit/catch-up.ts:219-224) binds the replica's held execution to
+    // the committed frame (leader/certificates.ts:364-370) and throws on a different one (candidate-views.ts:13-27):
+    // the proposer a view change superseded still holds its own frame's execution when the new leader's commit at
+    // that height arrives. diff/leader-timeout.test.ts reaches it on the 2-of-3 board (world.ts B) after one leader
+    // timeout, which is how every view change on that board ends while the old leader has proposed.
+    name: "a proposer superseded by a view change halts on the new leader's commit",
+    issue: "not yet filed; the leader-timeout PR's report carries the draft",
+    halts: (ogHalt) => /ENTITY_VALIDATOR_EXECUTION_FRAME_MISMATCH:execution=\d+:0x[0-9a-f]{64}:frame=\d+:0x/.test(ogHalt),
+  },
+  {
+    // og assertProposerJRangesMatchLocalHistory (entity/consensus/j-prefix/prefix-round.ts:32-39, from
+    // proposal/start.ts:334) checks every j_event against the committed leader (prefix-round.ts:13;
+    // j-event-range-validation/index.ts:127-129): after a leader timeout the new leader proposes a j_event its
+    // predecessor signed and forwarded, and og halts. Boards thread, seed 0x30de2 with its vote draws (06a0213).
+    name: "a rotated leader proposes its predecessor's j_event",
+    issue: "not yet filed; the leader-timeout PR's report carries the draft",
+    halts: (ogHalt) => ogHalt.includes("ENTITY_PROPOSER_J_RANGE_INVALID:J_RANGE_NOT_ACTIVE_PROPOSER"),
+  },
 ];
 export const knownHalt = (ogHalt: string): KnownHalt | undefined => KNOWN_OG_HALTS.find((k) => k.halts(ogHalt));

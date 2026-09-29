@@ -28734,9 +28734,29 @@ const commitNotification = <R extends EntityReplica>(
         ? ok(done<OpenEntity | R, EntityOutput>(r))
         : err({ _tag: "commit_conflict" });
     return chain(preauthenticate(r, frame, bundles, ctx), () =>
-      chain(normalized, (sigs) => installCertified(r, frame, frameHash, q, sigs, ctx)),
+      chain(staleExecution(r, frame, frameHash), () =>
+        chain(normalized, (sigs) => installCertified(r, frame, frameHash, q, sigs, ctx)),
+      ),
     );
   });
+};
+/**
+ * og resolveCommitExecution (commit/catch-up.ts:219-224) binds the replica's held execution to the committed frame
+ * (leader/certificates.ts:364-370, candidate-views.ts:13-27): a proposer superseded by a view change still holds its
+ * own frame's execution, so the new leader's commit at that height throws, and og halts the Runtime.
+ */
+const staleExecution = (r: EntityReplica, frame: EntityFrame, frameHash: string): Result<void, EntityError> => {
+  if (r._tag !== "proposed" || r.frame.height !== frame.height) return ok(undefined);
+  return chain(hashEntityFrame(r.frame), (held): Result<void, EntityError> =>
+    held === frameHash
+      ? ok(undefined)
+      : err({
+          _tag: "entity_invariant",
+          reason:
+            `ENTITY_VALIDATOR_EXECUTION_FRAME_MISMATCH:execution=${r.frame.height}:${held}:`
+            + `frame=${frame.height}:${frameHash}`,
+        }),
+  );
 };
 /** og precommit: this validator's own signature bundle for the frame, to every other validator of the board. */
 const precommitOutputs = (
@@ -40309,9 +40329,14 @@ const haltText = (error: RuntimeError): string => {
 };
 /** The Runtime frame every Entity input applies under: the Runtime after its txs, the frame clock, the host context. */
 type FrameScope = { readonly rt: Runtime; readonly timestamp: bigint; readonly ctx: RuntimeCtx };
-/** og: a `txs` or J-prefix input takes the frame's timestamp. */
+/**
+ * og: a `txs`, J-prefix or leader-vote input takes the frame's timestamp (og's input carries none; a certified view
+ * change proposes at resolveEntityProposalTimestamp, proposal/clock.ts:15-18, the frame clock).
+ */
 const stampedInput = (routed: RoutedEntityInput, timestamp: bigint): RoutedEntityInput =>
-  routed.input.kind === "txs" || routed.input.kind === "jPrefixAttestations"
+  routed.input.kind === "txs"
+  || routed.input.kind === "jPrefixAttestations"
+  || routed.input.kind === "leaderTimeoutVote"
     ? { ...routed, input: { ...routed.input, timestamp } }
     : routed;
 /** What an Entity input sees of its Runtime: its siblings, their boards, its J history and the host's seams. */
@@ -41062,7 +41087,9 @@ const replicaMetaRow =
           replicaKey: key.toLowerCase(),
           entityId: entity,
           signerId: signer,
-          isProposer: signerId(r.state.quorum.proposer) === signer,
+          // og isProposer: the proposal leader at the last admission (input/admission.ts:157, a pending leader
+          // certificate's next leader) or the active leader at commit (commit/finalization.ts:333)
+          isProposer: isProposalLeader(r),
           entityHead: {
             entityId: entity,
             height: p.height,
