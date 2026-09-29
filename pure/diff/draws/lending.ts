@@ -42,6 +42,7 @@ type Loan = {
   readonly tokenId: number;
   readonly repaymentAmount: bigint;
   readonly repaidAmount: bigint;
+  readonly dueAt: number;
   readonly status: "opening" | "active" | "closing" | "repaid" | "defaulted";
 };
 type Book = { readonly pools: ReadonlyMap<string, Pool>; readonly loans: ReadonlyMap<string, Loan> };
@@ -59,6 +60,11 @@ type HubState = { readonly profile?: { readonly isHub?: boolean }; readonly lend
 const OG_TOKEN = 1;
 const TERMS: readonly Term[] = ["1h", "1d", "1m"];
 const MAX_BPS = 10_000;
+/**
+ * How long before a loan falls due a repay may still be drawn. The hub commits the repay a frame or two after the
+ * draw, at the lane's 100 ms per frame; a repay it commits after the loan's due time finds the loan defaulted.
+ */
+const REPAY_LEAD_MS = 1_000;
 
 // ---- reading og ----
 
@@ -127,8 +133,17 @@ const lendable = (w: World): readonly Pool[] =>
   pools(w).filter((p) => p.status === "open" && p.tokenId === OG_TOKEN && p.availableAmount > 0n);
 /** The party's hub Account is idle, so the tx it signs is the next frame on it. */
 const idle = (w: World, entityId: string): boolean => idleSpokes(w).includes(spokeOf(w, entityId));
+/** The Runtime clock both sides share, which og's hub stamps on the frame that commits a drawn repay. */
+const clock = (w: World): number => Number(w.lane.runtime().timestamp);
+/**
+ * og defaults an active loan once the hub's clock reaches its due time (the lending_overdue hook,
+ * scheduler/derived-deadlines.ts:85, settleOverdueLendingLoan at committed-lending-close.ts:120), and a repay the hub
+ * commits after that throws LENDING_REPAY_LOAN_NOT_ACTIVE (committed-lending-followup.ts:200), halting og.
+ */
+const notDueSoon = (w: World, loan: Loan): boolean => loan.dueAt > clock(w) + REPAY_LEAD_MS;
 const repayable = (w: World): readonly Loan[] =>
-  loans(w).filter((l) => l.status === "active" && l.tokenId === OG_TOKEN && idle(w, l.borrowerEntityId));
+  loans(w).filter((l) => l.status === "active" && l.tokenId === OG_TOKEN && notDueSoon(w, l))
+    .filter((l) => idle(w, l.borrowerEntityId));
 const closable = (w: World): readonly Pool[] =>
   pools(w).filter((p) => p.status === "open" && p.borrowedAmount === 0n)
     .filter((p) => idle(w, p.lenderEntityId) && hubCanPayOut(w, p));
