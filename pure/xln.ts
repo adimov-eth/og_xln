@@ -9658,7 +9658,7 @@ type AccountEnv = {
   readonly rebalancePolicy?: ReadonlyMap<number, RebalancePolicy> | undefined;
   /** og boardHankoRefreshMigration: our own board-rotation refresh marker (committed in the Entity leaf). */
   readonly refreshMigration?: RefreshMigration | undefined;
-  /** og shadow.rejectedFrameEvidence: the last unsafe peer frame the Entity disputed (committed; never cleared). */
+  /** og shadow.rejectedFrameEvidence: the unsafe peer frame just disputed (og cutover drops it: workerMaterialized). */
   readonly rejectedFrame?: RejectedFrame | undefined;
 };
 type EnvMeta =
@@ -16431,8 +16431,12 @@ export const unsafeAccountFrame = (
     persistEvidenceSecret(context),
   );
   return chain(fallout, ({ paybook, resolves }) => {
-    const state = secrets.length === 0 ? at.state : { ...at.state, paybook };
-    const base: Draft = { ...putChild(state, at.accountReplicas, peer, child), outputs: [] };
+    // og persists each evidence secret through the frame's Book intent slot (paybook/lifecycle.ts:32-62,
+    // books/book-intents.ts:69-85), which reaches state.paybook only at the Books stage after the tx loop
+    // (application.ts:1636-1646). The dispute start drafted here reads state.paybook (start-evidence.ts:176,
+    // dispute-arguments.ts:43), so its arguments never carry the secret this very frame revealed.
+    const base: Draft = { ...putChild(at.state, at.accountReplicas, peer, child), outputs: [] };
+    const booked = (d: Draft): Draft => (secrets.length === 0 ? d : { ...d, state: { ...d.state, paybook } });
     const startsBefore = disputeStartCount(base.state);
     const reason = unsafeReason(evidence, ctx.timestamp);
     const rejectedFrame: RejectedFrame = {
@@ -16440,7 +16444,8 @@ export const unsafeAccountFrame = (
       frameHash: evidence.frame.stateHash,
       frameHanko: evidence.frameHanko,
     };
-    return map(prepareDispute(base, { counterpartyEntityId: peer, description: reason }, ctx), (prepared) => {
+    const disputing = map(prepareDispute(base, { counterpartyEntityId: peer, description: reason }, ctx), booked);
+    return map(disputing, (prepared) => {
       const jb = prepared.state.jBatch;
       const started = jb._tag === "live" && disputeStartCount(prepared.state) > startsBefore ? jb : undefined;
       const kept = withRejectedFrame(prepared, peer, evidence, rejectedFrame);
@@ -24184,6 +24189,30 @@ const materializeVisible = (
     return chain(built, admit);
   });
 };
+/** The Account as og's worker holds it: shadow.rejectedFrameEvidence never reaches the worker. */
+const workerView = (child: AccountReplica): AccountReplica => {
+  const { rejectedFrame: _entitySide, ...kept } = child;
+  return kept as AccountReplica;
+};
+/**
+ * og prepareEntityAccountOutbound (rscore/authority/entity-stage.ts:417-455; application.ts:1465, after
+ * drainPostOrderbookAccountWork) replaces every Account its worker touched this frame with the worker's copy:
+ * ts-worker/provider.ts:233 materializeOutboundAccounts, :196 replacePostAccount, then
+ * account/state/candidate-overlay.ts:153 replaceAccountReplica (a whole-replica replace). Each Account input runs
+ * in the worker first (ts-worker/worker.ts:155 applyInbound takes forWrite, which marks the Account touched at :102),
+ * so the Account handleUnsafeAccountFrame just disputed is among them. Its shadow.rejectedFrameEvidence
+ * (dispute-input.ts:73) lives on the Entity's view only: no AccountEnvelopeUpdate carries it
+ * (account/envelope/entity-update.ts:26-52), so the frame commits the Account without it. The dispute lifecycle it
+ * prepared reaches the worker (replaceDisputeLifecycle) and survives.
+ * Counterexample (D11): an HTLC secret after a clock jump disputes the Account; og's committed leaf has no evidence.
+ */
+const workerMaterialized = (d: Draft): Draft =>
+  [...d.accountReplicas]
+    .filter(([, child]) => child.rejectedFrame !== undefined)
+    .reduce<Draft>(
+      (acc, [peer, child]) => ({ ...acc, ...putChild(acc.state, acc.accountReplicas, peer, workerView(child)) }),
+      d,
+    );
 /**
  * og drainPostOrderbookAccountWork before proposePendingAccountFrames: refresh every stale uncommitted hanko intent,
  * then materialize each deferred approval, both in ascending counterparty order.
@@ -26710,7 +26739,7 @@ export const foldTxs = (
     const continued = materializeContinuation(folded.draft, ctx, queue);
     const booked = chain(continued, (d) => bookPhase(d, ctx.timestamp));
     return chain(
-      chain(booked, (d) => materializeSettlements(d, ctx, arrived)),
+      map(chain(booked, (d) => materializeSettlements(d, ctx, arrived)), workerMaterialized),
       (settled) => {
         const touched = settled.touched ?? [];
         // an Account this frame opened and nothing else touched is not proposable yet (og openAccount)
