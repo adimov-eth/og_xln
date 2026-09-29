@@ -80,7 +80,7 @@ export const KNOWN_OG_HALTS: readonly KnownHalt[] = [
     // that height arrives. diff/leader-timeout.test.ts reaches it on the 2-of-3 board (world.ts B) after one leader
     // timeout, which is how every view change on that board ends while the old leader has proposed.
     name: "a proposer superseded by a view change halts on the new leader's commit",
-    issue: "not yet filed; the leader-timeout PR's report carries the draft",
+    issue: "review/og-issues-halts-2026-09-28.md, issue 7",
     halts: (ogHalt) => /ENTITY_VALIDATOR_EXECUTION_FRAME_MISMATCH:execution=\d+:0x[0-9a-f]{64}:frame=\d+:0x/.test(ogHalt),
   },
   {
@@ -89,7 +89,7 @@ export const KNOWN_OG_HALTS: readonly KnownHalt[] = [
     // j-event-range-validation/index.ts:127-129): after a leader timeout the new leader proposes a j_event its
     // predecessor signed and forwarded, and og halts. Boards thread, seed 0x30de2 with its vote draws (06a0213).
     name: "a rotated leader proposes its predecessor's j_event",
-    issue: "not yet filed; the leader-timeout PR's report carries the draft",
+    issue: "review/og-issues-halts-2026-09-28.md, issue 8",
     halts: (ogHalt) => ogHalt.includes("ENTITY_PROPOSER_J_RANGE_INVALID:J_RANGE_NOT_ACTIVE_PROPOSER"),
   },
 ];
