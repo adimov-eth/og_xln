@@ -103,3 +103,23 @@ const lockHorizon: StricterDeparture = {
 export const STRICTER_DEPARTURES: readonly StricterDeparture[] = [lockHorizon];
 export const stricterDeparture = (tx: OgAccountTx, at: OgFrameClock): StricterDeparture | undefined =>
   STRICTER_DEPARTURES.find((d) => d.refuses(tx, at));
+
+/**
+ * Where the rewrite is more lenient than og: og refuses what the rewrite accepts. A frame's timestamp carries no
+ * authority (spec R-CLOCK), so the rewrite refuses no frame for its age or its future date. Every deadline decision reads
+ * the deciding party's own clock plus a named reserve (HTLC_ENFORCEMENT_RESERVE_MS); a frame-clock read that remains
+ * mirrors a rule of the co-signed state machine itself (an expired lock cannot be resolved), never the receiver's
+ * protection. The lane never reaches this: both Entities of a walk run on one clock, so no frame is ahead of its
+ * receiver. It is pinned by `diff/clock-authority.test.ts`, which runs two Runtimes on clocks that differ.
+ */
+export type LenientDeparture = {
+  readonly name: string;
+  /** og refuses a peer frame stamped `aheadMs` in front of the receiver's clock. */
+  readonly ogRefuses: (aheadMs: bigint) => boolean;
+};
+/** og getAccountFrameStructuralError: a frame more than ACCOUNT_NETWORK_ALLOWANCE_MS (30 s) ahead is malformed. */
+export const FUTURE_FRAME: LenientDeparture = {
+  name: "a frame stamped ahead of its receiver's clock is accepted",
+  ogRefuses: (aheadMs) => aheadMs > 30_000n,
+};
+export const LENIENT_DEPARTURES: readonly LenientDeparture[] = [FUTURE_FRAME];
