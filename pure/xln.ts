@@ -9431,7 +9431,6 @@ export const disputeShapes = (carried: readonly (DisputeHanko | undefined)[]): R
   guard(carried.every((d) => d === undefined || evenHex(d.hanko)), refuseDispute("shape"));
 
 
-export const ACCOUNT_NETWORK_ALLOWANCE_MS = 30_000n;
 export const ACCOUNT_MEMPOOL_SIZE = 10_000;
 export type FrameClock = { readonly timestamp: bigint; readonly jHeight: bigint };
 export type FoldAt = FrameClock & { readonly height: bigint };
@@ -9861,7 +9860,7 @@ export type AccountReplicaError =
   | Tagged<"board_hanko_refresh", { reason: BoardRefreshRefusal }>
   | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch">
   | Tagged<"frame_hash_mismatch" | "state_root_mismatch" | "ack_unmatched" | "not_preparing">
-  | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }>
+  | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" }>
   | Tagged<"stale_settlement_hanko", { cause: Of<BodyError, "settlement"> }>
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
   | Tagged<"bad_account", { reason: "entity_id" | "same_entity" | TermsError["_tag"] }>
@@ -10236,14 +10235,17 @@ const frameStructure = (f: AccountFrame): Result<void, AccountReplicaError> => {
   const field = malformedField(f);
   return field === null ? ok(undefined) : err({ _tag: "frame_structure", field });
 };
-export const receiverClock = (f: AccountFrame, now: bigint): Result<void, AccountReplicaError> =>
-  guard(f.timestamp - now <= ACCOUNT_NETWORK_ALLOWANCE_MS, { _tag: "frame_structure", field: "future_timestamp" });
 /** First refusal among checks run in order; a later check never runs after an earlier refusal. */
 const lazyChecks = <E>(...gs: readonly (() => Result<unknown, E>)[]): Result<void, E> =>
   foldResult(gs, undefined as void, (_, g) => map(g(), () => undefined));
-export const HTLC_ENFORCEMENT_RESERVE_MS = ACCOUNT_NETWORK_ALLOWANCE_MS;
+/**
+ * The reserve every deadline check keeps beside the receiver's own clock (R-CLOCK): a lock must outlive it, a secret
+ * must land before it. A frame's timestamp carries no authority, so no frame is refused for its age or future date.
+ */
+export const HTLC_ENFORCEMENT_RESERVE_MS = 30_000n;
 export type DeadlineReason =
-  | "lock_window" | "secret_window" | "secret_frame_expired" | "payer_cancel_early" | "timeout_not_expired";
+  | "lock_window" | "lock_horizon" | "secret_window" | "secret_frame_expired" | "payer_cancel_early"
+  | "timeout_not_expired";
 export type DeadlineViolation = {
   readonly error: Tagged<"frame_deadline", { reason: DeadlineReason; lockId: string }>; readonly dispute: boolean;
 };
@@ -10256,6 +10258,12 @@ const deadlinePassed = (l: DeadlineLock, c: Clock): boolean =>
 const opensLock = (l: DeadlineLock, secret: string): boolean => hashHtlcSecret(secret) === l.hashlock;
 type LockBook = ReadonlyMap<string, DeadlineLock>;
 type DeadlineScan = Result<LockBook, DeadlineViolation>;
+/**
+ * R-CLOCK: what protects the receiver is always his own clock plus the reserve (`local`). The reads of the frame's
+ * stamp (`f`) below are the state machine's own rule, the one the txs apply under (a lock expired by the frame's
+ * clock cannot be resolved), so a frame they refuse is refused here as a plain reject instead of failing at replay.
+ * They are only ever an extra condition on the proposer, never what lets it past a local-clock check.
+ */
 /** The peer frame under scan, who proposed it, and our local clock (now, finalized J height). */
 type ScanSite = { readonly f: AccountFrame; readonly proposerIsLeft: boolean; readonly local: Clock };
 type SecretResolve = Extract<TxOf<"htlc_resolve">, { outcome: "secret" }>;
@@ -10265,11 +10273,16 @@ const deadlineViolation = (reason: DeadlineReason, lockId: string, dispute = fal
 const lockWindowUnsafe = (tx: TxOf<"htlc_lock">, at: ScanSite): boolean =>
   tx.timelock <= at.local.timestamp + HTLC_ENFORCEMENT_RESERVE_MS || tx.revealBeforeHeight <= at.local.jHeight
   || at.f.timestamp >= tx.timelock || tx.revealBeforeHeight <= at.f.jHeight;
+/** N2 on the receiver's clock: a lock ending past the horizon holds the Account open as long as its payer chose. */
+const lockBeyondHorizon = (tx: TxOf<"htlc_lock">, at: ScanSite): boolean =>
+  tx.timelock > at.local.timestamp + BigInt(MAX_LOCK_HORIZON_MS)
+  || tx.revealBeforeHeight > at.local.jHeight + BigInt(MAX_LOCK_HORIZON_BLOCKS);
 const scanLock = (locks: LockBook, tx: TxOf<"htlc_lock">, at: ScanSite): DeadlineScan => {
   const { hashlock, timelock, revealBeforeHeight } = tx;
   switch (true) {
     case locks.has(tx.lockId): return ok(locks);
     case lockWindowUnsafe(tx, at): return deadlineViolation("lock_window", tx.lockId);
+    case lockBeyondHorizon(tx, at): return deadlineViolation("lock_horizon", tx.lockId);
     default: return ok(mapSet(locks, tx.lockId, {
       hashlock, timelock, revealBeforeHeight, senderIsLeft: at.proposerIsLeft,
     }));
@@ -10637,7 +10650,6 @@ const receipt = <R extends AccountReplica>(
   const byLeft = other(ctx.party.left);
   const gates = lazyChecks<AccountReplicaError>(
     () => frameStructure(frame),
-    () => receiverClock(frame, ctx.now),
     () => guard(frame.prevFrameHash === r.head.prevFrameHash, { _tag: "hash_mismatch" }),
     () => guard(frame.height === r.head.height + 1n, { _tag: "height_mismatch" }),
     () => traverse(frame.txs, (tx) => wireTx(tx, replicaId(r), byLeft)),

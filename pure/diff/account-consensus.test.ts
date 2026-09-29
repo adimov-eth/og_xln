@@ -30,8 +30,9 @@ import type { AccountFrame as OgFrame, AccountInput as OgInput, AccountReplica a
 
 // ---- rewrite ----
 import {
-  ACCOUNT_MEMPOOL_SIZE, tokenId, ACCOUNT_NETWORK_ALLOWANCE_MS, accountDisputeHash, applyEntityInput, createEntity, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, incomingDeadline, keccakUtf8, disputeRequirement, disputeShapes, frameStateHash, localProof, planAccountProposal, proposalPlan, receiverClock, replicaId, unqueued,
+  ACCOUNT_MEMPOOL_SIZE, tokenId, accountDisputeHash, applyEntityInput, createEntity, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, incomingDeadline, keccakUtf8, disputeRequirement, disputeShapes, frameStateHash, localProof, planAccountProposal, proposalPlan, replicaId, unqueued,
 } from "../xln.ts";
+import { FUTURE_FRAME } from "./departures.ts";
 import type { AccountFrame, AccountInput, AccountReplica, EntityId, FrameClock, WireAccountTx } from "../xln.ts";
 import { ALICE, BOB, CLOCK, NOW, TERMS, TOKEN, aliceAddr, verifiers, causeOf, ackInput, disputeFor, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap, unwrapErr } from "../xln_run.ts";
 
@@ -144,14 +145,15 @@ describe(seedTag("account-consensus: pure predicates"), () => {
     }
   });
 
-  test("MATCH: future-timestamp allowance is 30s inclusive on both sides", () => {
-    expect(Number(ACCOUNT_NETWORK_ALLOWANCE_MS)).toBe(OG_ALLOWANCE);
+  test("DEPARTURE: og refuses a frame more than 30s ahead of its receiver, the rewrite refuses no frame for its date", () => {
+    // R-CLOCK: a frame's timestamp carries no authority (departures.ts FUTURE_FRAME); the receiver's checks read its own clock
+    expect(FUTURE_FRAME.ogRefuses(BigInt(OG_ALLOWANCE))).toBe(false);
+    expect(FUTURE_FRAME.ogRefuses(BigInt(OG_ALLOWANCE) + 1n)).toBe(true);
     const now = 1_000_000;
     const root = W("00");
     for (const skew of [0, 29_999, 30_000, 30_001, 90_000]) {
       const og = getAccountFrameStructuralError({ height: 1, jHeight: 0, timestamp: now + skew, accountTxs: [], accountStateRoot: root } as unknown as OgFrame, now) === "";
-      const pure = receiverClock({ timestamp: BigInt(now + skew) } as AccountFrame, BigInt(now)).ok;
-      expect(pure).toBe(og);
+      expect([skew, og]).toEqual([skew, !FUTURE_FRAME.ogRefuses(BigInt(skew))]);
     }
   });
 
