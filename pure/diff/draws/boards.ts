@@ -70,7 +70,7 @@ import { LIMITS } from "../../../core/config/constants.ts";
 import { unwrap } from "../../xln_run.ts";
 import { entityTransactionAction, type EntityTx, type ProposalAction } from "../../xln.ts";
 import { SIGNERS } from "../lane.ts";
-import { TOKEN, type World } from "../world.ts";
+import { boardJoins, TOKEN, type World } from "../world.ts";
 import { arises, drawn, pending, type Move, type Moves, type Step, type WorldMoves } from "./areas.ts";
 import { amount, one, PARTIES, pick } from "./world-view.ts";
 
@@ -305,8 +305,6 @@ export const WAITING: { readonly [K in Waiting]: Move } = {
   ),
 };
 
-/** world.ts boardJoins: the 2-of-3 board is in the world only under WALK_BOARD=1, and only then can a vote be drawn. */
-const BOARD_WALK = process.env["WALK_BOARD"] === "1";
 const NUMBERED = "a numbered Entity with a certified board record (the Boards world)";
 export const BOARDS: Moves<"boards"> = {
   propose: drawn(
@@ -317,7 +315,7 @@ export const BOARDS: Moves<"boards"> = {
       return authored(w, a, [{ type: "propose", data: { proposer: signerId(a.member), action } }]);
     },
   ),
-  vote: BOARD_WALK
+  vote: boardJoins()
     ? drawn(
       (w) => ballots(w).length > 0,
       (w) => {
