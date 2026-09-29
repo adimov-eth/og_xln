@@ -73,12 +73,13 @@ const verifyMember: typeof verifiers.verifyMember = (h, sig, addr) =>
     : verifiers.verifyMember(h, sig, addr);
 export const CRYPTO = { ...verifiers, sign, verifyMember };
 
-/** og's in-memory EVM with the real Depository stack: the chain both sides observe. */
-// Bun (1.3.11 and og CI's 1.4.0) segfaults when a Worker loads the native secp256k1 addon after an earlier Worker that
-// loaded it was terminated, and the harness terminates og's Account workers (holdAccountWorkers). An empty prebuild dir
-// makes node-gyp-build find no binary, so the secp256k1 package falls back to its own JS build (its index.js): the
-// same API and deterministic signatures. og's crypto.ts already treats the addon as optional
+// Bun (1.3.11 and og CI's 1.4.0) segfaults when a Worker loads a native addon after an earlier Worker that loaded it
+// was terminated, and the harness terminates og's Account workers (holdAccountWorkers). Workers read these at spawn,
+// so they load no addon: an empty prebuild dir makes node-gyp-build find no binary and the secp256k1 package falls
+// back to its own JS build (its index.js), the same API and deterministic signatures, which og's crypto.ts already
+// treats as optional; msgpackr decodes in JS without its msgpackr-extract accelerator, to the same values
 process.env["SECP256K1_PREBUILD"] = process.env["SECP256K1_PREBUILD"] ?? "/nonexistent";
+process.env["MSGPACKR_NATIVE_ACCELERATION_DISABLED"] = process.env["MSGPACKR_NATIVE_ACCELERATION_DISABLED"] ?? "true";
 
 /**
  * og's Account worker pool for one Runtime, installed the way og installTsAccountWorkerAuthority
@@ -95,6 +96,7 @@ export const holdAccountWorkers = (
   return workers;
 };
 
+/** og's in-memory EVM with the real Depository stack: the chain both sides observe. */
 export const bootChain = async (chainId = 31337): Promise<JAdapter> => {
   const chain = await createJAdapter({ mode: "browservm", chainId } as never);
   await chain.deployStack();
