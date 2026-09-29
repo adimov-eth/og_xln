@@ -24,8 +24,8 @@
 //       other areas that shrink the hub's side under a resting offer are not guarded here.
 //   proposeCancelSwap (payments/swap-requests.ts, account/tx/handlers/swap/lifecycle/cancel.ts)
 //     - no Account: SWAP_REQUEST_ACCOUNT_MISSING, a halt
-//     - no such offer, or the caller is not its maker: rejected, dropped (swap/lifecycle/cancel.ts:33-45); drawn as a
-//       cancel of an id the trader never placed: see `cancelOffer`
+//     - no such offer: rejected, dropped (swap/lifecycle/cancel.ts:35-45); every cancel input also carries a cancel of
+//       an id nobody placed: see `cancelOffer`. The caller-is-not-maker branch is not drawn.
 //     - a committed cancel request on a hub with no book: ORDERBOOK_EXTENSION_REQUIRED_FOR_CANCEL, a halt
 //       (orderbook/cancels.ts processOrderbookCancels)
 //     - a cancel request the hub commits in the same Entity frame as a partial fill of that offer: og cancels the
@@ -256,27 +256,26 @@ const cancellers = (w: World): readonly number[] => traders(w).filter((s) => can
 
 /** An offer id no draw places (placed ids start with `o`), so og's maker-side check rejects the cancel. */
 const unknownOfferId = (w: World): string => `x${w.ri(1 << 30).toString(36)}`;
-/** A cancel og can take: one of a maker's cancellable offers, or now and then an id nobody placed. */
-const cancelTarget = (w: World): { readonly maker: number; readonly offerId: string } => {
-  const makers = cancellers(w);
-  if (makers.length === 0 || w.ri(10) === 0) return { maker: pick(w, traders(w)), offerId: unknownOfferId(w) };
-  const maker = pick(w, makers);
-  return { maker, offerId: pick(w, cancellable(w, maker)).offerId };
-};
 
+const cancelOf = (w: World, offerId: string): EntityTx => ({
+  type: "proposeCancelSwap",
+  data: { counterpartyEntityId: w.ids[HUB]!, offerId },
+});
+
+/**
+ * A canceller's cancel of one of its cancellable offers, then a cancel of an id nobody placed: og commits the first and
+ * drops the second, so every cancel input reaches both branches.
+ */
 const cancelOffer = (w: World): Step => {
-  const { maker, offerId } = cancelTarget(w);
-  const cancel: EntityTx = {
-    type: "proposeCancelSwap",
-    data: { counterpartyEntityId: w.ids[HUB]!, offerId },
-  };
-  return { runtimeTxs: [], users: [w.user(maker, [cancel])] };
+  const canceller = pick(w, cancellers(w));
+  const offerId = pick(w, cancellable(w, canceller)).offerId;
+  return { runtimeTxs: [], users: [w.user(canceller, [cancelOf(w, offerId), cancelOf(w, unknownOfferId(w))])] };
 };
 
 export const ORDERBOOK: Moves<"orderbook"> = {
   initOrderbookExt: drawn((w) => traders(w).length > 0, openMarket),
   placeSwapOffer: drawn((w) => hasBook(w) && makers(w).length > 0, placeOffer),
-  proposeCancelSwap: drawn((w) => hasBook(w) && traders(w).length > 0, cancelOffer),
+  proposeCancelSwap: drawn((w) => hasBook(w) && cancellers(w).length > 0, cancelOffer),
   prepareCrossJurisdictionSwap: arises("scenario-cross-j.test.ts (two Runtimes)"),
   requestCrossJurisdictionClear: arises("scenario-cross-j.test.ts (two Runtimes)"),
   registerCrossJurisdictionSwap: arises("cross-j swap routing"),
