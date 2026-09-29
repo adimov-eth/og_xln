@@ -18,22 +18,24 @@ import { buildReplayVerifiableRuntimePostStateView } from "../../core/storage/wa
 import { decodeBuffer } from "../../core/storage/codec/codec.ts";
 import { projectCertifiedEntityFrameLinkIdentity } from "../../core/entity/consensus/frame/lineage.ts";
 import { createJAdapter } from "../../core/jurisdiction/adapter/index.ts";
+import { canonicalTsAccountWorkerCount, TsAccountWorkerAuthority } from "../../core/rscore/ts-worker/provider.ts";
 import type { JAdapter } from "../../core/jurisdiction/adapter/types.ts";
 import { deliveryAccepted } from "../../core/protocol/payments/delivery-result.ts";
-import { ANVIL_KEYS, signDigestHex, signerAddress, unwrap, verifiers } from "../xln_run.ts";
+import { ANVIL_KEYS, MORE_ANVIL_KEYS, signDigestHex, signerAddress, unwrap, verifiers } from "../xln_run.ts";
 import { accountLines, inputsLine, routedLine, tracing } from "./scenario-trace.ts";
 import { haltDeparture } from "./departures.ts";
 import {
   canonicalEntityHashes,
-  commitRuntimeFrame,
   convertOutput,
   localNetworkOutputs,
   ok,
+  processRuntimeFrame,
   recoverRawSigner,
   replicaKey,
   replicaMetaRows,
   replicaWakes,
   retireNetworkOutputs,
+  routeKeyOf,
   runtimeComponentDigests,
   runtimeView,
   runtimeWake,
@@ -54,10 +56,12 @@ import {
 
 export const T0 = 1_700_000_000_000;
 
-/** Anvil account #3: xln_run keys only #0-#2, so its signer signs through the scenario's own member signer. */
+/** Anvil account #3 (xln_run MORE_ANVIL_KEYS[0]): Entity D's signer, which the lane signs for with its own key. */
 const EXTRA_KEY = "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6";
 const EXTRA_SIGNER = signerAddress(EXTRA_KEY);
-export const KEYS = [...ANVIL_KEYS, EXTRA_KEY];
+/** Anvil accounts #4 and #5: the numbered Entities' sole validators (xln_run's verifiers sign for #3-#9). */
+const NUMBERED_KEYS = MORE_ANVIL_KEYS.slice(1, 3);
+export const KEYS = [...ANVIL_KEYS, EXTRA_KEY, ...NUMBERED_KEYS];
 export const SIGNERS = KEYS.map((k) => signerAddress(k));
 const sign: typeof verifiers.sign = (h, addr) =>
   addr.toLowerCase() === EXTRA_SIGNER
@@ -70,6 +74,27 @@ const verifyMember: typeof verifiers.verifyMember = (h, sig, addr) =>
 export const CRYPTO = { ...verifiers, sign, verifyMember };
 
 /** og's in-memory EVM with the real Depository stack: the chain both sides observe. */
+// Bun (1.3.11 and og CI's 1.4.0) segfaults when a Worker loads the native secp256k1 addon after an earlier Worker that
+// loaded it was terminated, and the harness terminates og's Account workers (holdAccountWorkers). An empty prebuild dir
+// makes node-gyp-build find no binary, so the secp256k1 package falls back to its own JS build (its index.js): the
+// same API and deterministic signatures. og's crypto.ts already treats the addon as optional
+process.env["SECP256K1_PREBUILD"] = process.env["SECP256K1_PREBUILD"] ?? "/nonexistent";
+
+/**
+ * og's Account worker pool for one Runtime, installed the way og installTsAccountWorkerAuthority
+ * (rscore/ts-worker/provider.ts) does on the first frame, which then returns early. og keeps no handle on env, so its
+ * own pool's threads (one per worker per Entity replica) live until the process exits; the harness closes this one
+ * when it closes the Runtime. The harness never sets XLN_TS_ACCOUNT_WORKERS=0, og's inline mode.
+ */
+export const holdAccountWorkers = (
+  env: ConstructorParameters<typeof TsAccountWorkerAuthority>[0],
+): TsAccountWorkerAuthority => {
+  const workers = new TsAccountWorkerAuthority(env, canonicalTsAccountWorkerCount());
+  env.accountAuthorityExecutionMode = "cutover";
+  env.accountAuthorityEntityStageProvider = workers.provider;
+  return workers;
+};
+
 export const bootChain = async (chainId = 31337): Promise<JAdapter> => {
   const chain = await createJAdapter({ mode: "browservm", chainId } as never);
   await chain.deployStack();
@@ -145,7 +170,11 @@ export const leafDiffs = (a: unknown, b: unknown, at = "", out: string[] = []): 
   return out;
 };
 
-export type User = { readonly entity: number; readonly txs: readonly EntityTx[] };
+/**
+ * One user input: the Entity it goes to and, when a member of a multi-signer board authors it, that member's index
+ * into SIGNERS (og binds the command's signer as the author, e.g. vote.voter in entity/command/command-codec.ts).
+ */
+export type User = { readonly entity: number; readonly txs: readonly EntityTx[]; readonly signer?: number };
 export type Coverage = {
   frames: number;
   entityFrames: number;
@@ -192,6 +221,40 @@ type OgInput = {
   jPrefixAttestations?: Map<string, unknown>;
 };
 type OgMempool = { runtimeTxs: RuntimeTx[]; entityInputs: OgInput[] };
+/** An og queued input's route and consensus shape: its lane, and what it carries at which height. */
+const ogShape = (i: OgInput): string => {
+  const o = i as OgInput & {
+    proposedFrame?: { height: number };
+    hashPrecommitFrame?: { height: number };
+    hashPrecommits?: Map<string, unknown>;
+  };
+  const payload = (): string => {
+    if (o.proposedFrame) return `proposal@${o.proposedFrame.height}`;
+    if (o.hashPrecommits?.size) return `precommit@${o.hashPrecommitFrame?.height}:${[...o.hashPrecommits.keys()]}`;
+    if (o.jPrefixAttestations) return `jPrefix:${[...o.jPrefixAttestations.keys()]}`;
+    return `txs:${(o.entityTxs ?? []).map((tx) => tx.type)}`;
+  };
+  return `${o.entityId.toLowerCase()}:${o.signerId.toLowerCase()}:${o.from ?? "local"} ${payload()}`;
+};
+/** The rewrite's routed input in ogShape's terms. */
+const rwShape = (r: RoutedEntityInput): string => {
+  const i = r.input;
+  const payload = (): string => {
+    switch (i.kind) {
+      case "proposal":
+        return `proposal@${i.frame.height}`;
+      case "precommit":
+        return `precommit@${i.height}:${[...i.signatures.keys()]}`;
+      case "jPrefixAttestations":
+        return `jPrefix:${[...i.attestations.keys()]}`;
+      case "txs":
+        return `txs:${i.txs.map((tx) => tx.type)}`;
+      default:
+        return i.kind;
+    }
+  };
+  return `${r.entityId.toLowerCase()}:${r.signerId.toLowerCase()}:${r.from ?? "local"} ${payload()}`;
+};
 type OgEnv = ReturnType<typeof import("../../core/runtime.ts").createEmptyEnv>;
 /** One og direct-transport envelope (core/runtime/delivery/dispatch.ts). */
 type OgEnvelope = {
@@ -206,14 +269,52 @@ export type Outgoing = { readonly og: readonly OgEnvelope[]; readonly rw: readon
 type Shipped = { readonly key: string; readonly input: RoutedEntityInput };
 /** A wire tx as the transport compares it. */
 const wireKey = (tx: unknown): string => stableJson(plain(tx));
+/**
+ * A value with every Map spelled out as its entries in order: stableJson alone reads a Map as `{}`, so rows differing
+ * only in their J-prefix attestations (keyed by author) would share one key.
+ */
+const mapsSpelled = (v: unknown): unknown => {
+  if (v instanceof Map) return { __map: [...v].map(([k, x]) => [mapsSpelled(k), mapsSpelled(x)]) };
+  if (v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
+  if (Array.isArray(v)) return v.map(mapsSpelled);
+  return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, mapsSpelled(x)]));
+};
 /** An output row as og's envelope carries it: its source frame and atomic cohort move to the envelope. */
 const rowKey = (row: unknown): string => {
   const { sourceRuntimeFrame: _frame, atomicCrossJurisdictionPair: _pair, ...carried } = row as Record<string, unknown>;
-  return stableJson(plain(carried));
+  return stableJson(mapsSpelled(carried));
 };
 
-/** og's watcher input: an attestation lane, which no single-signer Entity routes to itself. */
-const watched = (i: { jPrefixAttestations?: Map<string, unknown> }): boolean => (i.jPrefixAttestations?.size ?? 0) > 0;
+/** One local continuation under its og route key. */
+type Slot = readonly [string, RoutedEntityInput];
+/**
+ * og dedupeEntityOutputs (the rewrite's dedupeNetwork) over the host's local continuations: outputs on one route key
+ * share the first one's slot, a later one's txs appended, so the wakes several txs send one Entity are one input.
+ */
+const slotted = (continuations: readonly Slot[]): readonly RoutedEntityInput[] =>
+  continuations
+    .reduce<readonly Slot[]>((slots, [key, next]) => {
+      const at = slots.findIndex(([k]) => k === key);
+      if (at < 0) return [...slots, [key, next]];
+      const first = slots[at]![1];
+      const appended =
+        first.input.kind === "txs" && next.input.kind === "txs" && next.input.txs.length > 0
+          ? { ...first, input: { ...first.input, txs: [...first.input.txs, ...next.input.txs] } }
+          : first;
+      return slots.map((slot, i): Slot => (i === at ? [key, appended] : slot));
+    }, [])
+    .map(([, continuation]) => continuation);
+
+/**
+ * og's watcher input: a validator's own J-prefix attestation, keyed by the input's own signer (og
+ * jurisdiction/adapter/events/history-ingress.ts). A board member's relay of it to the others (og
+ * rebroadcastLocalAttestation in entity/consensus/j-prefix/prefix-input.ts) is keyed by its author, another member,
+ * and is an Entity output like any other.
+ */
+const watched = (i: { signerId: string; jPrefixAttestations?: Map<string, unknown> }): boolean => {
+  const authors = [...(i.jPrefixAttestations?.keys() ?? [])];
+  return authors.length > 0 && authors.every((a) => a.toLowerCase() === i.signerId.toLowerCase());
+};
 
 export type LaneConfig = {
   /** Prefixes every difference (the seed, and the lane's name when there are several). */
@@ -231,6 +332,8 @@ export type LaneConfig = {
   readonly online: (entityId: string) => boolean;
   /** The rewrite's transport view of Entities hosted elsewhere (og verifiedProfileRoutes). */
   readonly routes?: RuntimeRoutes | undefined;
+  /** Each Entity's own signer, as an index into SIGNERS (the Entity's own index when absent). */
+  readonly signerOf?: (entity: number) => number;
 };
 export type Lane = {
   readonly env: OgEnv;
@@ -249,9 +352,13 @@ export type Lane = {
 
 export const createLane = (cfg: LaneConfig): Lane => {
   const { env, ids, names, coverage, tag } = cfg;
+  /** The signer a user input is submitted as: the chosen member, else the Entity's own signer. */
+  const userSigner = (u: User): string => SIGNERS[u.signer ?? cfg.signerOf?.(u.entity) ?? u.entity]!;
   let rt = cfg.runtime;
   let frame = 0;
   let pending: readonly RoutedEntityInput[] = [];
+  /** The inputs the rewrite's entity-height barrier requeued last frame: og holds them at the front of its mempool. */
+  let deferred: readonly RoutedEntityInput[] = [];
   let arrived: readonly RoutedEntityInput[] = [];
   let sent: { og: OgEnvelope[]; rw: readonly Shipped[] } = { og: [], rw: [] };
   /**
@@ -286,8 +393,9 @@ export const createLane = (cfg: LaneConfig): Lane => {
   const ogMempool = (): OgMempool =>
     (env.runtimeMempool ?? { runtimeTxs: [], entityInputs: [] }) as unknown as OgMempool;
   /**
-   * og's queued inputs in its own arrival order, rebuilt on the rewrite's side: the watcher's attestations stand
-   * where og queued them, a remote input (it carries its source Runtime) is the next one delivered, anything else is
+   * og's queued inputs in its own arrival order, rebuilt on the rewrite's side: the barrier's deferred inputs lead
+   * (og applyEntityHeightDurabilityBarrier puts them ahead of its mempool), the watcher's attestations stand where og
+   * queued them, a remote input (it carries its source Runtime) is the next one delivered, anything else is
    * the next local continuation we carry (which the previous frame already proved equal to og's).
    */
   const hostInputs = (carried: readonly RoutedEntityInput[]) => {
@@ -299,7 +407,7 @@ export const createLane = (cfg: LaneConfig): Lane => {
         input: { kind: "jPrefixAttestations", attestations: treeClone(i.jPrefixAttestations!) },
       }) as unknown as RoutedEntityInput;
     type Weave = { out: RoutedEntityInput[]; local: number; remote: number };
-    const woven = mempool.entityInputs.reduce<Weave>((acc, i) => {
+    const woven = mempool.entityInputs.slice(deferred.length).reduce<Weave>((acc, i) => {
       if (watched(i)) return { ...acc, out: [...acc.out, attestation(i)] };
       if (i.from !== undefined) {
         return { ...acc, out: [...acc.out, ...arrived.slice(acc.remote, acc.remote + 1)], remote: acc.remote + 1 };
@@ -308,7 +416,7 @@ export const createLane = (cfg: LaneConfig): Lane => {
     }, { out: [], local: 0, remote: 0 });
     const runtimeTxs = treeClone(mempool.runtimeTxs.filter((tx) => IO_TXS.has(tx.type)));
     const rest = [...carried.slice(woven.local), ...arrived.slice(woven.remote)];
-    return { runtimeTxs, entityInputs: [...woven.out, ...rest] };
+    return { runtimeTxs, entityInputs: [...deferred, ...woven.out, ...rest] };
   };
   const ogEntityHeights = (): number =>
     [...env.state.eReplicas.values()].reduce((sum, r) => sum + Number(r.state.height), 0);
@@ -365,7 +473,7 @@ export const createLane = (cfg: LaneConfig): Lane => {
     const known = profiles();
     const entityInputs = users.map((u) => ({
       entityId: ids[u.entity]!,
-      signerId: SIGNERS[u.entity]!,
+      signerId: userSigner(u),
       entityTxs: treeClone(u.txs.map(wireEntityTx)),
     }));
     const host = hostInputs([...pending, ...own.pings]);
@@ -387,7 +495,7 @@ export const createLane = (cfg: LaneConfig): Lane => {
     const now = Number(rt.timestamp) + 100;
     const userIn: RoutedEntityInput[] = users.map((u) => ({
       entityId: ids[u.entity]!,
-      signerId: SIGNERS[u.entity]!,
+      signerId: userSigner(u),
       input: { kind: "txs", timestamp: BigInt(now), txs: u.txs },
     }));
     // og enqueueRuntimeInput appends after the local continuations the previous frame re-enqueued
@@ -420,7 +528,8 @@ export const createLane = (cfg: LaneConfig): Lane => {
     });
     const runtimeSeed = (env as unknown as { runtimeSeed?: string }).runtimeSeed;
     // og admission signs every local tx into the replica's own Entity command (prepareLocallyAuthoredEntityTxs)
-    const committed = commitRuntimeFrame(rt, input, { ...CRYPTO, local, htlcInfra, routes: cfg.routes, runtimeSeed });
+    const run = processRuntimeFrame(rt, input, { ...CRYPTO, local, htlcInfra, routes: cfg.routes, runtimeSeed });
+    const committed = run.ok ? ok(run.value.commit) : run;
     if (ogHalt !== undefined && committed.ok) {
       // the rewrite may commit a frame og halts on only as a named departure, and only doing what it names
       const departure = haltDeparture(ogHalt);
@@ -481,7 +590,11 @@ export const createLane = (cfg: LaneConfig): Lane => {
       signerId: p.signerId,
       entityTxs: p.input.kind === "txs" ? p.input.txs.map(wireEntityTx) : [],
     }));
-    const ogRouted = ogMempool().entityInputs.filter((i) => !watched(i));
+    // og's mempool leads with the inputs its barrier deferred, then the frame's routed continuations
+    const rwDeferred = run.ok ? run.value.deferred : [];
+    const ogQueue = ogMempool().entityInputs;
+    cmp("deferred", ogQueue.slice(0, rwDeferred.length).map(ogShape), rwDeferred.map(rwShape));
+    const ogRouted = ogQueue.slice(rwDeferred.length).filter((i) => !watched(i));
     const rwRouted = c === null ? [] : [...unwrap(localNetworkOutputs(c.runtime, c.outbox, cfg.routes)), ...pingWire];
     cmp("routed", ogRouted, rwRouted);
     // what og's transport carried off this frame is exactly the retained outbox the rewrite committed
@@ -527,7 +640,9 @@ export const createLane = (cfg: LaneConfig): Lane => {
         accountLines(accounts, mine, name, name(r.entityId), diff).forEach((line) => console.log(line));
       });
     }
-    // a frame that commits nothing re-enqueues nothing: og drained its mempool into the frame and keeps no input
+    // a frame that commits nothing re-enqueues nothing: og drained its mempool into the frame and keeps no input but
+    // the ones its barrier deferred, which lead the next frame's queue either way
+    deferred = rwDeferred;
     own =
       c === null
         ? { ...own, pings: [] }
@@ -542,13 +657,17 @@ export const createLane = (cfg: LaneConfig): Lane => {
       rt = sent.og.length > 0 ? retireNetworkOutputs(c.runtime, () => true) : c.runtime;
       sent = { og: sent.og, rw: shipped };
       const localTo = localIds();
-      // og's host re-enqueues its own continuations without transport provenance: no `from`
-      pending = c.outbox
+      // og's host re-enqueues its own continuations without transport provenance (no `from`), one per route key as its
+      // output plan dedupes them (localNetworkOutputs), so the hostInputs weave pairs them one to one with og's queue
+      const continuations = c.outbox
         .filter((o) => localTo.has(o.to.toLowerCase()))
-        .map((o) => {
+        .map((o): Slot => {
           const { from: _local, ...routed } = unwrap(convertOutput(rt, o, o.to, rt.timestamp));
-          return routed;
+          const routedRows = unwrap(localNetworkOutputs(rt, [o], cfg.routes));
+          const key = routedRows.map((row) => unwrap(routeKeyOf(row))).join("\n");
+          return [key, routed];
         });
+      pending = slotted(continuations);
     }
     return diffs;
   };

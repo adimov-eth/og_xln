@@ -11,11 +11,10 @@
 //   - Pull and cross-j route guards never apply: the single-Runtime world has no Pulls and no routes.
 // og's watchtower (core/watchtower, core/api/server/rpc/watchtower-proxy.ts) is a server, not an Entity tx: nothing
 // to draw.
-import { batchOpCount, J_BATCH_CONTRACT_LIMITS } from "../../../core/jurisdiction/machine/batch/index.ts";
 import type { EntityTx } from "../../xln.ts";
 import { HUB, SPOKES, type World } from "../world.ts";
 import { arises, drawn, type Move, type Moves, type Step, type WorldMoves } from "./areas.ts";
-import { one as oneTx, PARTIES, quiet, tx } from "./world-view.ts";
+import { batchRoom, one as oneTx, PARTIES, quiet, tx } from "./world-view.ts";
 
 // ---- the domain: one Account's dispute lifecycle as og has committed it ----
 
@@ -113,14 +112,6 @@ const inBatch = (w: World, s: Side, kind: "disputeStarts" | "disputeFinalization
   return batches.some((b) => (b?.[kind] ?? []).some(forCounterparty));
 };
 
-/**
- * og's 50-op J batch (batch/index.ts:204): room for `ops` more in Entity `x`'s draft. Same signature as the shared
- * guard core is adding to draws/world-view.ts; this file imports that one once it lands.
- */
-const batchRoom = (w: World, x: number, ops: number): boolean => {
-  const draft = draftOf(w, x);
-  return draft === undefined || batchOpCount(draft as never) + ops <= J_BATCH_CONTRACT_LIMITS.maxTotalOps;
-};
 /** A draw that queues one dispute op into `s.x`'s draft. */
 const room = (w: World, s: Side): boolean => batchRoom(w, s.x, 1);
 
