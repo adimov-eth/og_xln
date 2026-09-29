@@ -60,11 +60,13 @@ type HubState = { readonly profile?: { readonly isHub?: boolean }; readonly lend
 const OG_TOKEN = 1;
 const TERMS: readonly Term[] = ["1h", "1d", "1m"];
 const MAX_BPS = 10_000;
+/** The lane stamps each Runtime frame 100 ms after the last (diff/lane.ts `now`). */
+const FRAME_MS = 100;
 /**
- * How long before a loan falls due a repay may still be drawn. The hub commits the repay a frame or two after the
- * draw, at the lane's 100 ms per frame; a repay it commits after the loan's due time finds the loan defaulted.
+ * The frames from a repay draw to the hub's commit of it: the borrower's Account is idle, so the borrower proposes in
+ * the next frame and the hub commits in the one after.
  */
-const REPAY_LEAD_MS = 1_000;
+const REPAY_FRAMES = 2;
 
 // ---- reading og ----
 
@@ -140,7 +142,7 @@ const clock = (w: World): number => Number(w.lane.runtime().timestamp);
  * scheduler/derived-deadlines.ts:85, settleOverdueLendingLoan at committed-lending-close.ts:120), and a repay the hub
  * commits after that throws LENDING_REPAY_LOAN_NOT_ACTIVE (committed-lending-followup.ts:200), halting og.
  */
-const notDueSoon = (w: World, loan: Loan): boolean => loan.dueAt > clock(w) + REPAY_LEAD_MS;
+const notDueSoon = (w: World, loan: Loan): boolean => loan.dueAt > clock(w) + REPAY_FRAMES * FRAME_MS;
 const repayable = (w: World): readonly Loan[] =>
   loans(w).filter((l) => l.status === "active" && l.tokenId === OG_TOKEN && notDueSoon(w, l))
     .filter((l) => idle(w, l.borrowerEntityId));
@@ -223,5 +225,30 @@ export const LENDING: Moves<"lending"> = {
   lendingClosePosition: drawn(when((w) => cashSettled(w) && nothingRouted(w) && closable(w).length > 0), close),
 };
 
-/** World moves: none; the lending book is built from Entity txs alone. */
-export const LENDING_WORLD: WorldMoves = {};
+// ---- the world move: a loan falls due ----
+
+/** No repay is queued or proposed on any hub Account. */
+const repaysSettled = (w: World): boolean =>
+  SPOKES.every((s) => sides(w, s).every((a) => !inFlight(a).some((tx) => tx.type === "lending_repay")));
+/**
+ * The active loan that falls due first, while it is still more than a repay's frames away: nearer than that, the
+ * walk's own frames reach its due time.
+ */
+const nextDue = (w: World): Loan | undefined =>
+  loans(w).filter((l) => l.status === "active" && l.dueAt > clock(w) + (REPAY_FRAMES + 1) * FRAME_MS)
+    .reduce<Loan | undefined>((first, l) => (first === undefined || l.dueAt < first.dueAt ? l : first), undefined);
+
+/**
+ * `due`: time passes to within a few frames of the next loan's due time (terms run an hour to a month, the walk a few
+ * hundred frames). The frames left, 0 to REPAY_FRAMES + 1, put a repay drawn next on either side of og's default.
+ * It waits while a repay is in flight: the jump would let og default its loan before the hub commits it.
+ */
+export const LENDING_WORLD: WorldMoves = {
+  due: {
+    enabled: (w) => hubOpen(w) && repaysSettled(w) && nextDue(w) !== undefined,
+    draw: (w): Step => {
+      w.lane.jumpClock(nextDue(w)!.dueAt - w.ri(REPAY_FRAMES + 2) * FRAME_MS);
+      return { runtimeTxs: [], users: [] };
+    },
+  },
+};

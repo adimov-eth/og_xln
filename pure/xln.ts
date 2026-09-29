@@ -18100,8 +18100,8 @@ const foldWake = (state: EntityState, replicas: Replicas, w: WakeData, ctx: Fold
     chain(executeCrontab(state, replicas, Number(ctx.timestamp)), (run) => {
       const approved = run.outputs.flatMap((o) => o.txs) as readonly EntityTx[];
       // og applyLocalAccountEffects: the wake's returned Account txs (a lending_overdue revoke) are admitted before its
-      // approved self txs
-      const queued = run.accountTxs.reduce(queueReturned, {
+      // approved self txs, and each Account that admits one joins the worklist then, ahead of the frame's later txs
+      const queued = run.accountTxs.reduce(admitReturned, {
         state: run.state,
         accountReplicas: run.accountReplicas,
         outputs: [],
@@ -24535,20 +24535,19 @@ const rebalanceKick = (d: Draft, at: CommittedAt): Result<Draft, EntityError> =>
   return chain(hasRebalanceWork(at.self, child), (work) => (work ? ok(kick(crontabOf(d.state))) : ok(d)));
 };
 /**
- * og applyLocalAccountEffects: each returned Account tx is admitted alone and in order; an Account that admits one
- * joins the frame's worklist after the peer.
+ * og applyLocalAccountEffects: a returned Account tx is admitted alone, and an Account that admits it joins the frame's
+ * worklist (markProposableAccount) in admission order.
  */
+const admitReturned = (d: Draft, t: AccountTxTarget): Draft => {
+  const id = t.accountId.toLowerCase() as EntityId;
+  const before = d.accountReplicas.get(id)?.mempool.length;
+  const next = queueReturned(d, t);
+  const admitted = before !== undefined && next.accountReplicas.get(id)?.mempool.length !== before;
+  return admitted ? { ...next, touched: [...(next.touched ?? []), id] } : next;
+};
+/** og applyEntityTxReturnedEffects after an Account input: the returned txs in order, after the peer. */
 const admitTargets = (d: Draft, targets: readonly AccountTxTarget[], peer: EntityId): Draft =>
-  targets.reduce<Draft>(
-    (acc, t) => {
-      const id = t.accountId.toLowerCase() as EntityId;
-      const before = acc.accountReplicas.get(id)?.mempool.length;
-      const next = queueReturned(acc, t);
-      const admitted = before !== undefined && next.accountReplicas.get(id)?.mempool.length !== before;
-      return admitted ? { ...next, touched: [...(next.touched ?? []), id] } : next;
-    },
-    { ...d, touched: [peer] },
-  );
+  targets.reduce<Draft>(admitReturned, { ...d, touched: [peer] });
 const followedSwapEvents = ({ created, cancelled, cancelRequests }: SwapFollowing): SwapEvents | undefined =>
   created.length + cancelled.length + cancelRequests.length === 0 ? undefined : { created, cancelled, cancelRequests };
 /**
