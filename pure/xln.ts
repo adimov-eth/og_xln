@@ -10064,11 +10064,18 @@ export const planOpen = (
 /** The lenient proposal body just before window[index] (refused txs skipped, as og's per-tx discard does). */
 const lenientBefore = (s: AccountBody, window: readonly WireAccountTx[], index: number, ctx: FoldCtx): AccountBody =>
   proposalFold(s, window.slice(0, index), ctx).state;
-/** og admission.ts: a lagging proposer never mints a frame behind the committed watermark. */
-const proposalClock = (r: OpenAccount, entityClock: FrameClock): FrameClock => ({
-  ...entityClock,
-  timestamp: entityClock.timestamp > r.head.timestamp ? entityClock.timestamp : r.head.timestamp,
-});
+/**
+ * How far past its own clock a proposer carries the Account's watermark (og MAX_FRAME_FUTURE_SKEW_MS: og refuses a
+ * frame stamped further ahead). No frame is refused for its date (R-CLOCK), so one co-signed far-future stamp would
+ * otherwise fix the stamp of every later frame and the fold would refuse every new lock (`now >= timelock`) for good;
+ * past this lead the watermark is clamped, and within it the Account heals when real time catches up.
+ */
+export const MAX_FRAME_LEAD_MS = 30_000n;
+/** og admission.ts: a lagging proposer never mints a frame behind the committed watermark, up to the named lead. */
+const proposalClock = (r: OpenAccount, entityClock: FrameClock): FrameClock => {
+  const carried = smaller(r.head.timestamp, entityClock.timestamp + MAX_FRAME_LEAD_MS);
+  return { ...entityClock, timestamp: entityClock.timestamp > carried ? entityClock.timestamp : carried };
+};
 const proposalSettlement = (floor: number, a: ProposalAuthority): SettlementCtx | undefined =>
   (a.verify === undefined ? undefined : {
     verify: a.verify, proofNonceFloor: floor, ...opt("deltaTransformer", a.dt), ...opt("boardAuthority", a.authority),

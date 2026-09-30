@@ -6,7 +6,7 @@
 // time, then everyone's clock is honest and Alice pays Carol through Bob; the lock must land on Bob's Account.
 import { describe, expect, test } from "bun:test";
 import { ALICE, BOB, CAROL, NOW } from "../xln_run.ts";
-import { replicaKey, type EntityId } from "../xln.ts";
+import { MAX_FRAME_LEAD_MS, replicaKey, type EntityId } from "../xln.ts";
 import { accountOf, context, credit, fromCarolToBob, inputOf, network, payment, replicaIn } from "./hub-network.ts";
 import { allAt, arrivesAt, runtimeOf, settle, step, withRuntime, type World } from "./two-runtimes.ts";
 
@@ -61,8 +61,15 @@ describe("a co-signed future stamp does not disable HTLC locks on an Account", (
     expect(r.locks).toBe(1);
   });
 
-  test("the stamp a proposer mints stays within a minute of its own clock, however far ahead the watermark is", () => {
+  test("the stamp a proposer mints stays within the named lead of its own clock, however far ahead the watermark is", () => {
     const r = afterPoison(365n * DAY);
-    expect(r.watermark).toBeLessThan(r.honestTime + 60n * SECOND);
+    expect(r.watermark).toBeLessThanOrEqual(r.honestTime + MAX_FRAME_LEAD_MS);
+  });
+
+  test("a watermark within the lead is still carried: the Account never runs behind a stamp it co-signed", () => {
+    const ahead = 20n * SECOND;
+    expect(ahead).toBeLessThan(MAX_FRAME_LEAD_MS);
+    const r = afterPoison(ahead);
+    expect(r.watermark).toBeGreaterThanOrEqual(NOW + 2000n + ahead);
   });
 });
