@@ -6,12 +6,13 @@ import { x25519 } from "@noble/curves/ed25519";
 import { ALICE, BOB, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, genesisAB, unwrap, verifiers, withTestJurisdiction } from "../xln_run.ts";
 import { hashHtlcSecret } from "../../core/protocol/htlc/utils.ts";
 import {
-  HTLC_ENFORCEMENT_RESERVE_MS, MAX_LOCK_HORIZON_BLOCKS, MAX_LOCK_HORIZON_MS, applyRuntime, convertOutput, createEntity,
+  HTLC_ENFORCEMENT_RESERVE_MS, MAX_LOCK_HORIZON_BLOCKS, MAX_LOCK_HORIZON_MS, createEntity,
   createRuntime, incomingDeadline, replicaKey, spawn, tokenId,
   type AccountFrame, type Address, type EntityId, type EntityReplica, type EntityTx, type RoutedEntityInput, type Runtime,
   type WireAccountTx,
 } from "../xln.ts";
 import { FUTURE_FRAME } from "./departures.ts";
+import { allAt, arrivesAt, runtimeOf, settle, step, type Clocks, type World } from "./two-runtimes.ts";
 
 const JUR = TERMS.domain;
 const ENTITY_KEYS = new Map([ALICE, BOB].map((id, i) => {
@@ -34,46 +35,17 @@ const credit = (to: EntityId, amount: bigint): EntityTx =>
   ({ type: "extendCredit", data: { counterpartyEntityId: to, tokenId: unwrap(tokenId("1")), amount } });
 const replicaOf = (rt: Runtime, id: EntityId): EntityReplica => rt.entities.get(replicaKey(id, SIGNERS.get(id)!))!;
 
-/**
- * Alice and Bob each run their own Runtime, and so their own clock (a Runtime's clock never runs behind itself): a
- * delivered input is stamped by the receiver's clock, not the sender's.
- */
-type World = { readonly runtimes: ReadonlyMap<EntityId, Runtime> };
-type Clocks = ReadonlyMap<EntityId, bigint>;
-const arrivesAt = (clocks: Clocks, input: RoutedEntityInput): RoutedEntityInput =>
-  input.input.kind === "txs" ? { ...input, input: { ...input.input, timestamp: clocks.get(input.entityId)! } } : input;
-type Stepped =
-  | { readonly ok: true; readonly world: World; readonly routed: readonly RoutedEntityInput[] }
-  | { readonly ok: false; readonly error: unknown };
-const withRuntime = (w: World, id: EntityId, rt: Runtime): World => ({ runtimes: new Map([...w.runtimes, [id, rt]]) });
-const step = (w: World, input: RoutedEntityInput): Stepped => {
-  const rt = w.runtimes.get(input.entityId)!;
-  const out = applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, context() as never);
-  if (!out.ok) return { ok: false, error: out.error };
-  const clock = input.input.kind === "txs" ? input.input.timestamp : NOW;
-  const routed = out.value.outbox.flatMap((o) =>
-    "input" in o && o.input.kind === "txs" && o.input.txs.length === 0 && o.to === input.entityId
-      ? []
-      : [unwrap(convertOutput("input" in o ? out.value.runtime : w.runtimes.get(o.to)!, o, input.entityId, clock))]);
-  return { ok: true, world: withRuntime(w, input.entityId, out.value.runtime), routed };
-};
-type Settled = { readonly world: World; readonly refused: readonly unknown[] };
-/** Frames run until no input is left; every delivery is stamped with the receiver's clock. The refusal that stopped it, if any. */
-const settle = (w: World, queue: readonly RoutedEntityInput[], clocks: Clocks): Settled => {
-  const [head, ...rest] = queue;
-  if (head === undefined) return { world: w, refused: [] };
-  const done = step(w, head);
-  return done.ok
-    ? settle(done.world, [...rest, ...done.routed.map((r) => arrivesAt(clocks, r))], clocks)
-    : { world: w, refused: [done.error] };
-};
-const at = (t: bigint): Clocks => new Map([[ALICE, t], [BOB, t]]);
+const at = (t: bigint): Clocks => allAt([ALICE, BOB], t);
 const network = (): World =>
   settle(
-    { runtimes: new Map([[ALICE, spawn(withTestJurisdiction(createRuntime()), entityOf(ALICE))], [BOB, spawn(withTestJurisdiction(createRuntime()), entityOf(BOB))]]) },
+    context,
+    {
+      runtimes: new Map([["a", spawn(withTestJurisdiction(createRuntime()), entityOf(ALICE))], ["b", spawn(withTestJurisdiction(createRuntime()), entityOf(BOB))]]),
+      home: new Map([[ALICE, "a"], [BOB, "b"]]),
+    },
     [inputOf(BOB, [open(ALICE)], NOW)], at(NOW),
   ).world;
-const replicaIn = (w: World, id: EntityId): EntityReplica => replicaOf(w.runtimes.get(id)!, id);
+const replicaIn = (w: World, id: EntityId): EntityReplica => replicaOf(runtimeOf(w, id), id);
 const headHeight = (w: World, id: EntityId, peer: EntityId): bigint =>
   (replicaIn(w, id).accountReplicas.get(peer) as unknown as { head: { height: bigint } }).head.height;
 const accountTag = (w: World, id: EntityId, peer: EntityId): string => replicaIn(w, id).accountReplicas.get(peer)!._tag;
@@ -82,9 +54,9 @@ const accountTag = (w: World, id: EntityId, peer: EntityId): string => replicaIn
 const aliceAhead = (aheadMs: bigint) => {
   const start = network();
   const clocks: Clocks = new Map([[ALICE, NOW + 1000n + aheadMs], [BOB, NOW + 1000n]]);
-  const proposed = step(start, inputOf(ALICE, [credit(BOB, 5n)], clocks.get(ALICE)!));
+  const proposed = step(context, start, inputOf(ALICE, [credit(BOB, 5n)], clocks.get(ALICE)!));
   if (!proposed.ok) throw new Error("Alice's own proposal was refused");
-  return { before: headHeight(start, ALICE, BOB), after: settle(proposed.world, proposed.routed.map((r) => arrivesAt(clocks, r)), clocks) };
+  return { before: headHeight(start, ALICE, BOB), after: settle(context, proposed.world, proposed.routed.map((r) => arrivesAt(clocks, r)), clocks) };
 };
 
 describe("clock authority: a frame is not refused for its date", () => {
