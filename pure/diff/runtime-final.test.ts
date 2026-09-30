@@ -16,7 +16,7 @@ import {
   accountId, accountRuntimeEvents, accountTxMessages, accountTerms, applyAccountBody, applyRuntime, applyRuntimeTx, committed, convertOutput, createEntity, createRuntime, lazyBoardEntityId, spawn, entityId as rwEntityId, entityRootOf, genesisAccount, genesisAccountBody, replicaKey,
   UNNAMED_PAIRS, type AccountBody, type Address, type EntityId, type EntityTx, type FoldCtx, type RoutedEntityInput, type ImportConfig, type JReplica, type Runtime, type RuntimeTx,
 } from "../xln.ts";
-import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, unwrap, verifiers, genesisAB, proposeInput, offerOf, ackInput, hankoVerify } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, unwrap, verifiers, genesisAB, proposeInput, offerOf, ackInput, hankoVerify, hosted } from "../xln_run.ts";
 import { admit, applyAccountInput, type AccountReplica, type AccountInput, type OpenAccount, type WireAccountTx } from "../xln.ts";
 import { runPostFrameAutoRebalanceCheck } from "../../core/account/consensus/helpers.ts";
 import { runtimeWake, entityEncryptionPublicKey, crontabOf, initCrontab, scheduleHook, withCrontab, ZERO_WORD, type Crontab, type EntityReplica, type ScheduledHook } from "../xln.ts";
@@ -263,7 +263,7 @@ describe(seedTag("runtime-final: RuntimeStep.events (og observability/env-events
       }
       const input = queue.shift() as RoutedEntityInput;
       const before = rt.entities.get(replicaKey(id, input.signerId))?.head.height ?? 0n;
-      const step = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, verifiers));
+      const step = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [input] }), verifiers));
       expect(step.rejected).toEqual([]);
       rt = step.runtime;
       const after = rt.entities.get(replicaKey(id, input.signerId))?.head.height ?? 0n;
@@ -585,7 +585,7 @@ describe(seedTag("runtime-final: the per-frame J prefix (og jurisdiction/machine
       const frames = new Map<string, EntityFrame>();
       for (let n = 0; queue.length > 0 && n < 80; n++) {
         const input = queue.shift() as RoutedEntityInput;
-        const step = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, verifiers));
+        const step = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [input] }), verifiers));
         for (const e of step.rejected) {
           const code = e._tag === "j_prefix" ? (e as { code: string }).code : e._tag;
           seenCodes.set(code, (seenCodes.get(code) ?? 0) + 1);
@@ -1002,10 +1002,10 @@ describe(seedTag("runtime-final: atomic cross-j Account pair admission (og entit
       { type: "accountInput", data: { kind: "ack_frame", fromEntityId: CAROL, toEntityId: to, ack: null, frame: { height: 1n, stateHash: "0x" + String(n).repeat(64), prevFrameHash: "0x" + "99".repeat(32), txs: [{ type: "cross_pull_close", pullId, binary: "0x", proof }] } } } as never,
       { type: "chat", data: { from: signer.toLowerCase(), message: `m${n}` } } as never] } });
     const pair = [leg(ALICE, aliceAddr, "sp-o1", 1), leg(BOB, bobAddr, "tp-o1", 2)];
-    const step = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: pair }, verifiers));
+    const step = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: pair }), verifiers));
     expect(step.rejected.map((e) => rwCode({ ok: false, error: e }))).toEqual(["CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED", "CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED"]);
     expect(step.applied.entityInputs.map((i) => [i.entityId, i.input.kind === "txs" ? i.input.txs.map((tx) => tx.type) : [], i.atomicCrossJurisdictionPair ?? null])).toEqual([[ALICE, ["chat"], null], [BOB, ["chat"], null]]);
-    expect(rwCode(applyRuntime(rt, { runtimeTxs: [], entityInputs: pair }, { ...verifiers, replay: true }))).toBe("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED");
+    expect(rwCode(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: pair }), { ...verifiers, replay: true }))).toBe("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED");
     // og prepareEntityInputIngress: a leg over the Entity mempool limit is a `rejected` outcome (ENTITY_MEMPOOL_ADMISSION_REJECTED), not a thrown
     // ingress error, so a remote or local pair is NOT_COMMITTED (never PROTOCOL_REJECTED)
     const bobKey = [...rt.entities.keys()].find((k) => rt.entities.get(k)!.state.id === BOB)!, bobR = rt.entities.get(bobKey)!;
@@ -1014,17 +1014,17 @@ describe(seedTag("runtime-final: atomic cross-j Account pair admission (og entit
     const full = { ...rt, entities: new Map([...rt.entities, [bobKey, { ...bobR, mempool: fullMempool }]]) } as typeof rt;
     const remotePair = pair.map((l) => ({ ...l, from: "runtime-carol" }));
     for (const legs of [pair, remotePair]) {
-      const fullStep = unwrap(applyRuntime(full, { runtimeTxs: [], entityInputs: legs }, verifiers));
+      const fullStep = unwrap(applyRuntime(full, hosted({ runtimeTxs: [], entityInputs: legs }), verifiers));
       expect(fullStep.rejected.map((e) => rwCode({ ok: false, error: e }))).toContain("CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED");
     }
     // a lone leg is no cohort: its Account leg is stripped before Account consensus (og CROSS_J_ACCOUNT_PAIR_STRUCTURAL_MISMATCH), a replay refuses the frame
-    const lone = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [pair[0] as RoutedEntityInput] }, verifiers));
+    const lone = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [pair[0] as RoutedEntityInput] }), verifiers));
     expect(lone.applied.entityInputs.map((i) => [i.entityId, i.input.kind === "txs" ? i.input.txs.map((tx) => tx.type) : []])).toEqual([[ALICE, ["chat"]]]);
-    expect(rwCode(applyRuntime(rt, { runtimeTxs: [], entityInputs: [pair[0] as RoutedEntityInput] }, { ...verifiers, replay: true }))).toBe("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_INVALID");
+    expect(rwCode(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [pair[0] as RoutedEntityInput] }), { ...verifiers, replay: true }))).toBe("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_INVALID");
     // og entityInputMergeKey: a marked leg needs its transport frame
     const marked = { ...(pair[0] as RoutedEntityInput), atomicCrossJurisdictionPair: { phase: "proposal" as const, pairKey: "k" } };
     expect(() => ogMergeEntityInputs([{ entityId: ALICE, signerId: aliceAddr, entityTxs: [], atomicCrossJurisdictionPair: marked.atomicCrossJurisdictionPair }] as never)).toThrow("ENTITY_INPUT_ATOMIC_CROSS_J_SOURCE_FRAME_MISSING");
-    expect(rwCode(applyRuntime(rt, { runtimeTxs: [], entityInputs: [marked] }, verifiers))).toBe("ENTITY_INPUT_ATOMIC_CROSS_J_SOURCE_FRAME_MISSING");
+    expect(rwCode(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [marked] }), verifiers))).toBe("ENTITY_INPUT_ATOMIC_CROSS_J_SOURCE_FRAME_MISSING");
   });
   test("MATCH (randomized): 400 committed pairs and Runtime outboxes -- og markCommittedAtomicCrossJAckOutputs (exactly one distinct ACK output per leg gets the ACK marker)", () => {
     seed = seedOf(149);
@@ -1307,7 +1307,7 @@ describe(seedTag("runtime-final: outbox rows on og's RoutedEntityInput wire (og 
     const solo = (id: EntityId, signer: string) => unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[signer as Address, { shares: 1n }]]), signerId: signer as Address, jurisdictionConfig: UNREGISTERED_J }));
     const ab = spawn(spawn(createRuntime(), solo(ALICE, aliceAddr)), solo(BOB, bobAddr));
     const open: EntityTx = { type: "openAccount", data: { targetEntityId: BOB, accountDomain: { ...TERMS.domain }, watchSeed: TERMS.watchSeed, disputeConfig: { ...TERMS.disputeConfig } } } as EntityTx;
-    const step = unwrap(applyRuntime(ab, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW, txs: [open] } }] }, verifiers));
+    const step = unwrap(applyRuntime(ab, hosted({ runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW, txs: [open] } }] }), verifiers));
     const accountOut = step.outbox.filter((o) => !("input" in o));
     expect(accountOut.length).toBe(1);
     await expectRows(step.runtime, step.outbox, () => (step.runtime.entities.values().next().value as EntityReplica).state, (to) => (to === BOB ? bobAddr.toLowerCase() : ""));

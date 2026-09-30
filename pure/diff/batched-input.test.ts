@@ -4,7 +4,7 @@
 // messages and two inputs carrying one each leave the same Runtime and send the same outputs.
 import { describe, expect, test } from "bun:test";
 import { x25519 } from "@noble/curves/ed25519";
-import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, carolAddr, unwrap, verifiers, withTestJurisdiction } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, carolAddr, unwrap, verifiers, withTestJurisdiction, hosted } from "../xln_run.ts";
 import {
   applyRuntime, canonicalEntityHashes, convertOutput, createEntity, createRuntime, spawn, stableJson, tokenId,
   type Address, type EntityId, type EntityTx, type RoutedEntityInput, type Runtime,
@@ -33,7 +33,7 @@ const credit = (to: EntityId, amount: bigint): EntityTx =>
 /** One Runtime frame: the new runtime and the inputs its outbox routes. */
 type Step = { readonly runtime: Runtime; readonly routed: readonly RoutedEntityInput[] };
 const step = (rt: Runtime, input: RoutedEntityInput): Step => {
-  const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, context() as never));
+  const out = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [input] }), context() as never));
   const clock = input.input.kind === "txs" ? input.input.timestamp : NOW;
   const routed = out.outbox.flatMap((o) =>
     "input" in o && o.input.kind === "txs" && o.input.txs.length === 0 && o.to === input.entityId ? [] : [unwrap(convertOutput(out.runtime, o, input.entityId, clock))]);
@@ -69,10 +69,10 @@ describe("input boundaries: one input with two Account messages is two inputs wi
     const p = proposals();
     expect(p.first.length).toBe(1);
     expect(p.second.length).toBe(1);
-    const separate = unwrap(applyRuntime(p.runtime, { runtimeTxs: [], entityInputs: [p.first[0]!, p.second[0]!] }, context() as never));
-    const batched = unwrap(applyRuntime(p.runtime, { runtimeTxs: [], entityInputs: [merged(p.first[0]!, p.second[0]!)] }, context() as never));
+    const separate = unwrap(applyRuntime(p.runtime, hosted({ runtimeTxs: [], entityInputs: [p.first[0]!, p.second[0]!] }), context() as never));
+    const batched = unwrap(applyRuntime(p.runtime, hosted({ runtimeTxs: [], entityInputs: [merged(p.first[0]!, p.second[0]!)] }), context() as never));
     // Bob did fold both messages: his Runtime moved, and folding one alone leaves another Runtime
-    const alone = unwrap(applyRuntime(p.runtime, { runtimeTxs: [], entityInputs: [p.first[0]!] }, context() as never));
+    const alone = unwrap(applyRuntime(p.runtime, hosted({ runtimeTxs: [], entityInputs: [p.first[0]!] }), context() as never));
     expect(hashesOf(batched.runtime)).not.toBe(hashesOf(p.runtime));
     expect(hashesOf(batched.runtime)).not.toBe(hashesOf(alone.runtime));
     expect(hashesOf(batched.runtime)).toBe(hashesOf(separate.runtime));

@@ -10,7 +10,7 @@ import { PersistentAccountStateMap } from "../../core/account/state/persistent-s
 import { resolveObserverCertifiedAccountCounterpartyProposer as ogCertifiedProposer } from "../../core/entity/account/account-counterparty-route.ts";
 import { decodeBuffer as ogDecodeBuffer } from "../../core/storage/codec/codec.ts";
 import { applyRuntime, convertOutput, createRuntime, lazyBoardEntityId, runtimeOutputRows, type EntityOutput, type EntityTx, type Runtime, type RoutedEntityInput, type RuntimeTx } from "../xln.ts";
-import { TERMS, aliceAddr, bobAddr, verifiers } from "../xln_run.ts";
+import { TERMS, aliceAddr, bobAddr, verifiers, hosted } from "../xln_run.ts";
 import { SECRET_AT_FRAME_CLOCK } from "./departures.ts";
 import { createAccountConsensusContext as ogConsensusContext } from "../../core/entity/account/account-consensus-context.ts";
 import { applyCertifiedBoardRegistryEvent as ogApplyBoardEvent } from "../../core/jurisdiction/machine/board-registry/index.ts";
@@ -296,12 +296,12 @@ describe(seedTag("final-sweep: RF-18 outbox signer (og resolveEntityOutputSigner
     const A = unwrapR(lazyBoardEntityId(cfg(aliceAddr))) as string, B = unwrapR(lazyBoardEntityId(cfg(bobAddr))) as string;
     const imp = (id: string, signer: string): RuntimeTx => ({ type: "importReplica", entityId: id, signerId: signer, data: { config: cfg(signer), isProposer: true, entitySeed: "0x" + "5e".repeat(64) } });
     let now = 1_700_000_000_000n;
-    let rt: Runtime = unwrapR(applyRuntime(createRuntime([J]), { runtimeTxs: [imp(A, aliceAddr), imp(B, bobAddr)], entityInputs: [], timestamp: now }, verifiers) as never as { ok: true; value: { runtime: Runtime } }).runtime;
+    let rt: Runtime = unwrapR(applyRuntime(createRuntime([J]), hosted({ runtimeTxs: [imp(A, aliceAddr), imp(B, bobAddr)], entityInputs: [], timestamp: now }), verifiers) as never as { ok: true; value: { runtime: Runtime } }).runtime;
     const sent: EntityOutput[] = [];
     let inputs: RoutedEntityInput[] = [{ entityId: A as never, signerId: aliceAddr, input: { kind: "txs", timestamp: now, txs: [{ type: "openAccount", data: { targetEntityId: B, accountDomain: { ...TERMS.domain }, watchSeed: TERMS.watchSeed, disputeConfig: { ...TERMS.disputeConfig } } } as EntityTx] } }];
     for (let round = 0; inputs.length > 0 && round < 20; round++) {
       now += 1n;
-      const step = unwrapR(applyRuntime(rt, { runtimeTxs: [], entityInputs: inputs.map((i) => (i.input.kind === "txs" ? { ...i, input: { ...i.input, timestamp: now } } : i)) }, verifiers)) as { runtime: Runtime; outbox: readonly EntityOutput[] };
+      const step = unwrapR(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: inputs.map((i) => (i.input.kind === "txs" ? { ...i, input: { ...i.input, timestamp: now } } : i)) }), verifiers)) as { runtime: Runtime; outbox: readonly EntityOutput[] };
       rt = step.runtime;
       sent.push(...step.outbox);
       inputs = step.outbox.map((o) => unwrapR(convertOutput(rt, o, ("tx" in o ? (o.tx.data as { fromEntityId: string }).fromEntityId : o.to) as never, now) as never));
@@ -387,9 +387,9 @@ describe(seedTag("final-sweep: RF-18 retained network outbox (og applyRecoveryRu
     const A = unwrapR(lazyBoardEntityId(cfg(aliceAddr))) as string, B = unwrapR(lazyBoardEntityId(cfg(bobAddr))) as string, C = unwrapR(lazyBoardEntityId(cfg(carolAddr))) as string;
     const imp = (id: string, signer: string): RuntimeTx => ({ type: "importReplica", entityId: id, signerId: signer, data: { config: cfg(signer), isProposer: true, entitySeed: "0x" + "5e".repeat(64) } });
     const now = 1_700_000_000_000n;
-    let rt: Runtime = unwrapR(applyRuntime(createRuntime([J], SELF), { runtimeTxs: [imp(A, aliceAddr), imp(B, bobAddr), imp(C, carolAddr)], entityInputs: [], timestamp: now }, verifiers) as never as { ok: true; value: { runtime: Runtime } }).runtime;
+    let rt: Runtime = unwrapR(applyRuntime(createRuntime([J], SELF), hosted({ runtimeTxs: [imp(A, aliceAddr), imp(B, bobAddr), imp(C, carolAddr)], entityInputs: [], timestamp: now }), verifiers) as never as { ok: true; value: { runtime: Runtime } }).runtime;
     const open: RoutedEntityInput = { entityId: A as never, signerId: aliceAddr, input: { kind: "txs", timestamp: now + 1n, txs: [{ type: "openAccount", data: { targetEntityId: B, accountDomain: { ...TERMS.domain }, watchSeed: TERMS.watchSeed, disputeConfig: { ...TERMS.disputeConfig } } } as EntityTx] } };
-    rt = (unwrapR(applyRuntime(rt, { runtimeTxs: [], entityInputs: [open] }, verifiers)) as { runtime: Runtime }).runtime;
+    rt = (unwrapR(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [open] }), verifiers)) as { runtime: Runtime }).runtime;
     const alice = [...rt.entities.values()].find((r) => r.state.id === A)!, account = alice.accountReplicas.get(B as never)!;
     expect(account._tag).toBe("proposed");
     const pendingFrame = (account as Extract<typeof account, { _tag: "proposed" }>).candidate.frame;

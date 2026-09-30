@@ -9,7 +9,7 @@
 // Entity state, with the hub's clock set behind.
 import { describe, expect, test } from "bun:test";
 import { x25519 } from "@noble/curves/ed25519";
-import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, carolAddr, unwrap, verifiers, withTestJurisdiction } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, carolAddr, unwrap, verifiers, withTestJurisdiction, hosted } from "../xln_run.ts";
 import {
   HTLC_ENFORCEMENT_RESERVE_MS, HTLC_MIN_FORWARD_TIMELOCK_MS, HTLC_TIMELOCK_DELTA_MS, MAX_LOCK_HORIZON_BLOCKS,
   MAX_LOCK_HORIZON_MS, applyAccountBody, applyRuntime, convertOutput, createEntity,
@@ -38,7 +38,7 @@ const open = (to: EntityId, creditAmount?: bigint): EntityTx => ({
 const credit = (to: EntityId, amount: bigint): EntityTx =>
   ({ type: "extendCredit", data: { counterpartyEntityId: to, tokenId: unwrap(tokenId("1")), amount } });
 const step = (rt: Runtime, input: RoutedEntityInput) => {
-  const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, context() as never));
+  const out = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [input] }), context() as never));
   const clock = input.input.kind === "txs" ? input.input.timestamp : NOW;
   const routed = out.outbox.flatMap((o) =>
     "input" in o && o.input.kind === "txs" && o.input.txs.length === 0 && o.to === input.entityId ? [] : [unwrap(convertOutput(out.runtime, o, input.entityId, clock))]);

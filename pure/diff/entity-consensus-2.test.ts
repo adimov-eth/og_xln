@@ -11,7 +11,7 @@ import {
   applyRuntime, convertOutput, createRuntime, isLeft, replicaId, replicaKey, spawn, wireTx, type Runtime, type RoutedEntityInput,
   type Address, type EntityFrame, type EntityFrameHash, type EntityInput, type EntityOutput, type EntityReplica, type EntityState, type EntityTx, type LeaderCertificate, type LeaderState, type LeaderVote,
 } from "../xln.ts";
-import { ALICE, BOB, CAROL, NOW, TERMS, ackInput, aliceAddr, bobAddr, carolAddr, crypto, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, ackInput, aliceAddr, bobAddr, carolAddr, crypto, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, unwrap, verifiers, hosted } from "../xln_run.ts";
 import { handleBoardHankoRefresh } from "../../core/account/consensus/incoming/board-hanko-refresh.ts";
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
 import { handleDirectPaymentEntityTx } from "../../core/entity/tx/handlers/payments/direct-payment.ts";
@@ -374,7 +374,7 @@ describe(seedTag("entity-consensus-2: trusted gateway payments (ER-15)"), () => 
     for (let n = 0; queue.length > 0; n++) {
       if (n > 200) throw new Error("no quiescence");
       const input = queue.shift() as RoutedEntityInput;
-      const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, verifiers));
+      const out = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [input] }), verifiers));
       if (out.rejected.length > 0) throw new Error(JSON.stringify(out.rejected, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
       rt = out.runtime;
       clock += 1n;
@@ -396,10 +396,10 @@ describe(seedTag("entity-consensus-2: trusted gateway payments (ER-15)"), () => 
       ({ type: "directPayment", data: { targetEntityId: CAROL, tokenId: unwrap(tokenId("1")), amount: 10n, route, deliveryMode, ...(gateway === undefined ? {} : { trustedGatewayEntityId: gateway }) } });
     // og TRUSTED_PAYMENT_GATEWAY_INVALID: the declared gateway must be route[1] of an exact 3-hop route
     for (const bad of [pay([ALICE, BOB, CAROL], CAROL), pay([ALICE, BOB, CAROL]), pay([ALICE, CAROL], BOB), pay([ALICE, BOB, CAROL], BOB, "direct")]) {
-      expect(unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [create(ALICE, [bad], NOW + 200n)] }, verifiers)).rejected.length).toBe(1);
+      expect(unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [create(ALICE, [bad], NOW + 200n)] }), verifiers)).rejected.length).toBe(1);
     }
     // the first leg Alice proposes is og's buildNextHopPayment account tx, byte for byte on the wire
-    const first = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [create(ALICE, [pay([ALICE, BOB, CAROL], BOB)], NOW + 300n)] }, verifiers)).outbox.find((o) => "tx" in o && o.tx.data.kind === "ack_frame");
+    const first = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [create(ALICE, [pay([ALICE, BOB, CAROL], BOB)], NOW + 300n)] }), verifiers)).outbox.find((o) => "tx" in o && o.tx.data.kind === "ack_frame");
     if (first === undefined || !("tx" in first) || first.tx.data.kind !== "ack_frame") throw new Error("no first leg");
     const aliceAccount = rt.entities.get(replicaKey(ALICE, A))?.accountReplicas.get(BOB) as AccountReplica;
     const wire = unwrap(wireTx(first.tx.data.frame.txs[0] as never, replicaId(aliceAccount), isLeft(ALICE, replicaId(aliceAccount))));

@@ -41128,6 +41128,11 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
   chain(validateRuntimeInput(rt, input), (jOutbox) => {
     const forged = forgedIngress(input, ctx);
     if (forged !== undefined) return frameErr(forged);
+    // R-CLOCK: a peer's input seeds no clock, so a frame of peer inputs alone runs at the Runtime's last clock unless
+    // the Host gives it one. That stale clock would refuse a due cancel or timeout, so such a frame is not run without it.
+    if (input.timestamp === undefined && input.entityInputs.some((i) => i.from !== undefined)) {
+      return frameErr("RUNTIME_PEER_INPUT_WITHOUT_HOST_CLOCK");
+    }
     const timestamp = frameTimestamp(rt, input);
     return chain(applyRuntimeTxs(rt, input, timestamp, ctx), ({ runtime: afterTxs, jOutputs: txJOutputs }) => {
       // Transported cross-j cohorts are isolated before the merge, then admitted as exact pairs before any Entity input

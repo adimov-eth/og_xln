@@ -17,7 +17,7 @@ import {
   commitRuntimeFrame, entityId, hashEntityFrame, hashEntityState, isSingleSigner, quorumBoardHash, leaderOrder, recoverRuntime, replicaKey, spawn, signature, tokenId, ZERO_WORD,
   EMPTY_PAYBOOK, type Address, type EntityCommitted, type EntityFrame, type EntityId, type EntityInput, type EntityOutput, type EntityReplica, type EntityState, type EntityTx, type Precommits, type Signature,
 } from "../xln.ts";
-import { ALICE, ANVIL_KEYS, BOB, CAROL, MORE_ANVIL_KEYS, NOW, TERMS, TOKEN, ackInput, aliceAddr, genesisAB, bobAddr, carolAddr, proposeInput, signEntityFrame, signManifestAs, signerAddress, unwrap, unwrapErr, verifiers } from "../xln_run.ts";
+import { ALICE, ANVIL_KEYS, BOB, CAROL, MORE_ANVIL_KEYS, NOW, TERMS, TOKEN, ackInput, aliceAddr, genesisAB, bobAddr, carolAddr, proposeInput, signEntityFrame, signManifestAs, signerAddress, unwrap, unwrapErr, verifiers, hosted } from "../xln_run.ts";
 import { consensusBytes, ogAfterCommands, ogApplyCommand, ogAuthored, ogAuthorVerdict, ogCommandState, ogFenceAfter, wired } from "./og-author.ts";
 import { ogGenesisProfile, ogOf, withOg } from "./og-state.ts";
 
@@ -459,7 +459,7 @@ describe(seedTag("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)"), 
     const alice = unwrap(createEntity({ id: ALICE, jurisdiction: JUR, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: UNREGISTERED_J }));
     const bob = unwrap(createEntity({ id: BOB, jurisdiction: JUR, threshold: 1n, members: new Map([[bobAddr, { shares: 1n }]]), jurisdictionConfig: UNREGISTERED_J }));
     let rt = spawn(spawn(createRuntime(), alice), bob);
-    const run = (entityInputs: Parameters<typeof applyRuntime>[1]["entityInputs"]) => { const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs }, verifiers)); expect(out.rejected).toEqual([]); rt = out.runtime; return out.outbox; };
+    const run = (entityInputs: Parameters<typeof applyRuntime>[1]["entityInputs"]) => { const out = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs }), verifiers)); expect(out.rejected).toEqual([]); rt = out.runtime; return out.outbox; };
     // og proposePendingAccountFrames: the openAccount frame itself proposes the first Account frame, Hanko'd through the manifest
     const outbox = run([{ entityId: ALICE, signerId: aliceAddr, input: txs([open], NOW) }]);
     expect(outbox.map((o) => ("tx" in o ? o.tx.data.kind : "consensus"))).toEqual(["ack_frame"]);
@@ -477,7 +477,7 @@ describe(seedTag("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)"), 
     const opened = accountWork(unwrap(propose(e1, A, [openTo(CAROL), open])).replica, A).replica;
     const pay = (to: EntityId): EntityTx => ({ type: "extendCredit", data: { counterpartyEntityId: to, tokenId: unwrap(tokenId("1")), amount: 1n } });
     const rt = spawn(createRuntime(), opened);
-    const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([pay(CAROL), pay(BOB)], 3n) }] }, verifiers));
+    const out = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([pay(CAROL), pay(BOB)], 3n) }] }), verifiers));
     expect(out.rejected).toEqual([]);
     expect(out.outbox.length).toBe(2);
     expect(out.outbox.every((o) => "input" in o && o.signerId === A)).toBe(true);
@@ -490,9 +490,9 @@ describe(seedTag("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)"), 
     // it (OPEN_ACCOUNT_ALREADY_EXISTS), a local bug by og's failure taxonomy, so the Runtime halts and nothing commits.
     // Two local lanes merge into one input; a lane from another origin stays apart but only fills the same mempool.
     const halted = { _tag: "runtime_frame" as const, code: `OPEN_ACCOUNT_ALREADY_EXISTS: entity=${ALICE} counterparty=${BOB.toLowerCase()}` };
-    const merged = applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([open, open]) }, { entityId: ALICE, signerId: A, input: txs([open]) }] }, verifiers);
+    const merged = applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([open, open]) }, { entityId: ALICE, signerId: A, input: txs([open]) }] }), verifiers);
     expect(unwrapErr(merged)).toEqual(halted);
-    const out = applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([open, open]) }, { entityId: ALICE, signerId: A, from: "0x" + "77".repeat(20), input: txs([open]) }] }, verifiers);
+    const out = applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([open, open]) }, { entityId: ALICE, signerId: A, from: "0x" + "77".repeat(20), input: txs([open]) }] }), verifiers);
     expect(unwrapErr(out)).toEqual(halted);
   });
   test("signEntityFrame still signs the entity frame hash (manifest head)", () => {

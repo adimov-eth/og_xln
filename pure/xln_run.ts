@@ -10,7 +10,7 @@ import {
 import type {
   AccountEnvelope, AccountFrame, AccountGrammar, AccountId, AccountInput, AccountInputFor, AccountMessage, AccountOutput, AccountPhase, AccountReplica, AccountReplicaError, AccountTerms, Address, At, Board, DisputeHanko,
   DisputePlan, EntityFrame, EntityGrammar, EntityId, EntityPhase, EntityReplica, FrameClock, Hanko, HankoClaimInput, Hash, OpenAccount, Party, ProposedAccount, RawSig, Result, Signature, Verify, WireAccountTx,
-  DeltaTransformerRef, EntityState, EntityTx, JReplica, Runtime,
+  DeltaTransformerRef, EntityState, EntityTx, JReplica, Runtime, RuntimeInput,
 } from "./xln.ts";
 
 
@@ -185,3 +185,13 @@ export const consumerExample = (): { readonly ok: true; readonly offdelta: strin
   return { ok: true, offdelta: row.offdelta.toString(), collateral: row.collateral.toString(), ondelta: row.ondelta.toString() };
 };
 if (import.meta.main) { const out = consumerExample(); console.log(JSON.stringify(out)); if (!out.ok) process.exit(1); }
+
+/**
+ * The frame a test Host hands its Runtime: a Runtime frame with a peer input needs the Host's clock (R-CLOCK), so the
+ * frame runs at the latest stamp its `txs` inputs carry, which is what the test's Host stamped them with.
+ */
+export const hosted = (input: RuntimeInput): RuntimeInput => {
+  const stamps = input.entityInputs.flatMap((i) => (i.input.kind === "txs" ? [i.input.timestamp] : []));
+  const latest = stamps.reduce((a, b) => (b > a ? b : a), -1n);
+  return input.timestamp !== undefined || stamps.length === 0 ? input : { ...input, timestamp: latest };
+};

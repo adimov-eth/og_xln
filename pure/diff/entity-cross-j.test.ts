@@ -170,7 +170,7 @@ import { handleHtlcPayment } from "../../core/entity/tx/handlers/htlc/payment.ts
 import { createBookIntentProgram, applyBookIntentProgram } from "../../core/entity/books/book-intents.ts";
 import { validateHtlcPreparedInfraContext } from "../../core/entity/paybook/prepared-context-validation.ts";
 import { entityCollectionCommitment as ogCollection } from "../../core/entity/state/persistent-collection-map.ts";
-import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, carolAddr, unwrap, verifiers, withTestJurisdiction } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, carolAddr, unwrap, verifiers, withTestJurisdiction, hosted } from "../xln_run.ts";
 import {
   applyRuntime, assertOriginated, convertOutput, createEntity, createRuntime, entityCollectionCommitment, holds, htlcPaymentTxHash, isLeft, materializeOriginated, preparedOriginOf, replicaId, replicaKey, spawn, tokenId,
   validatePreparedHtlcPayment, wireTx, type AccountReplica, type Address, type Binary, type EntityId, type EntityReplica, type EntityTx, type HtlcFrameInfra, type PreparedOriginated, type RoutedEntityInput, type Runtime,
@@ -192,7 +192,7 @@ const quiet = (start: Runtime, first: RoutedEntityInput[], ctx: object = verifie
   for (let n = 0; queue.length > 0; n++) {
     if (n > 200) throw new Error("no quiescence");
     const input = queue.shift() as RoutedEntityInput;
-    const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, withKeys(ctx)));
+    const out = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [input] }), withKeys(ctx)));
     if (out.rejected.length > 0) throw new Error(JSON.stringify(out.rejected, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
     rt = out.runtime; clock += 1n;
     for (const o of out.outbox) {
@@ -299,7 +299,7 @@ describe(seedTag("entity-cross-j: Entity htlcPayment origination (og payment-adm
     const tx = withDeterministicHtlcTestSecret({ type: "htlcPayment", data: { targetEntityId: CAROL, tokenId: 1, amount: 100n, maxSenderDebit: 200n, route: [ALICE, BOB, CAROL], deliveryMode: "instant", description: "invoice 7" } } as never, secret) as unknown as EntityTx;
     const txHash = ogAdmission.hashRawHtlcPaymentTx(tx as never);
     const ctx = { ...verifiers, htlcInfra: (id: EntityId) => (id === ALICE ? { profiles, secretFor: (h: string) => (h === txHash ? secret : undefined), online: () => true } : undefined) };
-    const step = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], BigInt(ts))] }, withKeys(ctx)));
+    const step = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], BigInt(ts))] }), withKeys(ctx)));
     expect(step.rejected.length).toBe(0);
     const after = replicaOf(step.runtime, ALICE);
     const og = await ogAdmission.materializeOriginatedHtlcPayments({ state: ogStateOf(alice, ts) as never, proposalTxs: [tx as never], profiles: profiles as never, height: 1, resolveRoute: async () => [] });
@@ -316,7 +316,7 @@ describe(seedTag("entity-cross-j: Entity htlcPayment origination (og payment-adm
     // the committed Entity frame carries exactly og's prepared origin; replaying the same input reproduces the same outbox
     const committed = [...step.runtime.entities.values()].length;
     expect(committed).toBe(3);
-    const replayed = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], BigInt(ts))] }, withKeys(ctx)));
+    const replayed = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], BigInt(ts))] }), withKeys(ctx)));
     expect(stableJson(replayed.outbox)).toBe(stableJson(step.outbox));
   });
 });
@@ -387,7 +387,7 @@ describe(seedTag("entity-cross-j: inbound HTLC MATCH vs og (materialize-context.
     const tx = withDeterministicHtlcTestSecret({ type: "htlcPayment", data: { targetEntityId: CAROL, tokenId: 1, amount: 100n, maxSenderDebit: 200n, route: [ALICE, BOB, CAROL], deliveryMode: "instant" } }, secret) as unknown as EntityTx;
     const txHash = ogAdmission.hashRawHtlcPaymentTx(tx as never);
     const ctx = { ...verifiers, htlcInfra: (id: EntityId) => (id === ALICE ? { profiles: profiles(), secretFor: (h: string) => (h === txHash ? secret : undefined), online: () => true } : undefined) };
-    const base = network(), step = unwrap(applyRuntime(base, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], NOW + 1000n)] }, withKeys(ctx)));
+    const base = network(), step = unwrap(applyRuntime(base, hosted({ runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], NOW + 1000n)] }), withKeys(ctx)));
     const out = step.outbox.find((o) => "tx" in o && o.to === BOB && o.tx.data.kind === "ack_frame") as { tx: { data: any } };
     const msg = out.tx.data, bob = replicaOf(step.runtime, BOB), lock0 = msg.frame.txs.find((t: any) => t.type === "htlc_lock");
     expect(lock0?.envelope).toBeDefined();

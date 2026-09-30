@@ -7,7 +7,7 @@ import { buildNetworkGraph as ogBuildGraph } from "../../core/pathfinding/graph.
 import { PathFinder } from "../../core/pathfinding/pathfinding.ts";
 import * as ogAdmission from "../../core/entity/paybook/payment-admission.ts";
 import { withDeterministicHtlcTestSecret } from "../../core/protocol/htlc/test-secret-capability.ts";
-import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, carolAddr, unwrap, verifiers, withTestJurisdiction } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, UNREGISTERED_J, aliceAddr, bobAddr, carolAddr, unwrap, verifiers, withTestJurisdiction, hosted } from "../xln_run.ts";
 import {
   applyRuntime, convertOutput, createEntity, createRuntime, findPaths, isLeft, materializeOriginated, replicaId, replicaKey, spawn, stableJson, tokenId,
   type Address, type Binary, type EntityId, type EntityReplica, type EntityTx, type RoutedEntityInput, type Runtime,
@@ -87,7 +87,7 @@ const quiet = (start: Runtime, first: RoutedEntityInput[], ctx: object = verifie
   for (let n = 0; queue.length > 0; n++) {
     if (n > 200) throw new Error("no quiescence");
     const input = queue.shift() as RoutedEntityInput;
-    const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, withKeys(ctx)));
+    const out = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [input] }), withKeys(ctx)));
     if (out.rejected.length > 0) throw new Error(JSON.stringify(out.rejected, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
     rt = out.runtime; clock += 1n;
     for (const o of out.outbox) {
@@ -425,7 +425,7 @@ describe(seedTag("entity-lane: certified Entity -> Entity lane (og consensus/out
       sourceSignerId: aliceAddr.toLowerCase(), sourceHubSignerId: bobAddr.toLowerCase(), targetHubSignerId: signerOf(H2), targetSignerId: signerOf(U2),
     };
     const ctx = { ...verifiers, runtimeSeed: RUNTIME_SEED, htlcInfra: (id: EntityId) => ({ profiles: [], encryptionPrivateKey: ENTITY_KEYS.get(id)?.priv }) } as typeof verifiers;
-    const apply = (inputs: RoutedEntityInput[]) => { const s = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: inputs }, ctx)); expect(s.rejected).toEqual([]); return s; };
+    const apply = (inputs: RoutedEntityInput[]) => { const s = unwrap(applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: inputs }), ctx)); expect(s.rejected).toEqual([]); return s; };
 
     // 1. ALICE authorizes as the source user. The committed command targets BOB's replica of this Runtime, so og drains it in the same Runtime
     //    frame (drainImmediateCrossJurisdictionOutputs): nothing leaves in the outbox, BOB stores the raw intent and wakes its default proposer.
@@ -477,7 +477,7 @@ describe(seedTag("entity-lane: certified Entity -> Entity lane (og consensus/out
     expect(ogHalt.ok).toBe(false);
     let ogMessage = "";
     try { selectCrossJOpeningAccountProposalTxs({ state: { eReplicas: new Map() } } as never, ogBob2 as never, account as never); } catch (e) { ogMessage = (e as Error).message; }
-    const refused = applyRuntime(rt, { runtimeTxs: [], entityInputs: [routeOf(wake)] }, ctx);
+    const refused = applyRuntime(rt, hosted({ runtimeTxs: [], entityInputs: [routeOf(wake)] }), ctx);
     expect(refused.ok).toBe(false);
     const code = refused.ok ? "" : String((refused.error as { code?: string }).code);
     // og drainImmediateCrossJurisdictionOutputs wraps only a non-committed outcome; a thrown halt leaves

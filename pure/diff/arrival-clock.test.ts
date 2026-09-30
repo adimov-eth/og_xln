@@ -34,10 +34,15 @@ describe("the Runtime takes no clock from an input that arrived from a peer", ()
     expect(wire.from).toBe(BOB);
   });
 
-  test("delivered as it is, it leaves the receiver's Runtime and Entity clocks where they were", () => {
-    const after = frame([hostileArrival()]);
-    expect(after.clock).toBe(before());
-    expect(after.entityClock).toBeLessThan(T + DAY);
+  test("a frame of peer inputs alone is not run without the Host's clock: it would run at a stale one", () => {
+    const out = applyRuntime(runtimeOf(network(), ALICE), { runtimeTxs: [], entityInputs: [hostileArrival()] }, context() as never);
+    expect(out.ok).toBe(false);
+    expect(out.ok ? "" : (out.error as { code?: string }).code).toBe("RUNTIME_PEER_INPUT_WITHOUT_HOST_CLOCK");
+  });
+
+  test("mixed with a local input, a peer input still leaves the clock at what the local input seeded", () => {
+    const local = inputOf(ALICE, [credit(BOB, 5n)], T);
+    expect(frame([local, hostileArrival()], T).clock).toBe(T);
   });
 
   test("the Host's own clock on the frame is what advances it, whatever the input carries", () => {
@@ -50,5 +55,14 @@ describe("the Runtime takes no clock from an input that arrived from a peer", ()
     const local = inputOf(ALICE, [credit(BOB, 5n)], T);
     expect(local.from).toBeUndefined();
     expect(frame([local]).clock).toBe(T);
+  });
+  test("a Host clock behind the Runtime's own never runs it backwards", () => {
+    const behind = before() - 1000n;
+    expect(frame([hostileArrival()], behind).clock).toBe(before());
+  });
+
+  test("with a Host clock on the frame a local input's stamp seeds nothing: the input's own clock wins (og)", () => {
+    const local = inputOf(ALICE, [credit(BOB, 5n)], T + DAY);
+    expect(frame([local], T).clock).toBe(T);
   });
 });
