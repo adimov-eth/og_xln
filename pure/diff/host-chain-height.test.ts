@@ -44,12 +44,12 @@ const lock = (revealBeforeHeight: bigint): WireAccountTx => ({
   type: "htlc_lock", lockId: HASHLOCK, hashlock: HASHLOCK, timelock: NOW + 120_000n, revealBeforeHeight, amount: 5n, tokenId: TOKEN,
 });
 /** Bob's Host, having observed the chain at `observed` (in the given order), receives Alice's frame carrying the lock. */
-const delivered = (observed: readonly number[], frameHeight: bigint, revealBeforeHeight: bigint) => {
+const delivered = (observed: readonly number[], frameHeight: bigint, revealBeforeHeight: bigint, callerHeight = 0n) => {
   const { alice, bob } = funded();
   const opened = unwrap(admit(alice, [lock(revealBeforeHeight)], ALICE));
   const proposed = step(opened, proposeInput(opened, ALICE, CLOCK_AT(frameHeight)), ALICE).replica;
   if (proposed._tag !== "proposed") throw new Error(`not proposed: ${proposed._tag}`);
-  const ctx = { timestamp: NOW, jHeight: 0n };
+  const ctx = { timestamp: NOW, jHeight: callerHeight };
   const seen = observed.reduce((host: Host, blockNumber): Host => {
     const tx: HostTx = { layer: "j", tx: { type: "j_event", blockNumber, event: { type: "ReserveUpdated", entity: BOB, tokenId: 1n, newBalance: 1n } } };
     return unwrap(applyHost(host, tx, ctx, hankoVerify)).state;
@@ -69,6 +69,14 @@ describe("the Host reads its deadline scan against the chain height it holds", (
     const claimed = 2_000_000n;
     expect(claimed).toBeGreaterThan(500_000n + BigInt(MAX_LOCK_HORIZON_BLOCKS));
     expect(verdict(delivered([500_000], claimed, claimed + 50n))).toBe("lock_horizon");
+  });
+
+  test("a fresh Host that has seen no J event reads the chain height its caller supplies, so its first honest lock is received", () => {
+    expect(verdict(delivered([], 500_000n, 500_050n, 500_000n))).toBe("received");
+  });
+
+  test("the caller's height does not open the horizon to a far claim", () => {
+    expect(verdict(delivered([], 2_000_000n, 2_000_050n, 500_000n))).toBe("lock_horizon");
   });
 
   test("the height never runs backwards: an older block observed later leaves the Host where it was", () => {

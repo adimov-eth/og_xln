@@ -42578,7 +42578,7 @@ const hostDoor = (host: Host, ctx: HostCtx, verify: Verify): DoorContext => ({
   verify,
   self: host.self,
   now: ctx.timestamp,
-  finalizedJHeight: host.finalizedJHeight,
+  finalizedJHeight: host.finalizedJHeight > ctx.jHeight ? host.finalizedJHeight : ctx.jHeight,
   ...opt("deltaTransformer", host.deltaTransformer),
 });
 
