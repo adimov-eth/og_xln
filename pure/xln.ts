@@ -29899,14 +29899,6 @@ export const convertOutput = (
     ...marker,
   });
 };
-/**
- * R-CLOCK: the Runtime's clock is the `now` of every local deadline guard and rises to the highest stamp a `txs` input
- * carries (og: max(previous, ingress seed)), while `convertOutput` puts the sender's clock on the wire input. The Host
- * therefore stamps every input that arrived from the network with its own clock before the Runtime sees it: a peer's
- * stamp never moves the receiver's clock. An input that seeds no clock passes through.
- */
-export const stampArrival = (input: RoutedEntityInput, clock: bigint): RoutedEntityInput =>
-  input.input.kind === "txs" ? { ...input, input: { ...input.input, timestamp: clock } } : input;
 
 // ---- og runtime/frame/intake: shape limits, capabilities, merge ----
 const MAX_RUNTIME_INPUT_RUNTIME_TXS = 10_000;
@@ -41047,9 +41039,14 @@ const commitLocal = (
   const progressed = withProgress(afterTxs.replicaLocal, outs, at);
   return withWitnesses(store, withPrunedHistory(afterTxs, store, progressed, outs), outs, at);
 };
-/** og: max(previous, ingress seed) — the input's own timestamp, else the latest `txs` seed. */
+/**
+ * og: max(previous, ingress seed) — the input's own timestamp, else the latest `txs` seed. R-CLOCK: an input that
+ * arrived from a peer (`from` set) seeds nothing, because `convertOutput` puts the sender's clock on it; the Runtime's
+ * clock is its own, raised by the Host's `timestamp` or by a local input's stamp.
+ */
 const frameTimestamp = (rt: Runtime, input: RuntimeInput): bigint => {
-  const seeds = input.entityInputs.flatMap((i) => (i.input.kind === "txs" ? [i.input.timestamp] : []));
+  const local = input.entityInputs.filter((i) => i.from === undefined);
+  const seeds = local.flatMap((i) => (i.input.kind === "txs" ? [i.input.timestamp] : []));
   const candidates = [input.timestamp ?? rt.timestamp, ...(input.timestamp === undefined ? seeds : [])];
   return candidates.reduce((a, b) => (b > a ? b : a), rt.timestamp);
 };
