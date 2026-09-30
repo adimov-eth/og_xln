@@ -1,11 +1,11 @@
 // R-CLOCK finding 3: "the receiver's own clock". A Runtime's clock, which is the `now` of every local deadline guard,
-// rises to the highest stamp a delivered input carries (og: max(previous, ingress seed)), and `convertOutput` puts the
-// sender's clock on the wire input. The Host therefore stamps every input that arrived from the network with its own
-// clock (`stampArrival`) before the Runtime sees it; a peer's stamp never moves the receiver's clock.
+// and `convertOutput` puts the sender's clock on the wire input. The Runtime therefore never takes a clock from an input
+// that arrived from a peer (`from` set): the frame's clock is its own, raised only by the Host's `timestamp` on the
+// frame or by a local input's stamp (og: max(previous, ingress seed)). The Host is not trusted to strip the stamp.
 import { describe, expect, test } from "bun:test";
-import { ALICE, BOB, CAROL, NOW, unwrap } from "../xln_run.ts";
-import { applyRuntime, stampArrival, type RoutedEntityInput } from "../xln.ts";
-import { DAY, context, credit, inputOf, network } from "./hub-network.ts";
+import { ALICE, BOB, NOW, unwrap } from "../xln_run.ts";
+import { applyRuntime, type RoutedEntityInput, type RuntimeInput } from "../xln.ts";
+import { DAY, context, credit, inputOf, network, replicaIn } from "./hub-network.ts";
 import { runtimeOf, step } from "./two-runtimes.ts";
 
 const T = NOW + 2000n;
@@ -17,39 +17,38 @@ const hostileArrival = (): RoutedEntityInput => {
   if (toAlice === undefined) throw new Error("the hub sent nothing to Alice");
   return toAlice;
 };
-const txsOf = (i: RoutedEntityInput): readonly unknown[] => (i.input.kind === "txs" ? i.input.txs : []);
 const stampOf = (i: RoutedEntityInput): bigint => (i.input.kind === "txs" ? i.input.timestamp : -1n);
-/** Alice's Runtime clock after the input arrives. */
-const clockAfter = (arrived: RoutedEntityInput): bigint =>
-  unwrap(applyRuntime(runtimeOf(network(), ALICE), { runtimeTxs: [], entityInputs: [arrived] }, context() as never)).runtime.timestamp;
+/** Alice's world after one Runtime frame with these inputs (and the Host's own clock, when it gives one). */
+const frame = (entityInputs: readonly RoutedEntityInput[], timestamp?: bigint) => {
+  const input: RuntimeInput = { runtimeTxs: [], entityInputs, ...(timestamp === undefined ? {} : { timestamp }) };
+  const world = network();
+  const out = unwrap(applyRuntime(runtimeOf(world, ALICE), input, context() as never));
+  return { clock: out.runtime.timestamp, entityClock: replicaIn({ ...world, runtimes: new Map([["alice", out.runtime]]) }, ALICE).state.timestamp };
+};
+const before = (): bigint => runtimeOf(network(), ALICE).timestamp;
 
-describe("an input from the network is stamped with the receiver's clock", () => {
-  test("on the wire it carries the sender's clock, and delivered as it is, it moves the receiver's clock", () => {
+describe("the Runtime takes no clock from an input that arrived from a peer", () => {
+  test("on the wire the input carries the sender's clock and names its sender", () => {
     const wire = hostileArrival();
     expect(stampOf(wire)).toBe(T + DAY);
-    expect(clockAfter(wire)).toBe(T + DAY);
+    expect(wire.from).toBe(BOB);
   });
 
-  test("stamped on arrival, it carries the receiver's clock and leaves it where it was", () => {
-    const arrived = stampArrival(hostileArrival(), T);
-    expect(stampOf(arrived)).toBe(T);
-    expect(clockAfter(arrived)).toBe(T);
+  test("delivered as it is, it leaves the receiver's Runtime and Entity clocks where they were", () => {
+    const after = frame([hostileArrival()]);
+    expect(after.clock).toBe(before());
+    expect(after.entityClock).toBeLessThan(T + DAY);
   });
 
-  test("only the stamp changes: the receiver, the sender and the payload stay", () => {
-    const wire = hostileArrival();
-    const arrived = stampArrival(wire, T);
-    expect(arrived.entityId).toBe(wire.entityId);
-    expect(arrived.from).toBe(wire.from);
-    expect(arrived.signerId).toBe(wire.signerId);
-    expect(txsOf(arrived)).toEqual(txsOf(wire));
+  test("the Host's own clock on the frame is what advances it, whatever the input carries", () => {
+    const after = frame([hostileArrival()], T);
+    expect(after.clock).toBe(T);
+    expect(after.entityClock).toBe(T);
   });
 
-  test("an input that seeds no clock passes through", () => {
-    const precommit: RoutedEntityInput = {
-      entityId: CAROL, signerId: hostileArrival().signerId,
-      input: { kind: "precommit", height: 1n, frameHash: `0x${"00".repeat(32)}`, signatures: new Map() } as never,
-    };
-    expect(stampArrival(precommit, T)).toEqual(precommit);
+  test("a local input (no sender) still seeds the clock with its stamp", () => {
+    const local = inputOf(ALICE, [credit(BOB, 5n)], T);
+    expect(local.from).toBeUndefined();
+    expect(frame([local]).clock).toBe(T);
   });
 });
