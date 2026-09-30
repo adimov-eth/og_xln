@@ -11,9 +11,13 @@
 // One area, one walk per process (og worker fatals in one Bun process can crash it):
 //   bun diff/walk.ts --area orderbook --seeds 3      the core draws plus one area's, on the first 3 walk seeds
 //   bun diff/walk.ts --area orderbook --seed 0x30de1 one walk, as a run prints it
+//   WALK_CHAIN_HEIGHT=20000 bun diff/walk.ts ...     the chain first climbs to that height (WALK_CHAIN_STEP blocks at a time).
+//     og makes every fresh replica catch up on each block, so the climb is superlinear: 20,000 blocks take about 2.5 min,
+//     125,000 did not finish in 50 min. Heights past MAX_LOCK_HORIZON_BLOCKS (120,960) are covered by the two-Runtime
+//     tests (diff/lock-horizon-chain-height.test.ts), which set the Entity's J height directly.
 import { seedOf, untilCovered } from "./seed.ts";
 import { tracing } from "./scenario-trace.ts";
-import type { Coverage } from "./lane.ts";
+import { chainHeight, mineEmptyBlocks, nextChainStep, type Coverage } from "./lane.ts";
 import { openWorld } from "./world.ts";
 import { AREA, AREAS, type Area } from "./draws/areas.ts";
 import { finalizedDisputes } from "./draws/disputes.ts";
@@ -49,6 +53,17 @@ export const walk = async (
     await w.chain.debugFundReservesBatch(w.ids.map((entityId) => ({ entityId, tokenId: 1, amount: 10n ** 9n })));
     const funded = await lane.tick([], []);
     if (funded.length > 0) return { coverage, diffs: funded };
+    // WALK_CHAIN_HEIGHT: the chain climbs to its height in steps, each observed and committed by both sides
+    const climb = async (): Promise<readonly string[]> => {
+      const step = nextChainStep(w.chain);
+      if (step <= 0) return [];
+      mineEmptyBlocks(w.chain, step);
+      await w.chain.pollNow?.();
+      const diffs = await lane.tick([], []);
+      return diffs.length > 0 ? diffs : climb();
+    };
+    const climbed = chainHeight() > 0 ? await climb() : [];
+    if (climbed.length > 0) return { coverage, diffs: climbed };
     const covered = () => moves.every(([k]) => coverage.entityTxs.has(k));
     // a lifecycle an area's draws opened (a dispute) keeps the walk going past its floor until the lifecycle closes
     const owing = () => world.filter(([, m]) => m.owed?.(w) === true);

@@ -12,7 +12,7 @@ import {
   MAX_LOCK_HORIZON_BLOCKS, createEntity, createRuntime, replicaKey, spawn, tokenId,
   type Address, type Binary, type EntityId, type EntityReplica, type EntityTx, type RoutedEntityInput,
 } from "../xln.ts";
-import { allAt, arrivesAt, runtimeOf, settle, step, type Clocks, type World } from "./two-runtimes.ts";
+import { allAt, arrivesAt, runtimeOf, settle, step, tick, type Clocks, type World } from "./two-runtimes.ts";
 
 const JUR = TERMS.domain;
 const SECRET = "0x" + "42".repeat(32);
@@ -87,6 +87,23 @@ const pay = (H: number) => {
   const settled = settle(context, paying.world, paying.routed.map((r) => arrivesAt(clocks, r)), clocks);
   return { refused: settled.refused, world: settled.world };
 };
+const fromCarolToBob = (i: RoutedEntityInput): boolean => i.entityId === BOB && i.from === CAROL;
+/** Carol's answer never arrives; the clocks then pass the lock's deadline and every Entity is nudged, as its timer would. */
+const expire = (H: number) => {
+  const T = NOW + 2000n;
+  const paying = step(context, network(H), inputOf(ALICE, [payment()], T));
+  if (!paying.ok) throw new Error(`Alice's payment was refused: ${JSON.stringify(paying.error)}`);
+  const honest: Clocks = new Map([[ALICE, T], [BOB, T], [CAROL, T]]);
+  const inFlight = settle(context, paying.world, paying.routed.map((r) => arrivesAt(honest, r)), honest, fromCarolToBob);
+  const late: Clocks = allAt([ALICE, BOB, CAROL], T + 3_600_000n);
+  const ticked = ["alice", "hub"].reduce((w, home) => {
+    const t = tick(context, w.world, home, T + 3_600_000n);
+    if (!t.ok) throw new Error(`the ${home} tick was refused: ${JSON.stringify(t.error)}`);
+    return { world: t.world, routed: [...w.routed, ...t.routed] };
+  }, { world: inFlight.world, routed: [] as readonly RoutedEntityInput[] });
+  const after = settle(context, ticked.world, ticked.routed.map((r) => arrivesAt(late, r)), late, fromCarolToBob);
+  return { locked: accountOf(inFlight.world, BOB, ALICE).state.locks.size, refused: after.refused, world: after.world };
+};
 const offdelta = (w: World, id: EntityId, peer: EntityId): bigint =>
   [...accountOf(w, id, peer).state.account.deltas.values()][0]!.offdelta;
 
@@ -105,6 +122,18 @@ describe("lock horizon on a real chain height: the receiver measures it from its
       expect(accountOf(r.world, BOB, CAROL).state.locks.size).toBe(0);
       expect(offdelta(r.world, BOB, ALICE)).not.toBe(0n);
       expect(offdelta(r.world, BOB, CAROL)).not.toBe(0n);
+    });
+  }
+
+  // The other end of a lock's life: nobody reveals, the deadline passes, and the payer takes the lock back. Every
+  // cancel crosses the receiver's scan, which reads the receiver's own clock and its Entity's height.
+  for (const H of [0, 500_000]) {
+    test(`chain at block ${H}: a lock nobody reveals is taken back after its deadline and no value moved`, () => {
+      const r = expire(H);
+      expect(r.locked).toBe(1);
+      expect(r.refused).toEqual([]);
+      expect(accountOf(r.world, BOB, ALICE).state.locks.size).toBe(0);
+      expect(offdelta(r.world, BOB, ALICE)).toBe(0n);
     });
   }
 });

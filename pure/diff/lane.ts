@@ -96,6 +96,30 @@ export const holdAccountWorkers = (
   return workers;
 };
 
+/**
+ * WALK_CHAIN_HEIGHT: the height a run's chain is raised to, in `WALK_CHAIN_STEP` empty blocks at a time, once the world
+ * is set up. Every walk and test otherwise runs within a few dozen blocks of genesis, below MAX_LOCK_HORIZON_BLOCKS
+ * (120,960), where a height read from the wrong place (an Account's own 0 instead of the chain's) looks right.
+ */
+export const chainHeight = (): number => Number(process.env["WALK_CHAIN_HEIGHT"] ?? 0);
+const chainStep = (): number => Number(process.env["WALK_CHAIN_STEP"] ?? 5000);
+type MinedVm = {
+  readonly beginJurisdictionBlock: (ms: number) => void;
+  readonly endJurisdictionBlock: () => void;
+  readonly getBlockNumber: () => bigint;
+};
+/** Mine up to `count` empty blocks: the blocks mined. */
+export const mineEmptyBlocks = (chain: JAdapter, count: number): number => {
+  const vm = (chain as unknown as { getBrowserVM: () => MinedVm }).getBrowserVM();
+  Array.from({ length: count }, () => {
+    vm.beginJurisdictionBlock(T0);
+    vm.endJurisdictionBlock();
+  });
+  return count;
+};
+export const tipOf = (chain: JAdapter): number =>
+  Number((chain as unknown as { getBrowserVM: () => MinedVm }).getBrowserVM().getBlockNumber());
+export const nextChainStep = (chain: JAdapter): number => Math.min(chainStep(), chainHeight() - tipOf(chain));
 export const bootChain = async (chainId = 31337): Promise<JAdapter> => {
   installContracts();
   const chain = await createJAdapter({ mode: "browservm", chainId } as never);
