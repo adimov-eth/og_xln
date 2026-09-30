@@ -61,8 +61,9 @@ type Step = {
   readonly events: readonly { readonly eventName: string; readonly data: Record<string, unknown> }[];
 };
 const step = (rt: Runtime, input: RoutedEntityInput): Step => {
-  const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, context() as never));
+  // the test plays the Host: a Runtime takes no clock from an input that arrived from a peer, so the frame is given it
   const clock = input.input.kind === "txs" ? input.input.timestamp : NOW;
+  const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input], timestamp: clock }, context() as never));
   const routed = out.outbox.flatMap((o) =>
     "input" in o && o.input.kind === "txs" && o.input.txs.length === 0 && o.to === input.entityId ? [] : [unwrap(convertOutput(out.runtime, o, input.entityId, clock))]);
   return { runtime: out.runtime, routed, events: out.events as Step["events"] };
