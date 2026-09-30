@@ -15,7 +15,7 @@ import {
   type AccountBody, type AccountFrame, type Address, type Binary, type EntityId, type EntityReplica, type EntityTx,
   type HtlcLock, type RoutedEntityInput, type WireAccountTx,
 } from "../xln.ts";
-import { allAt, runtimeOf, settle, step, type Clocks, type World } from "./two-runtimes.ts";
+import { allAt, arrivesAt, runtimeOf, settle, step, type Clocks, type World } from "./two-runtimes.ts";
 
 const JUR = TERMS.domain;
 const SECRET = "0x" + "42".repeat(32);
@@ -63,13 +63,10 @@ const replicaIn = (w: World, id: EntityId): EntityReplica => runtimeOf(w, id).en
 type AccountView = {
   readonly _tag: string;
   readonly head: { readonly height: bigint; readonly timestamp: bigint };
-  readonly state: { readonly locks: ReadonlyMap<string, unknown>; readonly account: { readonly deltas: ReadonlyMap<unknown, { readonly offdelta: bigint }> } };
+  readonly state: { readonly locks: ReadonlyMap<string, unknown>; readonly account: { readonly id: { readonly left: string } } };
 };
 const accountOf = (w: World, id: EntityId, peer: EntityId): AccountView =>
   replicaIn(w, id).accountReplicas.get(peer) as unknown as AccountView;
-const offdelta = (w: World, id: EntityId, peer: EntityId): bigint =>
-  [...accountOf(w, id, peer).state.account.deltas.values()][0]!.offdelta;
-
 /** Alice on her own Runtime and clock; the hub Bob and Carol on another, honest, one. */
 const spawned = (): World => ({
   runtimes: new Map([
@@ -97,39 +94,54 @@ describe("clock attack: a future-stamped frame must not let the payer take a loc
     const paying = step(context, start, inputOf(ALICE, [payment()], T));
     if (!paying.ok) throw new Error(`Alice's payment was refused: ${JSON.stringify(paying.error)}`);
     const honest: Clocks = new Map([[ALICE, T], [BOB, T], [CAROL, T]]);
-    const inFlight = settle(context, paying.world, paying.routed.map((r) => ({ ...r })), honest, fromCarolToBob);
+    const inFlight = settle(context, paying.world, paying.routed.map((r) => arrivesAt(honest, r)), honest, fromCarolToBob);
     const locked = accountOf(inFlight.world, BOB, ALICE).state.locks.size;
     // Alice's clock is hostile: a frame stamped far ahead of the lock's deadline, for an unrelated credit line
     const hostile = new Map<EntityId, bigint>([[ALICE, T + aheadMs], [BOB, T + 1000n], [CAROL, T + 1000n]]);
     const poisoned = step(context, inFlight.world, inputOf(ALICE, [credit(BOB, 5n)], T + aheadMs));
     if (!poisoned.ok) throw new Error(`Alice's own frame was refused: ${JSON.stringify(poisoned.error)}`);
-    const cosigned = settle(context, poisoned.world, poisoned.routed, hostile, fromCarolToBob);
+    const cosigned = settle(context, poisoned.world, poisoned.routed.map((r) => arrivesAt(hostile, r)), hostile, fromCarolToBob);
     const watermark = accountOf(cosigned.world, BOB, ALICE).head.timestamp;
     // Carol's answer reaches Bob at Bob's honest clock; nothing else moves
-    const delivered = settle(context, cosigned.world, inFlight.held.map((h) => ({ ...h })), hostile, () => false);
-    const settled = settle(context, delivered.world, [], hostile);
-    return { locked, watermark, world: settled.world, refused: [...poisoned.routed.length === 0 ? ["no frame"] : [], ...cosigned.refused, ...delivered.refused] };
+    const toAlice = (i: RoutedEntityInput): boolean => i.entityId === ALICE;
+    const delivered = settle(context, cosigned.world, inFlight.held.map((h) => arrivesAt(hostile, h)), hostile, toAlice);
+    return { locked, watermark, world: delivered.world, refused: [...cosigned.refused, ...delivered.refused], toAlice: delivered.held };
   };
+  type Sent = { readonly kind?: string; readonly frame?: AccountFrame };
+  /** Every Account frame in the inputs Bob addressed to Alice. */
+  const framesTo = (sent: readonly RoutedEntityInput[]): readonly AccountFrame[] =>
+    sent.flatMap((i) => (i.input.kind === "txs" ? i.input.txs : []))
+      .flatMap((t) => (t.type === "accountInput" ? [(t.data as unknown as Sent).frame] : []))
+      .flatMap((f) => (f === undefined ? [] : [f]));
+  const revealsSecret = (f: AccountFrame): boolean =>
+    f.txs.some((t) => t.type === "htlc_resolve" && t.outcome === "secret");
 
-  test("control: a frame a second ahead, the held answer arrives late, Bob is paid", () => {
+  /** What Bob does with the answer, judged by a payer whose own clock is honest (Alice's own runs a day ahead). */
+  const verdictOfHonestPayer = (r: ReturnType<typeof attack>): readonly string[] =>
+    framesTo(r.toAlice).filter(revealsSecret).map((f) => {
+      const bobIsLeft = accountOf(r.world, BOB, ALICE).state.account.id.left.toLowerCase() === BOB.toLowerCase();
+      const seen = incomingDeadline(accountOf(r.world, ALICE, BOB).state as unknown as AccountBody, f, bobIsLeft,
+        { now: NOW + 3000n, finalizedJHeight: 0n });
+      return seen.ok ? "accepted" : seen.error.error.reason;
+    });
+
+  test("control: a frame a second ahead, then the held answer: Bob reveals the secret and an honest payer accepts it", () => {
     const r = attack(1000n);
     expect(r.locked).toBe(1);
     expect(r.refused).toEqual([]);
-    expect(accountOf(r.world, BOB, ALICE).state.locks.size).toBe(0);
-    expect(offdelta(r.world, BOB, ALICE)).not.toBe(0n);
+    expect(verdictOfHonestPayer(r)).toEqual(["accepted"]);
   });
 
-  test("a payer's frame stamped a day ahead: the watermark moves past the deadline and Bob is still paid", () => {
+  test("a payer's frame stamped a day ahead: the watermark passes the deadline, Bob still reveals and it is accepted", () => {
     const r = attack(DAY);
     expect(r.locked).toBe(1);
     expect(r.refused).toEqual([]);
     expect(r.watermark).toBeGreaterThan(NOW + 2000n + DAY / 2n);
-    expect(accountOf(r.world, BOB, ALICE).state.locks.size).toBe(0);
-    expect(offdelta(r.world, BOB, ALICE)).not.toBe(0n);
+    expect(accountOf(r.world, BOB, ALICE)._tag).toBe("proposed");
+    expect(verdictOfHonestPayer(r)).toEqual(["accepted"]);
   });
 });
 
-/** What the same rule says about one frame, without a network: the payee's secret meets a frame stamp it did not choose. */
 describe("clock attack: a secret resolve is late only by J height, whatever the frame's stamp says", () => {
   const NOW_MS = 1_000_000_000_000n;
   const FIN = 100n;

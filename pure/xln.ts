@@ -5852,6 +5852,14 @@ export const hashHtlcSecret = (secret: string): string | null =>
 export const htlcExpired = (
   l: Pick<HtlcLock, "timelock" | "revealBeforeHeight">, ctx: Pick<FoldCtx, "nowMs" | "jHeight">,
 ): boolean => ctx.jHeight > l.revealBeforeHeight || ctx.nowMs >= l.timelock;
+/**
+ * R-CLOCK: a secret is late only once the J height passes revealBeforeHeight. The frame's timestamp is the proposer's
+ * to choose and every later frame inherits it, so a payer that co-signs one stamped past the timelock must not thereby
+ * expire the payee's reveal; the payee's own clock guards the payer instead (`scanSecret`). og also refuses a secret
+ * at a frame clock past the timelock (LENIENT_DEPARTURES).
+ */
+export const secretLate = (l: Pick<HtlcLock, "revealBeforeHeight">, ctx: Pick<FoldCtx, "jHeight">): boolean =>
+  ctx.jHeight > l.revealBeforeHeight;
 export const MAX_ACCOUNT_HTLC_LOCKS = 32;
 type LockMove = Readonly<{ senderIsLeft: boolean; amount: bigint }>;
 /**
@@ -7493,7 +7501,7 @@ const htlcResolve = (a: AccountBody, x: TxOf<"htlc_resolve">, ctx: FoldCtx): Bod
     };
     return ok(step(released, [refunded]));
   }
-  if (expired) return err({ _tag: "htlc_expired" });
+  if (secretLate(live, ctx)) return err({ _tag: "htlc_expired" });
   if (hashHtlcSecret(x.secret) !== live.hashlock) return err({ _tag: "preimage" });
   return chain(offdeltaChange(live.senderIsLeft, live.amount), (by) => {
     const moved = shift(getDelta(a.account, live.tokenId), by);
@@ -8542,7 +8550,7 @@ const htlcResolveFailure = (a: AccountBody, x: TxOf<"htlc_resolve">, ctx: FoldCt
     }
     return refuse(x.reason === "timeout" && !expired, "Lock not expired yet");
   }
-  if (expired) {
+  if (secretLate(lock, ctx)) {
     const when = `timestamp=${ctx.nowMs}/${lock.timelock} jHeight=${ctx.jHeight}/${lock.revealBeforeHeight}`;
     return refusedTx(`Lock expired: ${when}`);
   }
@@ -10268,10 +10276,10 @@ const opensLock = (l: DeadlineLock, secret: string): boolean => hashHtlcSecret(s
 type LockBook = ReadonlyMap<string, DeadlineLock>;
 type DeadlineScan = Result<LockBook, DeadlineViolation>;
 /**
- * R-CLOCK: what protects the receiver is always his own clock plus the reserve (`local`). The reads of the frame's
- * stamp (`f`) below are the state machine's own rule, the one the txs apply under (a lock expired by the frame's
- * clock cannot be resolved), so a frame they refuse is refused here as a plain reject instead of failing at replay.
- * They are only ever an extra condition on the proposer, never what lets it past a local-clock check.
+ * R-CLOCK: what protects the receiver is always his own clock plus the reserve (`local`). The frame's stamp (`f`) is
+ * the proposer's to choose, so it is only ever an extra condition on the proposer's own txs (a lock it proposes, a
+ * cancel it takes) and never a reason to refuse a secret: that is late by the J height alone (`secretLate`), else a
+ * payer could stamp one frame past the timelock and take the lock back from a payee who holds the secret.
  */
 /** The peer frame under scan, who proposed it, and our local clock (now, finalized J height). */
 type ScanSite = { readonly f: AccountFrame; readonly proposerIsLeft: boolean; readonly local: Clock };
@@ -10302,7 +10310,7 @@ const scanSecret = (locks: LockBook, lock: DeadlineLock, tx: SecretResolve, at: 
   switch (true) {
     case !opensLock(lock, tx.secret): return ok(locks);
     case deadlinePassed(lock, reserved): return deadlineViolation("secret_window", tx.lockId, true);
-    case deadlinePassed(lock, at.f): return deadlineViolation("secret_frame_expired", tx.lockId);
+    case at.f.jHeight > lock.revealBeforeHeight: return deadlineViolation("secret_frame_expired", tx.lockId);
     default: return ok(mapDelete(locks, tx.lockId));
   }
 };

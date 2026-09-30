@@ -10,6 +10,7 @@ import {
   type AccountFrame, type HtlcLock, type WireAccountTx,
 } from "../xln.ts";
 import { genesisAB, unwrap } from "../xln_run.ts";
+import { SECRET_AT_FRAME_CLOCK } from "./departures.ts";
 
 type OgArgs = Parameters<typeof getIncomingAccountDeadlineViolation>;
 /** og's typed shells are built from plain data; this is the one place a shell is given its og type. */
@@ -106,16 +107,25 @@ const cases = (): readonly Case[] =>
             HEIGHTS.flatMap((rbh) =>
               [...around(rbh), FIN].map((frameJ) => ({ kind, proposerIsLeft, senderIsLeft, timelock, rbh, frameTs, frameJ }))))))));
 const label = (c: Case): string => JSON.stringify(c);
+/**
+ * A frame's stamp never expires a secret (departures.ts SECRET_AT_FRAME_CLOCK): og's verdict on a secret is the one it
+ * gives a frame stamped at the epoch, where only the J height and the local clock can refuse it. Every other kind is og's.
+ */
+const expected = (c: Case): string => ogVerdict(c.kind === "secret" ? { ...c, frameTs: 0 } : c, [ogTxOf(c)]);
+/** The cases where the departure changes the verdict: og refuses the frame's clock, the rewrite does not. */
+const departs = (c: Case): boolean =>
+  c.kind === "secret" && SECRET_AT_FRAME_CLOCK.ogRefuses(BigInt(c.frameTs), BigInt(c.timelock));
 
 describe("coverage-htlc-deadlines: incoming HTLC deadline preflight on every clock boundary", () => {
   test("MATCH: one-tx frames over the full boundary grid -- same none / reject / dispute and same reason as og", () => {
     const verdicts = new Map<string, number>();
     for (const c of cases()) {
-      const og = ogVerdict(c, [ogTxOf(c)]);
+      const og = expected(c);
       expect([label(c), rwVerdict(c, [rwTxOf(c)])]).toEqual([label(c), og]);
       verdicts.set(og, (verdicts.get(og) ?? 0) + 1);
     }
     const summary = JSON.stringify([...verdicts]);
+    expect(cases().filter(departs).length).toBeGreaterThan(0);
     for (const v of ["none", "reject:lock_window", "dispute:secret_window", "reject:secret_frame_expired",
       "reject:payer_cancel_early", "reject:timeout_not_expired"]) {
       expect([summary, v, verdicts.has(v)]).toEqual([summary, v, true]);
@@ -127,7 +137,9 @@ describe("coverage-htlc-deadlines: incoming HTLC deadline preflight on every clo
       const opened: Case = { ...c, kind: "lock", senderIsLeft: c.proposerIsLeft };
       const unheld: Case = { ...c, kind: "lock" };
       const og = ogVerdict(unheld, [ogTxOf(opened), ogTxOf(c)]);
-      expect([label(c), rwVerdict(unheld, [rwTxOf(opened), rwTxOf(c)])]).toEqual([label(c), og]);
+      const rw = rwVerdict(unheld, [rwTxOf(opened), rwTxOf(c)]);
+      const byClockOnly = c.kind === "secret" && og === "reject:secret_frame_expired" && BigInt(c.frameJ) <= BigInt(c.rbh);
+      expect([label(c), rw]).toEqual([label(c), byClockOnly ? "none" : og]);
     }
   });
 });

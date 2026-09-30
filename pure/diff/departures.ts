@@ -112,11 +112,11 @@ export const stricterDeparture = (tx: OgAccountTx, at: OgFrameClock): StricterDe
 
 /**
  * Where the rewrite is more lenient than og: og refuses what the rewrite accepts. A frame's timestamp carries no
- * authority (spec R-CLOCK), so the rewrite refuses no frame for its age or its future date. Every deadline decision reads
- * the deciding party's own clock plus a named reserve (HTLC_ENFORCEMENT_RESERVE_MS); a frame-clock read that remains
- * mirrors a rule of the co-signed state machine itself (an expired lock cannot be resolved), never the receiver's
- * protection. The lane never reaches this: both Entities of a walk run on one clock, so no frame is ahead of its
- * receiver. It is pinned by `diff/clock-authority.test.ts`, which runs two Runtimes on clocks that differ.
+ * authority (spec R-CLOCK): it is the proposer's to choose and every later frame inherits it. So the rewrite refuses no
+ * frame for its age or its future date, and no frame's stamp expires a secret; every deadline decision reads the
+ * deciding party's own clock plus a named reserve (HTLC_ENFORCEMENT_RESERVE_MS), or the J height. The lane never
+ * reaches these: both Entities of a walk run on one clock. They are pinned by `diff/clock-authority.test.ts` and
+ * `diff/clock-attack.test.ts`, which run two Runtimes on clocks that differ.
  */
 export type LenientDeparture = {
   readonly name: string;
@@ -128,7 +128,23 @@ export const FUTURE_FRAME: LenientDeparture = {
   name: "a frame stamped ahead of its receiver's clock is accepted",
   ogRefuses: (aheadMs) => aheadMs > 30_000n,
 };
+/**
+ * og htlc-deadline.ts: a secret resolve is refused as expired once the frame's clock reaches the timelock. The rewrite
+ * refuses it only once the J height passes revealBeforeHeight (`secretLate`), so a payer that co-signs one frame stamped
+ * past the timelock cannot take the lock back from a payee who holds the secret. The payee's own clock still refuses a
+ * late reveal as dispute evidence (`secret_window`).
+ */
+export type SecretDeparture = {
+  readonly name: string;
+  /** og refuses a secret resolve at a frame clock `frameTimestamp` for a lock with this timelock (J height aside). */
+  readonly ogRefuses: (frameTimestamp: bigint, timelock: bigint) => boolean;
+};
+export const SECRET_AT_FRAME_CLOCK: SecretDeparture = {
+  name: "a secret resolve is not refused for the frame's clock",
+  ogRefuses: (frameTimestamp, timelock) => frameTimestamp >= timelock,
+};
 export const LENIENT_DEPARTURES: readonly LenientDeparture[] = [FUTURE_FRAME];
+export const SECRET_DEPARTURES: readonly SecretDeparture[] = [SECRET_AT_FRAME_CLOCK];
 
 /** One difference the frame comparison found: which comparison (`head[Bob]`, `components`, ...) and its text. */
 export type FrameDiff = { readonly what: string; readonly text: string };

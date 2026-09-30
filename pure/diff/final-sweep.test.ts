@@ -11,6 +11,7 @@ import { resolveObserverCertifiedAccountCounterpartyProposer as ogCertifiedPropo
 import { decodeBuffer as ogDecodeBuffer } from "../../core/storage/codec/codec.ts";
 import { applyRuntime, convertOutput, createRuntime, lazyBoardEntityId, runtimeOutputRows, type EntityOutput, type EntityTx, type Runtime, type RoutedEntityInput, type RuntimeTx } from "../xln.ts";
 import { TERMS, aliceAddr, bobAddr, verifiers } from "../xln_run.ts";
+import { SECRET_AT_FRAME_CLOCK } from "./departures.ts";
 import { createAccountConsensusContext as ogConsensusContext } from "../../core/entity/account/account-consensus-context.ts";
 import { applyCertifiedBoardRegistryEvent as ogApplyBoardEvent } from "../../core/jurisdiction/machine/board-registry/index.ts";
 import { address, applyBoardJEvent, createEntity, quorumBoardHash, settlementBoardAuthority, type EntityState, type JEvent } from "../xln.ts";
@@ -205,17 +206,25 @@ describe(seedTag("final-sweep: og per-tx failure text for every Account tx handl
   const textLockstep = (start: AccountBody) => {
     const og = ogHarness(start);
     let body = start;
-    const step = async (tx: any, byLeft: boolean, ts = 20, jh = 2, ogCtx?: any, settlement?: FoldCtx["settlement"]): Promise<{ ok: boolean; message?: string; thrown?: boolean }> => {
+    const run = async (tx: any, byLeft: boolean, ts: number, jh: number, ogCtx?: any, settlement?: FoldCtx["settlement"]) => {
       const o = await og.run((acc) => (tx.type === "settle_transition" && ogCtx !== undefined ? handleSettleTransition(acc, toOg(tx), byLeft, ts, ogCtx) : applyAccountTxMutation(acc, toOg(tx), byLeft, ts, jh, false, undefined, undefined, undefined, [])));
       const ctx: FoldCtx = { byLeft, nowMs: BigInt(ts), jHeight: BigInt(jh), accountHeight: 1n, ...(settlement === undefined ? {} : { settlement }) };
-      const rw = applyAccountBody(body, tx, ctx);
+      return { o, ctx, rw: applyAccountBody(body, tx, ctx) };
+    };
+    const step = async (tx: any, byLeft: boolean, ts = 20, jh = 2, ogCtx?: any, settlement?: FoldCtx["settlement"]): Promise<{ ok: boolean; message?: string; thrown?: boolean }> => {
+      const { o, ctx, rw } = await run(tx, byLeft, ts, jh, ogCtx, settlement);
       if (rw.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${rw.ok ? "ok" : stableJson(rw.error)} tx=${stableJson(tx)}`);
       if (rw.ok) { body = rw.value.state; return { ok: true }; }
       const f = accountTxFailure(body, tx, ctx, rw.error, LEFT, { nextProofNonce: 1 });
       expect({ thrown: f.thrown, message: f.message }).toEqual({ thrown: o.thrown!, message: o.error! });
       return { ok: false, message: f.message, thrown: f.thrown };
     };
-    return { step, body: () => body };
+    /** Both verdicts on one tx, nothing compared and nothing applied: for a named departure. */
+    const apart = async (tx: any, byLeft: boolean, ts: number, jh: number): Promise<{ og: boolean; rw: boolean }> => {
+      const { o, rw } = await run(tx, byLeft, ts, jh);
+      return { og: o.ok, rw: rw.ok };
+    };
+    return { step, apart, body: () => body };
   };
 
   test("MATCH: targeted failures (128-row cap caught vs thrown, expired and malformed HTLC secrets, lending replay, maker limit price) carry og's text", async () => {
@@ -228,7 +237,11 @@ describe(seedTag("final-sweep: og per-tx failure text for every Account tx handl
     expect((await L.step({ type: "payment", tokenId: "129", amount: 1n, route: [RIGHT], fromEntityId: LEFT, toEntityId: RIGHT, deliveryMode: "direct" }, true)).thrown).toBe(true);
     expect((await L.step({ type: "htlc_lock", lockId: h, hashlock: h, timelock: 100n, revealBeforeHeight: 50n, amount: 5n, tokenId: "1" }, true, 20, 2)).ok).toBe(true);
     expect((await L.step({ type: "htlc_resolve", lockId: h, outcome: "secret", secret: "0x12" }, false, 30, 2)).message).toBe("Invalid secret: HTLC secret must be 32-byte hex (got 4 chars)");
-    expect((await L.step({ type: "htlc_resolve", lockId: h, outcome: "secret", secret }, false, 100, 2)).message).toBe("Lock expired: timestamp=100/100 jHeight=2/50");
+    expect((await L.step({ type: "htlc_resolve", lockId: h, outcome: "secret", secret }, false, 30, 51)).message).toBe("Lock expired: timestamp=30/100 jHeight=51/50");
+    // og also refuses a secret at a frame clock on the timelock; the rewrite does not (departures.ts SECRET_AT_FRAME_CLOCK)
+    const secretResolve = { type: "htlc_resolve", lockId: h, outcome: "secret", secret };
+    expect(await L.apart(secretResolve, false, 100, 2)).toEqual({ og: false, rw: true });
+    expect([99n, 100n].map((t) => SECRET_AT_FRAME_CLOCK.ogRefuses(t, 100n))).toEqual([false, true]);
     expect((await L.step({ type: "htlc_resolve", lockId: h, outcome: "error", reason: "timeout" }, false, 30, 2)).message).toBe("Lock not expired yet");
     const pos = "lend-00000000000000aa", fund = { type: "lending_close_request", positionId: pos, hubEntityId: RIGHT, lenderEntityId: LEFT };
     expect((await L.step(fund, true)).ok).toBe(true);
