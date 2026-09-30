@@ -305,7 +305,8 @@ describe(seedTag("entity-txs-3: shadow rebalance policy root (og seedOpenAccount
     const alice = unwrap(createEntity({ id: ALICE, jurisdiction: JUR, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: UNREGISTERED_J }));
     const bob = unwrap(createEntity({ id: BOB, jurisdiction: JUR, threshold: 1n, members: new Map([[bobAddr, { shares: 1n }]]), jurisdictionConfig: UNREGISTERED_J }));
     let rt = spawn(spawn(createRuntime(), alice), bob);
-    const run = (entityInputs: Parameters<typeof applyRuntime>[1]["entityInputs"]) => { const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs }, verifiers)); rt = out.runtime; return out.outbox; };
+    let clock = NOW;
+    const run = (entityInputs: Parameters<typeof applyRuntime>[1]["entityInputs"]) => { const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs, timestamp: (clock += 1n) }, verifiers)); rt = out.runtime; return out.outbox; };
     const outbox = run([{ entityId: ALICE, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW, txs: [openTx()] } }]);
     const back = run(outbox.map((o) => unwrap(convertOutput(rt, o, ALICE, NOW + 2n))));
     run(back.map((o) => unwrap(convertOutput(rt, o, BOB, NOW + 3n))));

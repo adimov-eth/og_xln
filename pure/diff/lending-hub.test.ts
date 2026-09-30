@@ -174,7 +174,7 @@ describe(seedTag("lending-hub: end-to-end lending lifecycle through the Runtime"
     for (let round = 0; inputs.length > 0; round++) {
       if (round > 40) throw new Error("runtime did not settle");
       now += 1n;
-      const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: inputs.map((i) => (i.input.kind === "txs" ? { ...i, input: { ...i.input, timestamp: now } } : i)) }, round === 0 && local !== undefined ? { ...verifiers, local } : verifiers));
+      const out = unwrap(applyRuntime(rt, { runtimeTxs: [], timestamp: now, entityInputs: inputs.map((i) => (i.input.kind === "txs" ? { ...i, input: { ...i.input, timestamp: now } } : i)) }, round === 0 && local !== undefined ? { ...verifiers, local } : verifiers));
       expect(out.rejected).toEqual([]);
       rt = out.runtime;
       inputs = out.outbox.map((o: EntityOutput) => unwrap(convertOutput(rt, o, ("tx" in o ? (o.tx.data as { fromEntityId: EntityId }).fromEntityId : o.to), now)));
