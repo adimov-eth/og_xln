@@ -65,29 +65,166 @@ new format and is the gate for these changes. Porting the inherited suites to th
 
 Re-measured after H1 and H2: every count is identical to the "after" column, so neither change dropped another inherited test. Those suites already fail on the C1/C2 payloads; H1/H2 cannot be judged by them until they are ported.
 
-## Foundry suites (`test/foundry/`): stale, not run
+## After the port (Hardhat suites on the fork, one file per process)
 
-`forge` is not installed in the environment that produced this baseline, so these suites were not run. They are stale by
-inspection, for the same reasons as the Hardhat suites plus the response-window floor:
+Ported to the C1/C2 interface (entity-first `processBatch`, V2 batch hash, epoch in the proof and cooperative-update payloads), response windows of at least 60 s (H2), and the wide money types (`Int512`/`Int768`/`SignedAmount`) that og's contracts already use. Helpers live in `test/helpers/hanko.ts` (`computeDepositoryBatchHash`, `submitBatch`, `computeCooperativeUpdateHash`, `computeDisputeProofHash`, `encodeForkBatch`, `toForkProofBody`, `toForkSettlementDiffs`). No assertion was deleted or skipped.
 
-- Every handler and fixture calls the three-argument `processBatch(encoded, hanko, nonce)` (`helpers/XlnFixture.sol`,
-  `handlers/*Handler.sol`, `Lifecycle.t.sol`, `stress/BatchBounds.t.sol`, `TransformerAllowance.invariants.t.sol`). The
-  fork's is `processBatch(entityId, encoded, hanko, nonce)`, so they do not compile.
-- `helpers/XlnHanko.sol` builds payloads with the old `HankoEncoding.encodeCooperativeUpdate` and `encodeDisputeProof`
-  (no `ondeltaEpoch`) and the old batch payload (no entity, domain V1).
-- `helpers/SettlementDeltasHarness.sol` builds proof bodies with response windows of 0, and the fixture and handlers use
-  `LEFT_RESPONSE_SECONDS` = `RIGHT_RESPONSE_SECONDS` = 50; every window below 60 s is now rejected with
-  `ResponseWindowTooShort(60)` (H2).
-- The invariants themselves (conservation, debt lifecycle, allowance, hash ladder) still describe the fork, except that
-  the H1 wait and the H3 clamp add revert and settlement paths the handlers do not yet drive.
+| file | passing before | passing after | failing before | failing after |
+|---|---|---|---|---|
+| test/dispute/DebtForgiveness.test.ts | 0 | 2 | 2 | 0 |
+| test/dispute/DeltaTransformer.test.ts | 1 | 10 | 9 | 0 |
+| test/dispute/Depository-part-1.ts | 7 | 66 | 43 | 0 |
+| test/dispute/Depository-part-2.ts | 1 | 15 | 14 | 0 |
+| test/dispute/DisputeHashVector.test.ts | 1 | 1 | 0 | 0 |
+| test/dispute/DisputeOndeltaLiveness.test.ts | 0 | 16 | 8 | 0 |
+| test/dispute/SecretRevealLiveness.test.ts | 1 | 1 | 0 | 0 |
+| test/dispute/SettlementFinality.test.ts | 0 | 1 | 1 | 0 |
+| test/governance/BoardRotationAuthority.test.ts | 0 | 6 | 6 | 0 |
+| test/governance/BoardRotationGrace.test.ts | 3 | 6 | 3 | 0 |
+| test/governance/HankoAuthorization.test.ts | 18 | 23 | 5 | 0 |
+| test/governance/OnchainHankoDomain.test.ts | 0 | 7 | 0 (did not load) | 0 |
+| test/protocol/CanonicalTransformerReveal.test.ts | 0 | 3 | 3 | 0 |
+| test/protocol/HashLadderRegistry.test.ts | 0 | 23 | 23 | 0 |
 
-Porting them belongs with the Hardhat port below: same new signatures, windows of at least 60 s, and handler actions for
-the H1 wait and the H3 clamp. Until then `test/vm/` is the gate and CI runs only that.
+The other governance and protocol files (ControlShares, EntityProvider, FoundationRegistry, HankoMembers, Redesign, ReleaseHanko, ContractSize, HashLadder) were unaffected and pass as in the first table.
+
+Rewritten for an intended change, with the reason:
+
+- H1, `DeltaTransformer` "uses timestamp deadlines for payment secrets": an unrevealed payment no longer settles to 0 while its deadline is open; finalization reverts `PaymentRevealWindowActive(deadline)` until the deadline passes.
+- H2: windows below 60 s were raised to 60 or more; the expectations that follow from the window length moved with it (`disputeTimeout` = start + 120 for 60 + 60).
+- C1: the second settlement in one batch signs epoch + 1, because the first advanced the epoch.
+- `BoardRotationGrace` watchtower: the last-resort delay must be at least the response window now, so it uses the full window.
+- `OnchainHankoDomain`: og's frozen `core/hanko/onchain-domain.ts` still emits the old settlement, dispute and batch payloads, so those three comparisons use independent ethers encoders in the test, plus an assertion that the fork differs from og's. The golden vector is a fork copy (`test/fixtures/onchain-hanko-golden.ts`); og's `tests/` copy is CommonJS-linked by this loader and reports its exports missing.
+
+The 2^200 ceiling tests, eight of them (Arthur approved the overflow-check approach on 2026-09-29). `docs/money-domain.md` (owner-approved 2026-09-06) removed the ceiling, which existed to keep the int256 intermediate `ondelta + offdelta` sums representable, and names no replacement bound. The tests that expected `E8` (or `E11`) above 2^200 now assert what is true: amounts past 2^200 are accepted, and the real edges revert instead of wrapping (reserve and collateral at uint256 max: panic 0x11, nothing changes). Reading the contracts, every `unchecked` block in `WideMath` carries an explicit `RepresentationOverflow` check. The eight, by title:
+
+`Depository-part-1.ts` (five):
+1. reserve: "reverts settlement with E8 when a reserve would exceed MAX_MONEY…" became "settles a reserve past the retired 2^200 ceiling and applies both diffs" and "reverts settlement at the uint256 reserve edge instead of wrapping, and leaves no partial diff".
+2. collateral: "reverts settlement and R2C with E8 when collateral would exceed MAX_MONEY" became "accepts R2C and settlement collateral past the retired 2^200 ceiling" and "reverts R2C and settlement at the uint256 collateral edge instead of wrapping".
+3. C2R: "rejects C2R amounts above MAX_MONEY before mutation" became "refuses an unsigned C2R above the retired 2^200 ceiling by the signature rule, not a ceiling, before mutation" (a weaker statement on its own; the signed C2R at the edges is the new "withdraws collateral A with a signed C2R at A = …" tests).
+4. allowance band: "clamps to the maximum legal allowance band (2^200) and rejects allowances above it" became "clamps at a 2^200 allowance band and accepts an allowance above the retired band".
+5. proof-body offdelta: "rejects a proof body with |offdelta| above MAX_MONEY at dispute start, accepts the exact bound" became eight cases "starts a dispute with a proof body whose offdelta is …" from 2^200 up to the `Int512` edges.
+
+`DisputeOndeltaLiveness.test.ts` (three):
+6. reserve cap: "accepts reserves above the retired 2^200 cap and stops only at the uint256 representation bound".
+7. offdelta bound: "settles an offdelta of exactly -MAX_MONEY" and "-(MAX_MONEY + 1), one unit past the retired cap".
+8. token supply (was `E11` above int256 max): "rejects a zero fixed supply at token registration and no longer caps the supply at int256".
+
+The edge probe (every path that turns a uint256 amount into a signed delta, at 2^255 - 1, 2^255 and 2^256 - 1, plus 2^200) is `DisputeOndeltaLiveness` "R2C then dispute finalize at …, offdelta +A / -A" (R2C, payout, debt up to 2^256 - 1), and in `Depository-part-1` "settles collateral A back to a reserve at A = …" (settlement) and "withdraws collateral A with a signed C2R at A = …" (C2R). All exact; nothing wraps or flips sign; there is no int256 conversion in the fork.
+
+## v2 input: the largest swap book that finishes one `processBatch` at our batch gas limit
+
+The inherited test asserted that 1,000 swaps fit 4,000,000 gas in the transformer. That figure predates the `Int768` arithmetic, and the batch gas limit is ours to set, not og's (`core/config/constants.ts` has 5,000,000 and nothing reads it yet).
+
+`Account.sol` hands the transformer `gasleft() - 2,000,000` and holds the 2,000,000 back (`TRANSFORMER_POST_CALL_GAS_RESERVE`), so a transaction's limit must cover the transformer's use plus that reserve: gas used understates the limit to send. Measured on the fork, one non-starter dispute finalize with N swaps in one transformer over two tokens (`Depository-part-1.ts`):
+
+| swaps | gas used | limit needed (gas used + 2M reserve, except where measured) |
+|---|---|---|
+| 382 | 2,965,056 | fits 5,000,000 (largest, by bisection) |
+| 383 | | reverts `TransformerExecutionFailed` at 5,000,000 |
+| 500 | 3,953,514 | about 6.0 M |
+| 615 | 4,997,914 | about 7.06 M |
+| 1000 | 9,077,106 | about 11.1 M |
+
+`MAX_SWAP_BOOK = 382`, `PROCESS_BATCH_GAS_LIMIT = 5_000_000n` and `TRANSFORMER_POST_CALL_GAS_RESERVE = 2_000_000n` are named in `test/helpers/hanko.ts`. The tests send the finalize with the stated limit: 382 finalizes, 383 reverts. The exact boundary moves with any compiler, optimizer or contract change; that is intended, update the constant and this table when it does. The `DeltaTransformer` twin asserts the transformer's own estimate plus the 2M reserve fits the limit. Gas grows faster than linearly past about 500 swaps. It depends on the fixture (one Account, two tokens, one transformer). og's runtime caps a book at 50 offers (`MAX_ACCOUNT_SWAP_OFFERS`), so neither number binds in v1; it is an input to the v2 order-book design.
+
+## Foundry suites (`test/foundry/`): ported, all pass
+
+Ported to the fork and run with forge 1.7.1 (`bash contracts/scripts/setup-forge-std.sh` fetches forge-std; then
+`forge test` from `contracts/`). Result at SHA 289f801, one contract per process, 0 failures:
+
+| suite | tests |
+|---|---|
+| Smoke | 1 |
+| Lifecycle | 26 |
+| stress/BatchBounds | 11 |
+| stress/DebtChunking | 6 |
+| math/WideMath | 30 |
+| math/WideTransformer | 6 |
+| TransformerFaultModes | 15 |
+| HalmosLemmas | 6 |
+| Depository.invariants | 16 |
+| DepositoryConservation.invariants | 9 |
+| DebtLifecycle.invariants | 11 |
+| HashLadder.invariants | 9 |
+| HankoThreshold.invariants | 7 |
+| TransformerAllowance.invariants | 8 |
+| ForkChanges (new: C1, C2, H1, H2) | 10 |
+| RetiredBoardH3 (new: H3) | 7 |
+
+What changed in the port: the four-argument `processBatch(entityId, encoded, hanko, nonce)`; `helpers/XlnHanko.sol` builds
+the epoch-bound cooperative and dispute payloads and the domain-bound batch payload; every response window is at least
+60 s (H2).
+
+Not covered by the Foundry suites (each is covered by `test/vm/` or is a known gap):
+
+- The H3 clamp has directed tests (`RetiredBoardH3`) but no fuzz action in the invariant handlers.
+- Two board rotations in a row are not driven.
+- Counter-proof grading in Solidity is not driven by a handler.
+- `disputeFinalizeCooperative` is dead in og, so it is not driven.
+- H1 (the finalize waits for the payment deadline unless the secret is public) is directed-tested in `ForkChanges` but not
+  reached by `TransformerAllowanceHandler`.
+- The results above are before J2 (PR #49); "After J2" below is the re-run.
+
+## After J2 (stale dispute ops skip inside `processBatch`; one file or suite per process)
+
+J2 turns a dispute op the Account has moved past into a `DisputeOpSkipped` event instead of a revert. Seven ported tests
+asserted the old revert; each now asserts the skip (the event with its op, reason and nonce) and that the Account nonce,
+dispute state, reserves and collateral did not change. Real errors (bad signature, malformed or mismatched evidence, the
+wrong sender on a live dispute, an early finalize) still revert and are pinned by `test/vm/j2-skip-stale-dispute-ops.test.ts`
+(12) and `test/vm/j2-review-extra.test.ts` (16; the review's 16 tests, which also kill the 28 planted mutants).
+
+| test | was | now |
+|---|---|---|
+| Hardhat `Depository-part-1` "carries cooperative ondelta diffs into the next dispute exactly once" | replayed start reverts E2 | skipped (op 0, reason 0), nonce, dispute hash, reserves unchanged |
+| Hardhat `Depository-part-2` "skips a historical cooperative signature offered as a dispute bypass" | finalize reverts E2 | skipped (op 2, reason 2), nonce and reserves unchanged |
+| Hardhat `HashLadderRegistry` "skips a RIGHT same-nonce branch when the initial proposer was LEFT" | counter reverts E2 | skipped (op 1, reason 5), no counter registered, dispute unchanged |
+| Hardhat `HashLadderRegistry` "cannot claim twice: a second finalization of the same dispute is skipped and pays nothing" | reverts E5 | skipped (op 2, reason 2), reserves unchanged |
+| Foundry `Lifecycle` `test_disputeFinalizeTwiceIsSkipped` | reverts | skipped (op 2, reason 2), pair state unchanged |
+| Foundry `Lifecycle` `test_disputeStartOverLiveDisputeIsSkipped` | reverts E6 | skipped (op 0, reason 1), pair state unchanged |
+| Foundry `ForkChanges` `test_nonce_startSettlementAndC2RNeedNonceAboveStored`, its two start lines | revert E2 | skipped (op 0, reason 0); the settlement and C2R lines still revert E2 |
+
+Settlement or C2R during a dispute (E6) and the watchtower entrypoint (E5) are unchanged.
+
+Results after J2 (local runs, sandbox with forge 1.7.1, code at b3154a6; the commit after it changes only docs):
+
+- Foundry, one suite per process, 0 failures in all 16: DebtLifecycle 11, Depository.invariants 16, DepositoryConservation 9,
+  ForkChanges 10, HalmosLemmas 6, HankoThreshold 7, HashLadder 9, Lifecycle 26, RetiredBoardH3 7, Smoke 1,
+  TransformerAllowance 8, TransformerFaultModes 15, WideMath 30, WideTransformer 6, BatchBounds 11, DebtChunking 6.
+- Hardhat, one file per process: the same counts as the table above (Depository-part-1 66, Depository-part-2 15,
+  HashLadderRegistry 23, every other file unchanged); before the rewrite of the four tests, part-1, part-2 and
+  HashLadderRegistry failed 1, 1 and 2.
+- `test/vm/`: j2-skip-stale-dispute-ops 12, j2-review-extra 16, c1-epoch 5, c2-batch-entity 3, h1-htlc-deadline 5,
+  h2-window-floor 3, h3-retired-board-cap 11, h4-deposit-during-dispute 4, vectors 8; `test/gate/`: contract-size 5,
+  deploy-gate 23.
+
+vm vectors (`contracts/vectors/`, regenerated by `bun contracts/scripts/write-vectors.ts` from the deployed bytecode, never
+by hand): five start cells moved from `REVERT E2()` to `ok, skipped (reason 0)`. The cell now names the skip, so a plain
+`ok` still means that a dispute opened.
+
+| cell | file |
+|---|---|
+| `reopen.startAtStoredNonce` | lifecycle.json |
+| `reopen.startAtOldBaselineNonce` | lifecycle.json |
+| `afterTimeoutFinalize.startAtStoredNonce` | baseline.json |
+| `baselineOffsets.timeoutFinalize.plus1.start` | baseline.json |
+| `baselineOffsets.timeoutFinalize.plus2.start` | baseline.json |
+
+Why they moved: each is a start at a nonce the Account has already passed (equal to the stored nonce, or below it), which J2
+skips. The dispute did not open in either version, and the state after is the same. `settleAtStoredNonce` stays `REVERT E2()`:
+J2 does not touch cooperative updates.
+
+Invariant handlers: `DepositoryHandler` and `TransformerAllowanceHandler` used "the batch succeeded" to mean "the op acted".
+Now a start beside a live dispute and a finalize for a closed one are checked against a state fingerprint (nonce, dispute
+hash, both reserves, collateral) instead of a revert, and `TransformerAllowanceHandler` only finalizes a live dispute.
+`TransformerAllowance` `test_control_faultModeDisputeOnlyClosesViaCleanCounterState` step 2 had submitted the starter's
+finalize with the starter as its own counterentity, so it reverted for the wrong reason; it now names RIGHT and expects
+`TransformerExecutionFailed`.
 
 ## Follow-ups (out of PR #40)
 
-1. **Port the old Hardhat suites.** The inherited suites above still sign the old payloads and call the old three-argument `processBatch`. Port them to the new interface (entity argument, epoch in proofs, V2 domain), or retire each one once `test/vm/` covers its path.
+1. ~~Port the old Hardhat suites~~ Done, see "After the port".
 2. **Repoint the walk.** `bun diff/walk.ts` still deploys `jurisdictions/`. Pointing it at `contracts/` needs the pure encoders plus a shim for og's own signing, because og's signers and adapter use the old payloads and ABI.
-3. **Port the Foundry suites** (section above), together with the Hardhat port.
+3. ~~Port the Foundry suites~~ Done, see "Foundry suites" above.
 4. H3 is no longer open: it is built in the follow-up branch, test `h3-retired-board-cap`.
 5. **Run the TRON deploy path end to end.** `deploy-chain-matrix.cjs` and `compile-tron.cjs` were copied from `jurisdictions/scripts/` and have never been run here; only the deploy gate in front of them is tested (it refuses the testnet floor on TRON mainnet). Run it against TRON Nile before relying on it.

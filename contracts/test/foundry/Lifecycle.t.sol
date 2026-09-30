@@ -17,7 +17,7 @@ contract LifecycleTest is XlnFixture {
   }
 
   function _accountNonce(bytes32 a, bytes32 b) internal view returns (uint256 n) {
-    (n, , , , , , , , , , , , , , ) = dep._accounts(XlnHanko.accountKey(a, b));
+    (n, , , , , , , , , , , , , , , , ) = dep._accounts(XlnHanko.accountKey(a, b));
   }
 
   function _collateralOf(bytes32 a, bytes32 b, uint256 t) internal view returns (uint256 c) {
@@ -25,7 +25,7 @@ contract LifecycleTest is XlnFixture {
   }
 
   function _disputeHashOf(bytes32 a, bytes32 b) internal view returns (bytes32 h) {
-    (, h, , , , , , , , , , , , , ) = dep._accounts(XlnHanko.accountKey(a, b));
+    (, h, , , , , , , , , , , , , , , ) = dep._accounts(XlnHanko.accountKey(a, b));
   }
 
   function _proofBody(bytes32 seed, uint256 tokenId, int256 offdelta)
@@ -175,9 +175,9 @@ contract LifecycleTest is XlnFixture {
   function _expectE3(uint256 actor, Batch memory b) internal {
     bytes memory encoded = abi.encode(b);
     uint256 nonce = dep.entityNonces(entity[actor]) + 1;
-    bytes32 h = XlnHanko.batchHash(dep.DOMAIN_SEPARATOR(), address(dep), encoded, nonce);
+    bytes32 h = XlnHanko.batchHash(dep.DOMAIN_SEPARATOR(), address(dep), entity[actor], encoded, nonce);
     vm.expectRevert(bytes4(keccak256("E3()")));
-    dep.processBatch(encoded, _hanko(actor, h), nonce);
+    dep.processBatch(entity[actor], encoded, _hanko(actor, h), nonce);
   }
 
   /// @notice (a) R2R more than held, repaid by a same-batch collateral withdrawal.
@@ -324,9 +324,9 @@ contract LifecycleTest is XlnFixture {
 
     bytes memory encoded = abi.encode(b);
     uint256 nonce = dep.entityNonces(entity[0]) + 1;
-    bytes32 h = XlnHanko.batchHash(dep.DOMAIN_SEPARATOR(), address(dep), encoded, nonce);
+    bytes32 h = XlnHanko.batchHash(dep.DOMAIN_SEPARATOR(), address(dep), entity[0], encoded, nonce);
     vm.prank(caller);
-    dep.processBatch(encoded, _hanko(0, h), nonce);
+    dep.processBatch(entity[0], encoded, _hanko(0, h), nonce);
 
     assertEq(dep._reserves(entity[0], T), 0, "initiator net must be zero");
     assertEq(dep._reserves(entity[2], T), 1_000);
@@ -389,9 +389,9 @@ contract LifecycleTest is XlnFixture {
     });
     bytes memory encoded = abi.encode(b);
     uint256 nonce = dep.entityNonces(entity[actor]) + 1;
-    bytes memory hanko = _hanko(actor, XlnHanko.batchHash(dep.DOMAIN_SEPARATOR(), address(dep), encoded, nonce));
+    bytes memory hanko = _hanko(actor, XlnHanko.batchHash(dep.DOMAIN_SEPARATOR(), address(dep), entity[actor], encoded, nonce));
     vm.prank(signer[actor]);
-    dep.processBatch(encoded, hanko, nonce);
+    dep.processBatch(entity[actor], encoded, hanko, nonce);
     assertEq(erc20.balanceOf(address(dep)), type(uint256).max, "full ERC20 backing");
     assertEq(dep._reserves(entity[actor], T), type(uint256).max, "full deposited reserve");
     assertEq(erc20.balanceOf(signer[actor]), 0);
@@ -632,7 +632,7 @@ contract LifecycleTest is XlnFixture {
     (uint256 nonce, bytes32 hash) = _startExactWideDispute(proof);
     _assertWideAccount(4, type(uint256).max, 3, type(uint256).max - 3);
     uint256 left = _leftActor();
-    (, , uint256 timeout, , , , , , , , , , , , ) = dep._accounts(XlnHanko.accountKey(entity[0], entity[1]));
+    (, , uint256 timeout, , , , , , , , , , , , , , ) = dep._accounts(XlnHanko.accountKey(entity[0], entity[1]));
     vm.warp(timeout + 1);
     Batch memory finalization = _timeoutFinalize(1 - left, nonce, hash, proof.watchSeed, 0, true);
     finalization.disputeFinalizations[0].finalProofbody = proof;
@@ -757,9 +757,9 @@ contract LifecycleTest is XlnFixture {
     // counterparty to reveal a newer state.
     bytes memory encoded = abi.encode(fin);
     uint256 bn = dep.entityNonces(entity[0]) + 1;
-    bytes32 bh = XlnHanko.batchHash(dep.DOMAIN_SEPARATOR(), address(dep), encoded, bn);
+    bytes32 bh = XlnHanko.batchHash(dep.DOMAIN_SEPARATOR(), address(dep), entity[0], encoded, bn);
     vm.expectRevert();
-    dep.processBatch(encoded, _hanko(0, bh), bn);
+    dep.processBatch(entity[0], encoded, _hanko(0, bh), bn);
 
     vm.warp(block.timestamp + DISPUTE_WINDOW_SECONDS);
     assertTrue(_submit(0, fin), "finalize after delay failed");
@@ -771,7 +771,8 @@ contract LifecycleTest is XlnFixture {
     assertEq(dep._reserves(right, T), 600);
   }
 
-  function test_disputeFinalizeTwiceReverts() public {
+  /// J2: a finalize replayed after the dispute closed is skipped (op 2, reason 2), not reverted, and moves nothing.
+  function test_disputeFinalizeTwiceIsSkipped() public {
     _fundCollateral(1_000);
     bool startedByLeft = entity[0] < entity[1];
     (uint256 nonce, bytes32 pbHash, bytes32 seed) = _startDispute(0, 1, int256(400));
@@ -780,14 +781,10 @@ contract LifecycleTest is XlnFixture {
     Batch memory fin = _timeoutFinalize(1, nonce, pbHash, seed, 400, startedByLeft);
     assertTrue(_submit(0, fin));
 
-    bytes memory encoded = abi.encode(fin);
-    uint256 bn = dep.entityNonces(entity[0]) + 1;
-    bytes32 bh = XlnHanko.batchHash(dep.DOMAIN_SEPARATOR(), address(dep), encoded, bn);
-    vm.expectRevert(); // E5 — no active dispute
-    dep.processBatch(encoded, _hanko(0, bh), bn);
+    _submitSkipped(0, fin, entity[1], T, OP_FINALIZE, SKIP_NO_ACTIVE_DISPUTE, nonce);
   }
 
-  function test_disputeStartOverLiveDisputeReverts() public {
+  function test_disputeStartOverLiveDisputeIsSkipped() public {
     _fundCollateral(1_000);
     _startDispute(0, 1, int256(400));
 
@@ -811,11 +808,8 @@ contract LifecycleTest is XlnFixture {
       starterCounterProofCommitment: bytes32(0)
     });
 
-    bytes memory encoded = abi.encode(b);
-    uint256 bn = dep.entityNonces(me) + 1;
-    bytes32 bh = XlnHanko.batchHash(dep.DOMAIN_SEPARATOR(), address(dep), encoded, bn);
-    vm.expectRevert(); // E6 — dispute in progress
-    dep.processBatch(encoded, _hanko(0, bh), bn);
+    // J2: a start beside a live dispute is skipped (op 0, reason 1); the open dispute stands.
+    _submitSkipped(0, b, other, T, OP_START, SKIP_DISPUTE_ACTIVE, nonce2);
   }
 
   /// @notice The counterparty may finalize immediately — it is accepting the
