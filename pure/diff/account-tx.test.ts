@@ -26,6 +26,7 @@ import { handleJEventClaim } from "../../core/account/tx/handlers/j-events/claim
 import { prepareAccountJClaimTx } from "../../core/account/j-claims/j-claim-transition.ts";
 import { createAccountJClaimSession } from "../../core/account/j-claims/j-claim-session.ts";
 import { createEmptyAccountJClaimAccumulator } from "../../core/account/j-claims/j-claim-accumulator.ts";
+import { SECRET_AT_FRAME_CLOCK } from "./departures.ts";
 import { applyAccountDisputeStarted, applyAccountDisputeFinality } from "../../core/account/settlement/j-finality.ts";
 import { computeAccountStateRoot } from "../../core/account/commitment/state-root.ts";
 import {
@@ -321,6 +322,7 @@ describe(seedTag("account-tx: htlc"), () => {
   });
 
   test("MATCH: htlc_resolve secret/error authority and expiry (payer/beneficiary x timestamp x jHeight x reason) on 400 random resolves", async () => {
+    let departures = 0;
     for (let i = 0; i < 400; i++) {
       const timelock = BigInt(1 + ri(4)), rbh = 1 + ri(3), ts = ri(6), jh = ri(5), resolverIsLeft = ri(2) === 0;
       const outcome = ri(2) === 0 ? "secret" : "error";
@@ -329,7 +331,11 @@ describe(seedTag("account-tx: htlc"), () => {
       const s = ogState([ogDelta(1, { leftCreditLimit: 20n, rightCreditLimit: 20n })]);
       expect((await handleHtlcLock(ogAccount(s), ogLockTx({ timelock, revealBeforeHeight: rbh }), true, ogClock(0, 0))).ok).toBe(true);
       const data = outcome === "secret" ? { lockId: hashHtlcSecret(HEX_SECRET), outcome, secret } : { lockId: hashHtlcSecret(HEX_SECRET), outcome, ...(reason === undefined ? {} : { reason }) };
-      const og = await handleHtlcResolve(s as any, { type: "htlc_resolve", data } as any, resolverIsLeft, jh, ts);
+      const ogAt = (at: number) => handleHtlcResolve(s as any, { type: "htlc_resolve", data } as any, resolverIsLeft, jh, at);
+      // departures.ts SECRET_AT_FRAME_CLOCK: og also refuses a secret at a frame clock on the timelock, the rewrite refuses it by J height only
+      const departs = outcome === "secret" && jh <= rbh && SECRET_AT_FRAME_CLOCK.ogRefuses(BigInt(ts), timelock);
+      if (departs) { expect((await ogAt(ts)).ok).toBe(false); departures++; }
+      const og = await ogAt(outcome === "secret" ? 0 : ts);
       const { body, ctx } = open();
       const locked = unwrap(apply(body, rwLock(HEX_SECRET, { timelock, revealBeforeHeight: BigInt(rbh) }), { ...ctx, nowMs: 0n })).state;
       const rw = apply(locked, { type: "htlc_resolve", ...data }, { ...ctx, byLeft: resolverIsLeft, nowMs: BigInt(ts), jHeight: BigInt(jh) });
@@ -340,6 +346,7 @@ describe(seedTag("account-tx: htlc"), () => {
         expect(rw.value.state.locks.size).toBe(0);
       }
     }
+    expect(departures).toBeGreaterThan(0);
   });
 });
 
@@ -362,7 +369,7 @@ describe(seedTag("account-tx: htlc committed state"), () => {
           : { type: "htlc_resolve", lockId: target.lockId, outcome: "error", ...(ri(2) === 0 ? { reason: "timeout" } : {}) };
         const ogTx = { type: tx.type, data: { ...wireOf(tx) } } as any;
         delete ogTx.data.type;
-        const o = await og.run((acc) => tx.type === "htlc_lock" ? handleHtlcLock(acc, ogTx, byLeft, ogClock(ts, jh)) : handleHtlcResolve(acc.state, ogTx, byLeft, jh, ts));
+        const o = await og.run((acc) => tx.type === "htlc_lock" ? handleHtlcLock(acc, ogTx, byLeft, ogClock(ts, jh)) : handleHtlcResolve(acc.state, ogTx, byLeft, jh, tx.outcome === "secret" ? 0 : ts));
         const r = apply(body, tx, { byLeft, nowMs: BigInt(ts), jHeight: BigInt(jh), accountHeight: 1n });
         expect(r.ok).toBe(o.ok);
         if (r.ok) expect(accountTxMessages(before, tx, { byLeft, nowMs: BigInt(ts), jHeight: BigInt(jh), accountHeight: 1n }, r.value.state, A)).toEqual(o.events as any);
