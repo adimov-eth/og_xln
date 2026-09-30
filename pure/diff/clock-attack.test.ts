@@ -177,6 +177,14 @@ describe("clock attack: a secret resolve is late only by J height, whatever the 
     expect(reveal(NOW_MS, lock.revealBeforeHeight, honest)).toBe("accepted");
   });
 
+  test("a payee cannot revive a late reveal by claiming a low J height: the receiver's own chain height refuses it", () => {
+    const chain = { now: NOW_MS, finalizedJHeight: 500_000n };
+    expect(lock.revealBeforeHeight).toBeLessThan(chain.finalizedJHeight);
+    expect(reveal(NOW_MS, 100n, chain)).toBe("secret_window");
+    // the same claim on a receiver whose height really is that low is a live reveal (control)
+    expect(reveal(NOW_MS, 100n, honest)).toBe("accepted");
+  });
+
   test("a J height claimed far ahead only ends the reveal of the party that claims it", () => {
     expect(MAX_LOCK_HORIZON_BLOCKS).toBeGreaterThan(0);
     expect(reveal(NOW_MS, FIN + BigInt(MAX_LOCK_HORIZON_BLOCKS) * 100n, honest)).toBe("secret_frame_expired");

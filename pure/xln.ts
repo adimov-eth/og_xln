@@ -26365,6 +26365,7 @@ const accountDoor = (s: TxScope, record: CertifiedBoardRecord | null, peer: Enti
     verify: s.ctx.verify,
     self: s.state.id,
     now: s.ctx.timestamp,
+    finalizedJHeight: entityJHeight(s.state),
     autoRebalance: hubConfigOf(s.state) === undefined,
     ...(record === null
       ? {}

@@ -118,6 +118,12 @@ describe("clock authority: the lock horizon is checked on the receiver's clock",
     expect(verdict({ ...inside, revealBeforeHeight: inside.revealBeforeHeight + 1n }, NOW_MS - 30n * DAY)).toBe("lock_horizon");
   });
 
+  test("a frame stamped ahead cannot make a far lock look near: the horizon is the receiver's, not the frame's", () => {
+    const stampedAhead = NOW_MS + 30n * DAY;
+    const nearTheStamp = { timelock: stampedAhead + 3_600_000n, revealBeforeHeight: FIN + 50n };
+    expect(verdict(nearTheStamp, stampedAhead)).toBe("lock_horizon");
+  });
+
   test("a lock inside the reserve stays a lock_window refusal, whatever the frame says", () => {
     const soon = { timelock: NOW_MS + HTLC_ENFORCEMENT_RESERVE_MS, revealBeforeHeight: FIN + 50n };
     expect(verdict(soon, NOW_MS - 30n * DAY)).toBe("lock_window");
