@@ -17,6 +17,7 @@ const hostileArrival = (): RoutedEntityInput => {
   if (toAlice === undefined) throw new Error("the hub sent nothing to Alice");
   return toAlice;
 };
+const txsOf = (i: RoutedEntityInput): readonly unknown[] => (i.input.kind === "txs" ? i.input.txs : []);
 const stampOf = (i: RoutedEntityInput): bigint => (i.input.kind === "txs" ? i.input.timestamp : -1n);
 /** Alice's Runtime clock after the input arrives. */
 const clockAfter = (arrived: RoutedEntityInput): bigint =>
@@ -41,8 +42,7 @@ describe("an input from the network is stamped with the receiver's clock", () =>
     expect(arrived.entityId).toBe(wire.entityId);
     expect(arrived.from).toBe(wire.from);
     expect(arrived.signerId).toBe(wire.signerId);
-    expect(arrived.input.kind === "txs" && wire.input.kind === "txs" ? arrived.input.txs : null)
-      .toEqual(wire.input.kind === "txs" ? wire.input.txs : undefined);
+    expect(txsOf(arrived)).toEqual(txsOf(wire));
   });
 
   test("an input that seeds no clock passes through", () => {

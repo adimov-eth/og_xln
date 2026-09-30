@@ -29899,6 +29899,14 @@ export const convertOutput = (
     ...marker,
   });
 };
+/**
+ * R-CLOCK: the Runtime's clock is the `now` of every local deadline guard and rises to the highest stamp a `txs` input
+ * carries (og: max(previous, ingress seed)), while `convertOutput` puts the sender's clock on the wire input. The Host
+ * therefore stamps every input that arrived from the network with its own clock before the Runtime sees it: a peer's
+ * stamp never moves the receiver's clock. An input that seeds no clock passes through.
+ */
+export const stampArrival = (input: RoutedEntityInput, clock: bigint): RoutedEntityInput =>
+  input.input.kind === "txs" ? { ...input, input: { ...input.input, timestamp: clock } } : input;
 
 // ---- og runtime/frame/intake: shape limits, capabilities, merge ----
 const MAX_RUNTIME_INPUT_RUNTIME_TXS = 10_000;

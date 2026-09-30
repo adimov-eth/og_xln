@@ -1,7 +1,7 @@
 // Entities that each run their own Runtime, and so their own clock: a Runtime's clock never runs behind itself, so two
 // Entities in one Runtime can never disagree about the time. A delivered input is stamped by the receiver's clock.
 import { NOW, unwrap } from "../xln_run.ts";
-import { applyRuntime, convertOutput, runtimeWake, type EntityId, type RoutedEntityInput, type Runtime } from "../xln.ts";
+import { applyRuntime, convertOutput, runtimeWake, stampArrival, type EntityId, type RoutedEntityInput, type Runtime } from "../xln.ts";
 
 /** The Runtimes by name, and which one each Entity lives in. */
 export type World = { readonly runtimes: ReadonlyMap<string, Runtime>; readonly home: ReadonlyMap<EntityId, string> };
@@ -12,7 +12,7 @@ export type Context = () => object;
 
 export const runtimeOf = (w: World, id: EntityId): Runtime => w.runtimes.get(w.home.get(id)!)!;
 export const arrivesAt = (clocks: Clocks, input: RoutedEntityInput): RoutedEntityInput =>
-  input.input.kind === "txs" ? { ...input, input: { ...input.input, timestamp: clocks.get(input.entityId)! } } : input;
+  stampArrival(input, clocks.get(input.entityId)!);
 export const withRuntime = (w: World, id: EntityId, rt: Runtime): World =>
   ({ ...w, runtimes: new Map([...w.runtimes, [w.home.get(id)!, rt]]) });
 export const allAt = (ids: readonly EntityId[], t: bigint): Clocks => new Map(ids.map((id): [EntityId, bigint] => [id, t]));
