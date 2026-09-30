@@ -10064,13 +10064,15 @@ export const planOpen = (
 /** The lenient proposal body just before window[index] (refused txs skipped, as og's per-tx discard does). */
 const lenientBefore = (s: AccountBody, window: readonly WireAccountTx[], index: number, ctx: FoldCtx): AccountBody =>
   proposalFold(s, window.slice(0, index), ctx).state;
+/** How far two honest clocks may disagree (og's 30 s): the lead a stamp may carry and the reserve a deadline keeps. */
+export const CLOCK_SKEW_MS = 30_000n;
 /**
  * How far past its own clock a proposer carries the Account's watermark (og MAX_FRAME_FUTURE_SKEW_MS: og refuses a
  * frame stamped further ahead). No frame is refused for its date (R-CLOCK), so one co-signed far-future stamp would
  * otherwise fix the stamp of every later frame and the fold would refuse every new lock (`now >= timelock`) for good;
  * past this lead the watermark is clamped, and within it the Account heals when real time catches up.
  */
-export const MAX_FRAME_LEAD_MS = 30_000n;
+export const MAX_FRAME_LEAD_MS = CLOCK_SKEW_MS;
 /** og admission.ts: a lagging proposer never mints a frame behind the committed watermark, up to the named lead. */
 const proposalClock = (r: OpenAccount, entityClock: FrameClock): FrameClock => {
   const carried = smaller(r.head.timestamp, entityClock.timestamp + MAX_FRAME_LEAD_MS);
@@ -10266,7 +10268,7 @@ const lazyChecks = <E>(...gs: readonly (() => Result<unknown, E>)[]): Result<voi
  * The reserve every deadline check keeps beside the receiver's own clock (R-CLOCK): a lock must outlive it, a secret
  * must land before it. A frame's timestamp carries no authority, so no frame is refused for its age or future date.
  */
-export const HTLC_ENFORCEMENT_RESERVE_MS = 30_000n;
+export const HTLC_ENFORCEMENT_RESERVE_MS = CLOCK_SKEW_MS;
 export type DeadlineReason =
   | "lock_window" | "lock_horizon" | "secret_window" | "secret_frame_expired" | "payer_cancel_early"
   | "timeout_not_expired";
@@ -10317,7 +10319,7 @@ const scanSecret = (locks: LockBook, lock: DeadlineLock, tx: SecretResolve, at: 
   switch (true) {
     case !opensLock(lock, tx.secret): return ok(locks);
     case deadlinePassed(lock, reserved): return deadlineViolation("secret_window", tx.lockId, true);
-    case at.f.jHeight > lock.revealBeforeHeight: return deadlineViolation("secret_frame_expired", tx.lockId);
+    case secretLate(lock, at.f): return deadlineViolation("secret_frame_expired", tx.lockId);
     default: return ok(mapDelete(locks, tx.lockId));
   }
 };
@@ -41039,13 +41041,15 @@ const commitLocal = (
   const progressed = withProgress(afterTxs.replicaLocal, outs, at);
   return withWitnesses(store, withPrunedHistory(afterTxs, store, progressed, outs), outs, at);
 };
+/** An input that arrived from a peer carries `from`; a local input has none. */
+const isPeerInput = (i: RoutedEntityInput): boolean => i.from !== undefined;
 /**
  * og: max(previous, ingress seed) — the input's own timestamp, else the latest `txs` seed. R-CLOCK: an input that
  * arrived from a peer (`from` set) seeds nothing, because `convertOutput` puts the sender's clock on it; the Runtime's
  * clock is its own, raised by the Host's `timestamp` or by a local input's stamp.
  */
 const frameTimestamp = (rt: Runtime, input: RuntimeInput): bigint => {
-  const local = input.entityInputs.filter((i) => i.from === undefined);
+  const local = input.entityInputs.filter((i) => !isPeerInput(i));
   const seeds = local.flatMap((i) => (i.input.kind === "txs" ? [i.input.timestamp] : []));
   const candidates = [input.timestamp ?? rt.timestamp, ...(input.timestamp === undefined ? seeds : [])];
   return candidates.reduce((a, b) => (b > a ? b : a), rt.timestamp);
@@ -41130,7 +41134,7 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
     if (forged !== undefined) return frameErr(forged);
     // R-CLOCK: a peer's input seeds no clock, so a frame of peer inputs alone runs at the Runtime's last clock unless
     // the Host gives it one. That stale clock would refuse a due cancel or timeout: such a frame is not run without it.
-    if (input.timestamp === undefined && input.entityInputs.some((i) => i.from !== undefined)) {
+    if (input.timestamp === undefined && input.entityInputs.some(isPeerInput)) {
       return frameErr("RUNTIME_PEER_INPUT_WITHOUT_HOST_CLOCK");
     }
     const timestamp = frameTimestamp(rt, input);
