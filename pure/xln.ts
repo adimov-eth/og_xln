@@ -42543,6 +42543,11 @@ export type HostTx =
 export type Host = {
   readonly self: EntityId;
   readonly account: AccountReplica;
+  /**
+   * The highest J block the Host has observed; the receiver-side deadline scan (lock horizon, secret window) reads it
+   * as the Host's own chain height, as the Entity path reads its finalized J height, never one a peer's frame claims.
+   */
+  readonly finalizedJHeight: bigint;
   readonly j: JState;
   readonly ladder: ReadonlyMap<string, RatioRecord>;
   readonly height: bigint;
@@ -42561,6 +42566,7 @@ export const genesisHost = (self: EntityId, account: AccountReplica): Result<Hos
   map(partyOf(replicaId(account), self), () => ({
     self,
     account,
+    finalizedJHeight: 0n,
     j: { reserves: new Map(), debts: EMPTY_DEBTS, jBatch: DORMANT },
     ladder: new Map(),
     height: 0n,
@@ -42572,6 +42578,7 @@ const hostDoor = (host: Host, ctx: HostCtx, verify: Verify): DoorContext => ({
   verify,
   self: host.self,
   now: ctx.timestamp,
+  finalizedJHeight: host.finalizedJHeight,
   ...opt("deltaTransformer", host.deltaTransformer),
 });
 
@@ -42778,6 +42785,11 @@ const routeEntity = (tx: EntityRouteTx, self: EntityId, id: AccountId): Result<A
     // og htlcPayment and the cross-j setup (prepare / materialize / register, foldTx) are Entity txs,
     // never a one-Account Host route.
   });
+/** A J event carries the block it was read from; the Host's chain height only rises. */
+const observedHeight = (host: Host, op: JOp): bigint => {
+  const block = op.type === "j_event" ? BigInt(op.blockNumber) : host.finalizedJHeight;
+  return block > host.finalizedJHeight ? block : host.finalizedJHeight;
+};
 /**
  * A J op moves the Host's J state and frees its latches; a dispute event on its Account also lands there, then retires
  * the J batch.
@@ -42790,7 +42802,8 @@ const applyHostJ = (
 ): Result<HostStep, AccountReplicaError | HostError> =>
   chain(partyOf(replicaId(host.account), host.self), (party) =>
     chain(applyJ(host.j, op, host.self, party.peer, ctx, host.account.state), ({ j, effects, release }) => {
-      const moved: Host = { ...host, j, account: releaseLatches(host.account, party.peer, release) };
+      const account = releaseLatches(host.account, party.peer, release);
+      const moved: Host = { ...host, j, finalizedJHeight: observedHeight(host, op), account };
       const dispute = disputeOpOf(op);
       const finality = dispute === undefined ? ok(undefined) : disputeFinalityOf(host, dispute, party.peer);
       return chain(finality, (f): Result<HostStep, AccountReplicaError | HostError> => {
