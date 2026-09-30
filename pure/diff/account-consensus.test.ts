@@ -30,9 +30,9 @@ import type { AccountFrame as OgFrame, AccountInput as OgInput, AccountReplica a
 
 // ---- rewrite ----
 import {
-  ACCOUNT_MEMPOOL_SIZE, tokenId, accountDisputeHash, applyEntityInput, createEntity, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, incomingDeadline, keccakUtf8, disputeRequirement, disputeShapes, frameStateHash, localProof, planAccountProposal, proposalPlan, replicaId, unqueued,
+  ACCOUNT_MEMPOOL_SIZE, MAX_FRAME_LEAD_MS, tokenId, accountDisputeHash, applyEntityInput, createEntity, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, incomingDeadline, keccakUtf8, disputeRequirement, disputeShapes, frameStateHash, localProof, planAccountProposal, proposalPlan, replicaId, unqueued,
 } from "../xln.ts";
-import { FUTURE_FRAME } from "./departures.ts";
+import { FUTURE_FRAME, SECRET_AT_FRAME_CLOCK } from "./departures.ts";
 import type { AccountFrame, AccountInput, AccountReplica, EntityId, FrameClock, WireAccountTx } from "../xln.ts";
 import { ALICE, BOB, CLOCK, NOW, TERMS, TOKEN, aliceAddr, verifiers, causeOf, ackInput, disputeFor, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap, unwrapErr } from "../xln_run.ts";
 
@@ -347,9 +347,10 @@ describe(seedTag("account-consensus: driven scenarios"), () => {
   });
 
   test("MATCH: proposer clock below the last committed frame — both clamp to max(entityTs, lastFrame.timestamp)", () => {
-    const pairs: Array<[number, number]> = [[1_000, 5_000], [5_000, 5_000], [9_000, 5_000], [0, 0], [0, 7]];
+    const pairs: Array<[number, number]> = [[1_000, 5_000], [5_000, 5_000], [9_000, 5_000], [0, 0], [0, 7], [1_000, 31_000], [1_000, 31_001], [0, 100_000]];
     let seed = seedOf(7);
     for (let i = 0; i < 6; i++) { seed = lcg31(seed); pairs.push([seed % 100_000, (seed >> 8) % 100_000]); }
+    const leads = new Set<boolean>();
     for (const [entityTs, prevTs] of pairs) {
       const a = ogAccount();
       a.currentHeight = 1;
@@ -362,8 +363,12 @@ describe(seedTag("account-consensus: driven scenarios"), () => {
       expect(p.head.timestamp).toBe(BigInt(prevTs));
       const second = proposeFrom(p, ALICE, [TX2], { timestamp: BigInt(entityTs), jHeight: 0n }).replica;
       if (second._tag !== "proposed") throw new Error(second._tag);
-      expect(second.candidate.frame.timestamp).toBe(BigInt(adm.frameTimestamp));
+      // R-CLOCK finding 2: og carries the whole watermark; the rewrite carries it only up to MAX_FRAME_LEAD_MS past its own clock
+      const capped = BigInt(prevTs) - BigInt(entityTs) > MAX_FRAME_LEAD_MS;
+      expect(second.candidate.frame.timestamp).toBe(capped ? BigInt(entityTs) + MAX_FRAME_LEAD_MS : BigInt(adm.frameTimestamp));
+      leads.add(capped);
     }
+    expect([...leads].sort()).toEqual([false, true]);
   });
 
   test("MATCH: simultaneous proposals — LEFT ignores RIGHT's same-height frame and keeps its own pending frame", async () => {
@@ -657,7 +662,10 @@ describe(seedTag("account-consensus: incoming preflight"), () => {
       const ogV = og === undefined ? "none" : og.disposition;
       const rwV = rw.ok ? "none" : rw.error.dispute ? "dispute" : "reject";
       verdicts.add(ogV);
-      expect(rwV).toBe(ogV);
+      // departures.ts SECRET_AT_FRAME_CLOCK: og also refuses a secret at a frame clock on the timelock; the rewrite refuses it by J height only
+      const departs = kind === 1 && SECRET_AT_FRAME_CLOCK.ogRefuses(BigInt(frame.timestamp), lock.timelock) && frame.jHeight <= lock.rbh;
+      if (departs && rwV === "none") expect(ogV).toBe("reject");
+      else expect(rwV).toBe(ogV);
     }
     expect([...verdicts].sort()).toEqual(["dispute", "none", "reject"]);
   });
