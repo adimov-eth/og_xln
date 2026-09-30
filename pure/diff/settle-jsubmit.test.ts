@@ -72,7 +72,7 @@ const randomJBatch = (): JBatch => {
     disputeFinalizations: [],
     reserveToCollateral: rng() < 0.5 ? [] : [{ tokenId: 1 + ri(2), receivingEntity: ENTITY, pairs: [{ entity: pick([PEER, OTHER]), amount: 5n }] }],
   };
-  const sealed = unwrap(jBroadcast({ ...s, draft: withOps }, { entityId: ENTITY, chainId: 31337, depository: DEP, signerId: SIGNER, timestamp: 5 }));
+  const sealed = unwrap(jBroadcast({ ...s, draft: withOps }, { entityId: ENTITY, chainId: 31337, depository: DEP, signerId: SIGNER, timestamp: 5, treasury: { reserves: e.reserves, debts: EMPTY_DEBTS } }));
   let out = sealed.jBatch as JBatch;
   const sent = sentOf(out)!;
   if (rng() < 0.3) out = { ...out, draft: queuedBatch(queueR2R({ ...e, jBatch: { ...out, phase: { _tag: "idle", accumulating: false } } }, OTHER, 2, 4n)).draft };

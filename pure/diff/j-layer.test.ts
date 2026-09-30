@@ -603,7 +603,7 @@ describe(seedTag("jBatchState (og jurisdiction/machine/batch, entity/tx/handlers
         s = { ...initJBatch(), chainNonce: drafted.chainNonce, recovery: [drafted.draft] };
         if (rng() < 0.6) s = queuedBatch(queueR2R({ ...e, jBatch: s }, PEER_ACTIVE, 2, 5n));
       }
-      const sealed = unwrap(jBroadcast(s, { entityId: ENTITY, chainId: 31337, depository: DEP, signerId: "s1", timestamp: 5 }) as any) as any;
+      const sealed = unwrap(jBroadcast(s, { entityId: ENTITY, chainId: 31337, depository: DEP, signerId: "s1", timestamp: 5, treasury: e }) as any) as any;
       const sent = sentOf(sealed.jBatch)!;
       expect(sent.entityNonce).toBe(s.chainNonce + 1);
       expect(sent.batchHash).toBe(computeBatchHankoHash(31337n, DEP, encodeJBatch(ogDecoded(sent.batch)), BigInt(sent.entityNonce)));
@@ -631,7 +631,7 @@ describe(seedTag("jBatchState (og jurisdiction/machine/batch, entity/tx/handlers
   }, 60_000);
 
   test("PORT (og handleJBroadcast needs a runtime jurisdiction registry): j_broadcast refuses while a batch is in flight, skips an empty draft, seals recovery work first and latches autoBroadcastDraft while work remains", () => {
-    const ctx = { entityId: ENTITY, chainId: 31337, depository: DEP, signerId: "s1", timestamp: 9 };
+    const ctx = { entityId: ENTITY, chainId: 31337, depository: DEP, signerId: "s1", timestamp: 9, treasury: { reserves: new Map([[1, 100n]]), debts: EMPTY_DEBTS } };
     expect(unwrap(jBroadcast(initJBatch(), ctx))).toEqual({ jBatch: initJBatch(), note: "j_broadcast skipped: jBatch is empty" });
     const e: JEntity = { entityId: ENTITY, reserves: new Map([[1, 100n]]), debts: EMPTY_DEBTS, jBatch: DORMANT, accounts: new Set() };
     const draft = queuedBatch(queueR2R(e, OTHER, 1, 3n)), recovered = queuedBatch(queueR2R(e, PEER_ACTIVE, 1, 4n));

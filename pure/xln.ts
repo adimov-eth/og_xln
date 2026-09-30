@@ -2841,6 +2841,38 @@ export const queueR2C = (
   return map(drafted, queued(`${message} (use j_broadcast to commit)`));
 };
 
+// -- R-FUNDED: a batch is signed only with the outflows the reserve covers --
+
+/** The lists of a batch whose ops draw on the initiator's reserve, in the order the Depository runs them. */
+const OUTFLOW_KINDS = ["reserveToReserve", "settlements", "reserveToCollateral", "reserveToExternalToken"] as const;
+type OutflowKind = (typeof OUTFLOW_KINDS)[number];
+/** One op that draws on the reserve, with the list it was queued in. */
+type Outflow = { [K in OutflowKind]: Readonly<{ kind: K; op: QueuedBatch[K][number] }> }[OutflowKind];
+const outflowsOf = (b: QueuedBatch): readonly Outflow[] =>
+  OUTFLOW_KINDS.flatMap((kind) => b[kind].map((op) => ({ kind, op }) as Outflow));
+const withOutflow = (b: QueuedBatch, o: Outflow): QueuedBatch => ({ ...b, [o.kind]: [...b[o.kind], o.op] });
+const withoutOutflows = (b: QueuedBatch): QueuedBatch =>
+  ({ ...b, reserveToReserve: [], settlements: [], reserveToCollateral: [], reserveToExternalToken: [] });
+/** A batch split by what the reserve covers: the batch to sign, and the outflows that wait. */
+type Funded = Readonly<{ signed: QueuedBatch; deferred: readonly Outflow[] }>;
+/**
+ * R-FUNDED: the planner signs an outflow only if the reserve covers it at the moment it signs, in every situation, not
+ * only behind a deposit. Signed unfunded, the Depository would fail the batch, take its nonce, and the next round would
+ * sign the same batch again. Outflows are tried oldest first within their list (lists in the Depository's order), and
+ * one that does not fit is skipped, so a later one that fits still goes. Each is judged by the whole-batch reserve
+ * simulation, so inflows ahead of it in the batch count and outstanding debt is netted (R2C-DEBT-FIRST).
+ */
+const fundedBatch = (entity: string, treasury: Treasury, batch: QueuedBatch): Funded => {
+  const debt = openOutgoingDebtTotals(treasury.debts.out);
+  const covered = (b: QueuedBatch): boolean =>
+    simulateBatchReserves(entity, treasury.reserves, b, debt).issues.length === 0;
+  const start: Funded = { signed: withoutOutflows(batch), deferred: [] };
+  return outflowsOf(batch).reduce((acc, o) => {
+    const trial = withOutflow(acc.signed, o);
+    return covered(trial) ? { ...acc, signed: trial } : { ...acc, deferred: [...acc.deferred, o] };
+  }, start);
+};
+
 // -- broadcasting, finalizing and recovering the sent batch --
 
 type BroadcastSplit = {
@@ -2897,13 +2929,14 @@ const parkRemainder = (s: JBatch, fromRecovery: boolean, remainder: QueuedBatch)
   const later = s.recovery.slice(1);
   return { ...s, recovery: batchEmpty(remainder) ? later : [remainder, ...later], autoBroadcast: false };
 };
+/** What a broadcast signs against: the Entity's committed reserves and debts, and any fee overrides. */
+type SealContext = BroadcastContext & Readonly<{ treasury: Treasury; feeOverrides?: FeeOverrides | undefined }>;
 /**
  * og handleJBroadcast: refuse while a batch is in flight; skip an empty draft; seal the next batch
- * at entityNonce + 1, park the rest, and hand its batch hash to the quorum.
+ * at entityNonce + 1, park the rest, and hand its batch hash to the quorum. R-FUNDED: an outflow the reserve does not
+ * cover is parked with the rest, and a batch left with nothing to sign is skipped, taking no nonce.
  */
-export const jBroadcast = (
-  s: JSubmission, ctx: BroadcastContext & { readonly feeOverrides?: FeeOverrides | undefined },
-): Result<Broadcast, JBatchError> => {
+export const jBroadcast = (s: JSubmission, ctx: SealContext): Result<Broadcast, JBatchError> => {
   if (s._tag === "dormant") return batchErr("No jBatchState found for j_broadcast");
   const pending = sentOf(s);
   // og counts submit attempts outside consensus: a committed sent batch always reads zero
@@ -2913,10 +2946,15 @@ export const jBroadcast = (
   if (!hasJBatchWork(s)) return ok({ jBatch: s, note: "j_broadcast skipped: jBatch is empty" });
   if (ctx.chainId === 0) return ok({ jBatch: s, note: "Missing chainId" });
   if (ctx.signerId === "") return ok({ jBatch: s, note: "No signerId available" });
-  const { fromRecovery, selected, remainder } = nextToSeal(s);
+  const { fromRecovery, selected: taken, remainder: rest } = nextToSeal(s);
   if (unusableDepository(ctx)) return batchErr(`INVALID_HANKO_DOMAIN:${ctx.chainId}:${ctx.depository}`);
-  const limit = jBatchLimitIssue(selected);
+  const limit = jBatchLimitIssue(taken);
   if (limit !== undefined) return batchErr(`J_BATCH_LIMIT_EXCEEDED: j_broadcast: ${limit}`);
+  const { signed: selected, deferred } = fundedBatch(ctx.entityId, ctx.treasury, taken);
+  if (batchEmpty(selected)) {
+    return ok({ jBatch: s, note: "j_broadcast skipped: the reserve covers none of the queued ops" });
+  }
+  const remainder = deferred.reduce(withOutflow, rest);
   return map(encodeJBatch(selected), (encodedBatch): Broadcast => {
     const nonce = s.chainNonce + 1;
     const batchHash = sealedHash(ctx, encodedBatch, nonce);
@@ -18354,10 +18392,11 @@ const sealJBroadcast = (d: Draft, x: EntityJTx<"j_broadcast">, timestamp: bigint
   if (usableAddress(d.state.jurisdiction.depositoryAddress) === null) return invariant("INVALID_DEPOSITORY_ADDRESS");
   if (usableAddress(d.state.jurisdictionConfig?.entityProviderAddress) === null)
     return invariant("INVALID_ENTITY_PROVIDER_ADDRESS");
-  const sealed = jBroadcast(jb, { ...jSubmission(d.state, signer, timestamp), feeOverrides: x.feeOverrides });
+  const treasury = { reserves: committedReserves(d.state), debts: committedDebts(d.state) };
+  const sealed = jBroadcast(jb, { ...jSubmission(d.state, signer, timestamp), treasury, feeOverrides: x.feeOverrides });
   if (!sealed.ok) return invariant(sealed.error.reason);
-  const { jBatch, jTx, hashToSign } = sealed.value;
-  if (jTx === undefined) return invariant("J_BROADCAST_SEALED_WITHOUT_JTX");
+  const { jBatch, jTx, hashToSign, note } = sealed.value;
+  if (jTx === undefined) return note === undefined ? invariant("J_BROADCAST_SEALED_WITHOUT_JTX") : refuse(note);
   const priority = takeBroadcastBatch(jb.recovery[0] ?? jb.draft).disputePriority
     ? ["⚖️ Dispute operations broadcast before ordinary queued operations"]
     : [];
@@ -42628,7 +42667,9 @@ export const applyJ = (
         queueE2R(e, { contractAddress: x.tokenAddress, amount: x.amount, internalTokenId: Number(x.internalTokenId) }),
       ),
     j_broadcast: (x) => {
-      const target = { entityId: self, chainId: x.chainId, depository: x.depository, signerId: x.signerId, timestamp };
+      const treasury = { reserves: j.reserves, debts: j.debts };
+      const { chainId, depository, signerId } = x;
+      const target = { entityId: self, chainId, depository, signerId, timestamp, treasury };
       return map(jBroadcast(j.jBatch, target), (b) => submitted(j, b));
     },
     j_rebroadcast: (x) => {
