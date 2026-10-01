@@ -65,7 +65,8 @@ export type Problem =
   | Readonly<{ _tag: "KillerDropped"; id: string; killer: Killer }>
   | Readonly<{ _tag: "KillerNotFound"; id: string; killer: Killer }>
   | Readonly<{ _tag: "KillerInUnclaimedLayer"; id: string; killer: Killer }>
-  | Readonly<{ _tag: "KillerOwedButPresent"; id: string; killer: Killer; owed: string }>;
+  | Readonly<{ _tag: "KillerOwedButPresent"; id: string; killer: Killer; owed: string }>
+  | Readonly<{ _tag: "OwnerIsAPullRequest"; id: string; where: string; owner: string }>;
 
 export const describeProblem = (problem: Problem): string => {
   switch (problem._tag) {
@@ -87,6 +88,8 @@ export const describeProblem = (problem: Problem): string => {
       return `${problem.id}: killer "${problem.killer.name}" (${problem.killer.kind}, ${problem.killer.layer}) is not among the names`;
     case "KillerInUnclaimedLayer":
       return `${problem.id}: killer "${problem.killer.name}" is in the ${problem.killer.layer} layer, where this row holds nothing (the cell is n/a or unstated)`;
+    case "OwnerIsAPullRequest":
+      return `${problem.id}: ${problem.where} is owed to "${problem.owner}", which names a pull request; name the thread or slice that brings it`;
     case "RowRemoved":
       return `${problem.id}: the row was in the base register and is gone (retire it with retired_by instead)`;
     case "CellWeakened":

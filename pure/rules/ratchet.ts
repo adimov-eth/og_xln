@@ -1,7 +1,7 @@
 // A register may only grow. Compared with the register at the base commit: a row may not vanish, a cell may not
 // drop from hold to owed, from owed to not applicable, or from a stated cell back to unstated, and a killer the base named may not disappear.
 // A claim (hold, owed) outranks "n/a", so a rule cannot leave a column's denominator by giving a reason. A rule is retired
-// with retired_by, which the gate prints so the diff is reviewed.
+// with retired_by, which the gate prints so the diff is reviewed; so are the n/a cells the change adds or rewrites.
 import type { Cell, Problem, Register, Row } from "./model.ts";
 import { LAYERS } from "./model.ts";
 
@@ -37,7 +37,16 @@ const dropped = (before: Row, after: Row): readonly Problem[] =>
     .filter((killer) => !after.killers.some((other) => sameKiller(killer, other)))
     .map((killer) => ({ _tag: "KillerDropped", id: before.id, killer }));
 
-export type Ratchet = Readonly<{ problems: readonly Problem[]; retirements: readonly string[] }>;
+// The n/a cells a change adds or rewrites, with their reasons, so a reviewer reads this list instead of rebuilding it from the diff: a
+// live rule's n/a cell that the base did not have, or that the base had with another reason.
+const notApplicableCells = (before: Row | undefined, after: Row): readonly string[] =>
+  LAYERS.flatMap((layer) => {
+    const cell = after.cells[layer];
+    const was = before?.cells[layer];
+    return cell._tag === "na" && !(was?._tag === "na" && was.reason === cell.reason) ? [`${after.id} ${layer}: ${cell.reason}`] : [];
+  });
+
+export type Ratchet = Readonly<{ problems: readonly Problem[]; retirements: readonly string[]; notApplicable: readonly string[] }>;
 
 export const ratchet = (base: Register, now: Register): Ratchet => {
   const pairs = base.map((before) => ({ before, after: now.find((row) => row.id === before.id) }));
@@ -48,5 +57,6 @@ export const ratchet = (base: Register, now: Register): Ratchet => {
   return {
     problems: [...removed, ...live.flatMap((pair) => [...weakened(pair.before, pair.after), ...dropped(pair.before, pair.after)])],
     retirements: newlyRetired.map((pair) => `${pair.after.id} retired into ${(pair.after.retiredBy ?? []).join(", ")}`),
+    notApplicable: now.filter((row) => row.retiredBy === undefined).flatMap((row) => notApplicableCells(base.find((before) => before.id === row.id), row)),
   };
 };

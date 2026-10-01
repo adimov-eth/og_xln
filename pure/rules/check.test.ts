@@ -118,8 +118,8 @@ describe("the gate is red when an id is missing from a layer that must hold it",
 });
 
 describe("owed cells and killers are open work, and go red once they are already satisfied", () => {
-  const owedCell = { ...row("J5").cells, arrival: { _tag: "owed", by: "#41" } } as const;
-  const owedKiller = { kind: "bug", layer: "arrival", name: "no-h1", owed: "#41" } as const;
+  const owedCell = { ...row("J5").cells, arrival: { _tag: "owed", by: "the spec thread" } } as const;
+  const owedKiller = { kind: "bug", layer: "arrival", name: "no-h1", owed: "the spec thread" } as const;
   const owing = row("J5", { cells: owedCell, killers: [{ kind: "test", layer: "contract", name: "the killer test" }, owedKiller] });
 
   test("owed: no problem, counted as owed", () => {
@@ -235,7 +235,7 @@ describe("the register folder", () => {
 
   test("cells are -, hold, owed: <by> or n/a: <reason>", () => {
     expect(parseCell("x", "-")).toEqual({ ok: true, value: { _tag: "unstated" } });
-    expect(parseCell("x", "owed: #41").ok).toBe(true);
+    expect(parseCell("x", "owed: spec thread").ok).toBe(true);
     expect(parseCell("x", "owed:").ok).toBe(false);
     expect(parseCell("x", "yes").ok).toBe(false);
   });
@@ -327,6 +327,28 @@ describe("the real tree", () => {
   });
 });
 
+describe("an owner is a thread or a slice, never a pull request number", () => {
+  const owing = (by: string, killerOwed?: string): Row =>
+    row("H1", {
+      cells: { arrival: { _tag: "owed", by }, quint: notApplicable, contract: { _tag: "hold" }, rig: notApplicable, ts: notApplicable },
+      killers: [{ kind: "test", layer: "contract", name: "the killer test" }, ...(killerOwed === undefined ? [] : [{ kind: "bug" as const, layer: "arrival" as const, name: "k", owed: killerOwed }])],
+    });
+  const problems = (each: Row) => evaluate([each], [name("title", "H1 holds"), killerName]).problems.map(describeProblem);
+
+  test("red: owed: #69 and owed: PR 41 in a cell, and #41 in a killer, each naming where", () => {
+    ["#69", "#69 (known finding)", "the cut, see #107", "PR 41", "pr#7"].forEach((by) => expect(problems(owing(by))).toEqual([`H1: the arrival cell is owed to "${by}", which names a pull request; name the thread or slice that brings it`]));
+    expect(problems(owing("spec thread", "#41"))).toEqual([`H1: killer "k" is owed to "#41", which names a pull request; name the thread or slice that brings it`]);
+  });
+
+  test("a thread or a slice is fine, ids with digits included", () => {
+    ["test rig", "the cut (Account slice)", "spec thread (an Arrival page for R-A1)", "Q-J-13 follow-up"].forEach((by) => expect(problems(owing(by))).toEqual([]));
+  });
+
+  test("a retired rule is not judged", () => {
+    expect(evaluate([{ ...owing("#69"), retiredBy: ["H2"], killers: [] }, row("H2")], [name("title", "H2 holds"), killerName]).problems).toEqual([]);
+  });
+});
+
 describe("the register may only grow (ratchet against the base register)", () => {
   const held = row("H1");
   const base: Register = [held, row("H2")];
@@ -373,10 +395,26 @@ describe("the register may only grow (ratchet against the base register)", () =>
   });
 
   test("red: a killer the base named (not owed) disappears; an owed one may change", () => {
-    const withOwed = row("H1", { killers: [{ kind: "test", layer: "contract", name: "the killer test" }, { kind: "bug", layer: "arrival", name: "x", owed: "#41" }] });
-    const dropsReal = row("H1", { killers: [{ kind: "bug", layer: "arrival", name: "x", owed: "#41" }] });
+    const withOwed = row("H1", { killers: [{ kind: "test", layer: "contract", name: "the killer test" }, { kind: "bug", layer: "arrival", name: "x", owed: "the spec thread" }] });
+    const dropsReal = row("H1", { killers: [{ kind: "bug", layer: "arrival", name: "x", owed: "the spec thread" }] });
     expect(ratchet([withOwed], [dropsReal]).problems.map((problem) => problem._tag)).toEqual(["KillerDropped"]);
     expect(ratchet([withOwed], [row("H1")]).problems).toEqual([]);
+  });
+
+  test("the n/a cells a change adds or rewrites are listed with their reasons; ones it leaves alone are not", () => {
+    // `held` and `row("H2")` carry four n/a cells each (arrival, quint, rig, ts) with the same reason.
+    expect(ratchet(base, [held, row("H2")]).notApplicable).toEqual([]);
+    const newRow = ratchet(base, [held, row("H2"), row("H9")]).notApplicable;
+    expect(newRow).toEqual(["arrival", "quint", "rig", "ts"].map((layer) => `H9 ${layer}: this layer has no part in the rule`));
+    const owedRig = { ...held.cells, rig: { _tag: "owed", by: "the rig" } } as const;
+    const becomes = ratchet([row("H1", { cells: owedRig }), row("H2")], [held, row("H2")]).notApplicable;
+    expect(becomes).toEqual(["H1 rig: this layer has no part in the rule"]);
+    const reworded = { ...held.cells, ts: { _tag: "na", reason: "the reason was rewritten" } } as const;
+    expect(ratchet(base, [row("H1", { cells: reworded }), row("H2")]).notApplicable).toEqual(["H1 ts: the reason was rewritten"]);
+  });
+
+  test("a retired rule lists no n/a cells", () => {
+    expect(ratchet(base, [held, row("H2", { retiredBy: ["H1"], killers: [] })]).notApplicable).toEqual([]);
   });
 
   test("retiring a rule is allowed only into live successors, and is printed", () => {

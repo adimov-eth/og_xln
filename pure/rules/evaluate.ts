@@ -92,10 +92,25 @@ const killerProblem = (row: Row, { killer, verdict }: RowReport["killers"][numbe
 export const problemsOf = (report: RowReport): readonly Problem[] =>
   report.row.retiredBy === undefined ? liveProblems(report) : [];
 
+// An owner is the thread or the slice that brings a name. A pull request number ("#69", "PR 69") stops meaning anything the day it merges, so the
+// cell would still say owed to a PR that is gone.
+const namesAPullRequest = (owner: string): boolean => /#\d|\bPRs?\s*\d/i.test(owner);
+
+const ownerProblems = (row: Row): readonly Problem[] => [
+  ...LAYERS.flatMap((layer): readonly Problem[] => {
+    const cell = row.cells[layer];
+    return cell._tag === "owed" && namesAPullRequest(cell.by) ? [{ _tag: "OwnerIsAPullRequest", id: row.id, where: `the ${layer} cell`, owner: cell.by }] : [];
+  }),
+  ...row.killers.flatMap((killer): readonly Problem[] =>
+    killer.owed !== undefined && namesAPullRequest(killer.owed) ? [{ _tag: "OwnerIsAPullRequest", id: row.id, where: `killer "${killer.name}"`, owner: killer.owed }] : [],
+  ),
+];
+
 const liveProblems = (report: RowReport): readonly Problem[] => [
   ...(report.row.killers.length === 0 ? [{ _tag: "NoKiller", id: report.row.id } as const] : []),
   ...LAYERS.flatMap((layer) => cellProblem(report, layer)),
   ...report.killers.flatMap((entry) => killerProblem(report.row, entry)),
+  ...ownerProblems(report.row),
 ];
 
 const duplicateIds = (register: Register): readonly Problem[] =>

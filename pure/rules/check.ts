@@ -119,11 +119,14 @@ const runRegister = (): boolean => {
     console.error(`FAIL ${base.error.detail}`);
     process.exit(1);
   }
-  const grown = base.value._tag === "Base" ? ratchet(base.value.register, parsed.value) : { problems: [], retirements: [] };
+  const grown = base.value._tag === "Base" ? ratchet(base.value.register, parsed.value) : { problems: [], retirements: [], notApplicable: [] };
   const checked = evaluate(parsed.value, names);
   const evaluation = { ...checked, problems: [...checked.problems, ...grown.problems] };
   console.log(args.includes("--matrix") ? renderMarkdown(evaluation) : renderText(evaluation));
   grown.retirements.forEach((line) => console.log(`NOTE ${line}`));
+  // The reviewer reads these reasons: each is a layer this change takes out of a rule's denominator.
+  if (grown.notApplicable.length > 0) console.log(`NOTE ${grown.notApplicable.length} n/a cells added or changed since the base:`);
+  grown.notApplicable.forEach((line) => console.log(`NOTE n/a ${line}`));
   return evaluation.problems.length === 0;
 };
 
