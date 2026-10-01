@@ -3,8 +3,10 @@ name: build-and-test
 on:
   push:
     branches: [main, develop]
+  # Every pull request, whatever base it targets or files it touches: the One gate checks are required, so a PR that never
+  # got them would sit blocked forever (a PR stacked on another branch had no run at all). rules/ci/ci-triggers.ts refuses a
+  # branches, paths or types filter here.
   pull_request:
-    branches: [main, develop]
   workflow_dispatch:
 
 concurrency:
