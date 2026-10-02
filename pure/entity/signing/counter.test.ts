@@ -2,8 +2,9 @@
 // it, finalizes with its counter once the chain registered it, and never offers a proof the chain would rank below the
 // dispute's. The Entities here sign for real, so the counter carries the signature the peer gave over its head.
 import { describe, expect, test } from "bun:test";
+import { proofBodyOf } from "../../account/proof/body.ts";
 import { proofBodyHash } from "../../chain/proof/proof.ts";
-import { credit, open, OPENED_WITH, pay } from "../fixtures.ts";
+import { anchor, credit, open, OPENED_WITH, pay } from "../fixtures.ts";
 import { type Answer, emptyEntity, type EntityState, type JAction, type JEvent } from "../model.ts";
 import { ALICE, BOB, must, run, signed } from "./keys.ts";
 
@@ -247,6 +248,44 @@ describe("entity/signing R-DISPUTE-WATCH a counter registered by whoever is a fi
 
   test("R-DISPUTE-WATCH a registered counter whose body the node cannot rebuild is waited out, never guessed", () => {
     const strange = run(ackLost.bob, openedBy(start), { ...registered, bodyHash: OPENED_WITH.bodyHash });
+    expect(finalsOf(run(strange.state, over).chain)).toEqual([]);
+  });
+});
+
+describe("entity/signing R-DISPUTE-WATCH a newer counter registered over the node's own is the one finalized with", () => {
+  // Bob proposed a frame of his own that Alice co-signed and he never heard the ack of; then the dispute opens.
+  const bobPending = run(ackLost.bob, pay(ALICE.id, 3n));
+  const start = startOf(ackLost.alice);
+  const asked = run(bobPending.state, openedBy(start));
+  const [counter] = countersOf(asked.chain);
+  if (counter?._tag !== "counter") expect.unreachable("no counter");
+  const account = bobPending.state.accounts.get(ALICE.id) ?? expect.unreachable("no Account");
+  const frame = account.pending?.frame ?? expect.unreachable("no pending frame");
+  const newer = frame.firstNonce + BigInt(frame.slot) - 1n;
+  const registered = (nonce: bigint, bodyHash: string, proposerIsLeft = counter.proposerIsLeft): JEvent =>
+    ({ _tag: "j_countered", peer: ALICE.id, nonce, proposerIsLeft, bodyHash });
+  const ownHash = must(proofBodyHash(counter.body));
+  const over: JEvent = { _tag: "j_window_over", peer: ALICE.id };
+
+  test("R-DISPUTE-WATCH the node's own counter, registered alone, is finalized with as before", () => {
+    const own = run(asked.state, registered(counter.nonce, ownHash));
+    const [final] = finalsOf(run(own.state, over).chain);
+    expect(final).toMatchObject({ _tag: "dispute_finalize", nonce: counter.nonce, body: counter.body });
+  });
+
+  test("R-DISPUTE-WATCH a counter a tower registered over the node's own is finalized with, not the node's own", () => {
+    expect(newer).toBeGreaterThan(counter.nonce);
+    const own = run(asked.state, registered(counter.nonce, ownHash));
+    const [after] = [account.pending?.after ?? expect.unreachable("no state")];
+    const body = must(proofBodyOf(anchor.terms, after));
+    const tower = run(own.state, registered(newer, must(proofBodyHash(body)), !counter.proposerIsLeft));
+    const finals = finalsOf(run(tower.state, over).chain);
+    expect(finals.map((a) => (a._tag === "dispute_finalize" ? [a.nonce, a.body] : []))).toEqual([[newer, body]]);
+  });
+
+  test("R-DISPUTE-WATCH a newer counter the node cannot rebuild is waited out, never the node's own at the lower nonce", () => {
+    const own = run(asked.state, registered(counter.nonce, ownHash));
+    const strange = run(own.state, registered(newer, OPENED_WITH.bodyHash, !counter.proposerIsLeft));
     expect(finalsOf(run(strange.state, over).chain)).toEqual([]);
   });
 });

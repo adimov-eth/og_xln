@@ -876,13 +876,16 @@ const finalFor = (terms: ProofTerms, w: Work, peer: EntityId, account: EntityRep
     }];
   }
   const { against } = facts;
-  if (answer?.registered === true && against !== undefined) {
+  const theirs = against?.over === true ? against.countered : undefined;
+  // The chain keeps one counter, the highest it saw: when the one it registered is not the node's own (its tower
+  // registered a newer one over it), a finalize by the node's own is skipped for good, so the registered one it is.
+  const own = answer?.registered === true ? answer.counter : undefined;
+  if (own !== undefined && against !== undefined && (theirs === undefined || theirs.nonce === own.nonce)) {
     return [{
-      _tag: "dispute_finalize", peer, nonce: answer.counter.nonce, proposerIsLeft: answer.counter.proposerIsLeft,
-      body: answer.counter.body, startedByLeft: !mine, initial: answer.counter.initial,
+      _tag: "dispute_finalize", peer, nonce: own.nonce, proposerIsLeft: own.proposerIsLeft,
+      body: own.body, startedByLeft: !mine, initial: own.initial,
     }];
   }
-  const theirs = against?.over === true ? against.countered : undefined;
   const held = against === undefined || theirs === undefined ? undefined : rebuilt(terms, facts, account, theirs);
   return against !== undefined && theirs !== undefined && held !== undefined
     ? [{
