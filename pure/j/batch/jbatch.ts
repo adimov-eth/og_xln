@@ -138,6 +138,14 @@ const sendable = (j: JBatch, treasury: Treasury): readonly (readonly JOp[])[] =>
   groupsOf(j.entity, j.draft).map((group) => fitPrefix(fundedFirst(j.entity, treasury, group).funded))
     .filter((funded) => funded.length > 0);
 
+/**
+ * The chain's entity nonce for this Entity is above the highest the Entity ever signed: a batch the Entity signed was
+ * sent by someone else (a bare batch it only simulated, replayed) and spent nonces it never sent. The next batch is
+ * signed above what the chain holds, never at a nonce that is spent.
+ */
+export const outrun = (j: JBatch, chainNonce: bigint): JBatch =>
+  (chainNonce > j.signedMax ? { ...j, signedMax: chainNonce, chainNonce } : j);
+
 /** The draft without the ops that were sent, one match for each: the same object queued twice is two ops. */
 const withoutSent = (draft: readonly JOp[], ops: readonly JOp[]): readonly JOp[] =>
   ops.reduce((rest, op) => {

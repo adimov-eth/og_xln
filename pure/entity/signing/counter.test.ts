@@ -252,7 +252,7 @@ describe("entity/signing R-DISPUTE-WATCH a counter registered by whoever is a fi
   });
 });
 
-describe("entity/signing R-DISPUTE-WATCH a newer counter registered over the node's own is the one finalized with", () => {
+describe("entity/signing R-DISPUTE-WATCH a newer counter registered over the node's own is finalized with", () => {
   // Bob proposed a frame of his own that Alice co-signed and he never heard the ack of; then the dispute opens.
   const bobPending = run(ackLost.bob, pay(ALICE.id, 3n));
   const start = startOf(ackLost.alice);
@@ -283,7 +283,7 @@ describe("entity/signing R-DISPUTE-WATCH a newer counter registered over the nod
     expect(finals.map((a) => (a._tag === "dispute_finalize" ? [a.nonce, a.body] : []))).toEqual([[newer, body]]);
   });
 
-  test("R-DISPUTE-WATCH a newer counter the node cannot rebuild is waited out, never the node's own at the lower nonce", () => {
+  test("R-DISPUTE-WATCH a newer counter the node cannot rebuild is waited out, never its own at a lower nonce", () => {
     const own = run(asked.state, registered(counter.nonce, ownHash));
     const strange = run(own.state, registered(newer, OPENED_WITH.bodyHash, !counter.proposerIsLeft));
     expect(finalsOf(run(strange.state, over).chain)).toEqual([]);

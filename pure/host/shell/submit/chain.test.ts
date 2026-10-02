@@ -200,6 +200,44 @@ describe("host/shell/chain a batch is journaled before it is sent", () => {
     expect(callsOf(at.log)).toEqual([`simulate nonce=5 gas=${GAS.txGasCap}`, `simulate nonce=5 gas=${GAS.txGasCap}`]);
   });
 
+  const E2_SPENT = revertedWith("E2");
+  const nonceAfter = (outran: Script): Script => ({ ...outran, nonce: 7n });
+
+  test("F1 a replayed batch spent the nonce: a refusal at it reads the chain's nonce and signs above it", async () => {
+    const at = scene();
+    const script = nonceAfter({ ...CALM, nth: (n) => (n === 0 ? E2_SPENT : ROOM) });
+    const refused = await withIo(at, script, (io) => stepped(io, asked(opened())));
+    expect([refused.stage, refused.submitter.jbatch.signedMax, refused.submitter.jbatch.chainNonce]).toEqual(
+      ["closed", 7n, 7n],
+    );
+    const after = await withIo(at, script, (io) => stepped(io, refused.submitter));
+    expect([after.stage, journalIn(at.journal)]).toEqual(["waiting", ["sealed@8"]]);
+  });
+
+  test("F1 a counter and the bare batch both refused read the nonce, name nothing and sign above it", async () => {
+    const at = scene();
+    const both = counterAsked(asked(opened()));
+    const script = nonceAfter({ ...CALM, nth: (n) => (n <= 1 ? E2_SPENT : ROOM) });
+    const refused = await withIo(at, script, (io) => stepped(io, both));
+    expect([refused.lapsed, refused.stage, refused.submitter.jbatch.signedMax]).toEqual([[], "closed", 7n]);
+    const after = await withIo(at, script, (io) => stepped(io, refused.submitter));
+    expect([after.stage, journalIn(at.journal)]).toEqual(["waiting", ["sealed@8"]]);
+  });
+
+  test("F1 a refusal at the nonce with the chain nonce not above the signed stays held, nothing lowered", async () => {
+    const level = await withIo(scene(), { ...CALM, outcome: E2_SPENT }, (io) => stepped(io, asked(opened())));
+    const below = await withIo(scene(), { ...CALM, nonce: 2n, outcome: E2_SPENT }, (io) =>
+      stepped(io, asked(opened())));
+    const seen = [level, below].map(({ stage, submitter: { jbatch } }) => [stage, jbatch.signedMax, jbatch.chainNonce]);
+    expect(seen).toEqual([["held", 4n, 4n], ["held", 4n, 4n]]);
+  });
+
+  test("F1 only a refusal that names the nonce reads it: any other error leaves the nonce alone", async () => {
+    const other = await Promise.all([revertedWith("E3"), revertedWith("E5")].map((outcome) =>
+      withIo(scene(), nonceAfter({ ...CALM, outcome }), (io) => stepped(io, asked(opened())))));
+    expect(other.map((held) => [held.stage, held.submitter.jbatch.signedMax])).toEqual([["held", 4n], ["held", 4n]]);
+  });
+
   test("R-DISPUTE-LAPSED a counter held for a reason that can heal is dropped, not named; the rest seals", async () => {
     const at = scene();
     const both = counterAsked(asked(opened()));
