@@ -154,6 +154,11 @@
    "kind": "test",
    "layer": "ts",
    "name": "a counter that lapsed and was then registered is not accepted against, and nor is one still asked"
+  },
+  {
+   "kind": "test",
+   "layer": "ts",
+   "name": "R-DISPUTE-WATCH a counter made of a frame sealed in another epoch is no one the starter finalizes with"
   }
  ]
 }

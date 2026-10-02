@@ -232,13 +232,14 @@ const rebasing = (w: Work, peer: EntityId, finalized: Finalized | undefined): Wo
   const settled = finalized?.paid?.txs ?? [];
   const inFrame = withoutPaid(account.pending?.frame.txs ?? [], settled);
   const inQueue = withoutPaid(account.mempool, withoutPaid(settled, inFrame.removed).kept);
+  const owes = settled.length > 0 || (finalized !== undefined && lost(finalized.pending, finalized.nonce));
   return withReplica(told, peer, {
     ...account,
     state: rebased(account.state),
     mempool: inQueue.kept,
     pending: account.pending === undefined ? undefined : {
       ...account.pending, after: rebased(account.pending.after),
-      ...(settled.length === 0 ? {} : { owed: inFrame.kept }),
+      ...(owes ? { owed: inFrame.kept } : {}),
     },
   });
 };
@@ -351,8 +352,9 @@ const finalizedBy = (
  * the node is told which (`pending_rebased`): the frame stays pending and is sent again in the new epoch, where it
  * commits or comes back as `tx_refused`, so the owner waits and does not ask again. A pending frame whose own body the
  * chain paid by, a frame it signed and took back included (the peer holds its signature as well), is paid: the owner is
- * told so (`paid_on_chain`) and its txs are in no frame sealed again (the pending frame stays for the lineage the peer
- * may have committed, giving back only what was not paid). A committed head at or below the
+ * told so (`paid_on_chain`; a lock it holds is `clause_on_chain`, which the chain pays or refunds by the secret) and
+ * its txs are in no frame sealed again (the pending frame stays for the lineage the peer may have committed, giving
+ * back only what was not paid). A committed head at or below the
  * finalized nonce is held by the proof the chain paid by: not told. A finalize whose proof the node cannot name is told
  * with the finalized nonce unknown: the node does not guess whether its head was held. A settlement or a withdrawal
  * moving the epoch tells nothing. The offdelta the proof holds is not here: the node that lost something is not the
@@ -374,12 +376,14 @@ const destroyed = (w: Work, peer: EntityId, account: EntityReplica, finalized: F
       finalizedNonce: nonce,
     }), w);
   const settled = paid?.txs ?? [];
-  const spent = settled.filter((tx) => SPENDING.has(tx._tag));
-  const paidTold = paid === undefined || spent.length === 0
-    ? told
-    : noting(told, {
-      _tag: "pending_rebased", peer, epoch, nonce: paid.nonce, finalizedNonce: nonce, txs: spent, fate: "paid_on_chain",
-    });
+  // A lock is a clause the chain pays by the secret or refunds at its deadline: the proof holds it, it is not paid yet.
+  const clauses = settled.filter((tx) => tx._tag === "lock");
+  const outright = settled.filter((tx) => tx._tag !== "lock");
+  const tell = (acc: Work, txs: readonly AccountTx[], fate: "paid_on_chain" | "clause_on_chain"): Work =>
+    paid === undefined || txs.length === 0
+      ? acc
+      : noting(acc, { _tag: "pending_rebased", peer, epoch, nonce: paid.nonce, finalizedNonce: nonce, txs, fate });
+  const paidTold = tell(tell(told, outright, "paid_on_chain"), clauses, "clause_on_chain");
   const txs = withoutPaid(account.pending?.frame.txs ?? [], settled).kept.filter((tx) => SPENDING.has(tx._tag));
   return pending === undefined || !lost(pending, nonce) || txs.length === 0
     ? paidTold
