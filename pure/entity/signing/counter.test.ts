@@ -247,7 +247,7 @@ describe("entity/signing R-DISPUTE-WATCH a counter registered by whoever is a fi
     expect(finalsOf(countered.chain)).toEqual([]);
   });
 
-  test("R-DISPUTE-WATCH a counter the chain never registered is told once at the window's end, and the start accepted", () => {
+  test("R-DISPUTE-WATCH a counter never registered is told once at the window's end, and the start accepted", () => {
     const heard = run(ackLost.bob, { ...openedBy(start), body: start.body } as JEvent);
     expect(finalsOf(heard.chain)).toEqual([]);
     const ended = run(heard.state, over);
@@ -259,7 +259,7 @@ describe("entity/signing R-DISPUTE-WATCH a counter registered by whoever is a fi
     expect(run(ended.state, over).notices).toEqual([]);
   });
 
-  test("R-DISPUTE-WATCH a counter the Host named lapsed, or the chain registered, is not told at the window's end", () => {
+  test("R-DISPUTE-WATCH a counter the Host named lapsed, or the chain registered, is not told at the end", () => {
     const heard = run(ackLost.bob, { ...openedBy(start), body: start.body } as JEvent);
     const named = run(run(heard.state, lapsed).state, over);
     const together = run(heard.state, registered);
