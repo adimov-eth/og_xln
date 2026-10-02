@@ -314,6 +314,7 @@ export type Notice =
   | Tagged<"unknown_peer", { from: EntityId }>
   | Tagged<"holding_dropped", { peer: EntityId; token: TokenId }>
   | Tagged<"finalize_unread", { peer: EntityId }>
+  | Tagged<"counter_unregistered", { peer: EntityId; nonce: bigint }>
   | Tagged<
     "offdelta_rebased",
     {

@@ -18,7 +18,7 @@ import { MAX_AMOUNT } from "../account/ledger.ts";
 import {
   answered, cosignFrozen, cosignLapsed, counterLapsed, countered, depositable, disputeAsked, disputeOpened, disputeOver,
   epochAdvanced, framed, freshChain, inDispute, keepHolding, nextSerial, paidOut, proofNonce, quiet, startLapsed,
-  windowOpened, windowOver, withWindows,
+  unregistered, windowOpened, windowOver, withWindows,
 } from "./chain.ts";
 import { entityRules, type EntityRules } from "./rules.ts";
 import { hashlocksOf, intentFor, learned, revealed, revealedBy, withEntry, type Intent } from "./paybook/paybook.ts";
@@ -459,8 +459,13 @@ const chainFact = (w: Work, terms: ProofTerms, e: JEvent): Work => {
         : disputeOpened(facts, e));
     case "j_countered":
       return withFacts(w, e.peer, countered(facts, e));
-    case "j_window_over":
-      return withFacts(w, e.peer, windowOver(facts));
+    case "j_window_over": {
+      const stale = unregistered(facts);
+      const over = withFacts(w, e.peer, windowOver(facts));
+      return stale === undefined
+        ? over
+        : noting(over, { _tag: "counter_unregistered", peer: e.peer, nonce: stale.counter.nonce });
+    }
     case "j_dispute_over":
       return finalized(w, e.peer);
     case "j_start_lapsed":
