@@ -329,20 +329,76 @@ describe("runtime/chain R-DISPUTE-FREEZE a frame the peer refused and holds sign
     expect([offdeltas(after), same(after)]).toStrictEqual([[-5n, -5n], true]);
   });
 
-  test("R-DISPUTE-WATCH a starter finalizes with a counter made of a frame it signed and took back", () => {
-    const { c, hashA } = rolledBack();
+  /**
+   * Alice's signed-and-unsuperseded record says it was sealed in `epoch`. Every commit of a new epoch clears the older
+   * records, so none outlives the first commit and a dispute (which needs a proof) cannot meet one: the record is
+   * forged here to say what the guard of the lookup is for.
+   */
+  const sealedIn = (c: Cluster, epoch: bigint): Cluster => {
+    const host = hostOf(c, ALICE);
+    const alice = host.entities.get(ALICE) ?? expect.unreachable("no Entity");
+    const account = alice.accounts.get(BOB) ?? expect.unreachable("no Account");
+    const unsuperseded = account.unsuperseded.map((e) =>
+      (e.sealed === undefined ? e : { ...e, sealed: { ...e.sealed, epoch } }));
+    const accounts = new Map([...alice.accounts, [BOB, { ...account, unsuperseded }]]);
+    const entities = new Map([...host.entities, [ALICE, { ...alice, accounts }]]);
+    return { ...c, hosts: new Map([...c.hosts, [ALICE, { ...host, entities }]]) };
+  };
+
+  /** The finalizes Alice asks for by the rolled-back frame's nonce, once the chain registered it as Bob's counter. */
+  const finalsByCounter = (c: Cluster, hashA: string): readonly JAction[] => {
     const [entry] = replicaOf(c, ALICE).unsuperseded;
     const nonceA = entry?.sealed === undefined
       ? expect.unreachable("no signed frame")
       : entry.sealed.firstNonce + BigInt(entry.slot) - 1n;
-    const asked = disputed(c);
-    const countered = feed(asked, ALICE, {
+    const countered = feed(disputed(c), ALICE, {
       _tag: "j_countered", peer: BOB, nonce: nonceA, proposerIsLeft: true, bodyHash: hashA,
     });
     const over = feed(countered, ALICE, { _tag: "j_window_over", peer: BOB });
     // Bob accepts the opening state at once (nonce below), so only a finalize by the frame's nonce is Alice's.
-    const finals = over.chain.flatMap((a: JAction) => (a._tag === "dispute_finalize" && a.nonce === nonceA ? [a] : []));
-    expect(finals.map((a) => [a.proposerIsLeft, a.startedByLeft, hashed(a.body)])).toStrictEqual([[true, true, hashA]]);
+    return over.chain.filter((a: JAction) => a._tag === "dispute_finalize" && a.nonce === nonceA);
+  };
+
+  test("R-DISPUTE-WATCH a starter finalizes with a counter made of a frame it signed and took back", () => {
+    const { c, hashA } = rolledBack();
+    const finals = finalsByCounter(c, hashA);
+    const named = finals.map((a) =>
+      (a._tag === "dispute_finalize" ? [a.proposerIsLeft, a.startedByLeft, hashed(a.body)] : []));
+    expect(named).toStrictEqual([[true, true, hashA]]);
+  });
+
+  test("R-DISPUTE-WATCH a counter made of a frame sealed in another epoch is no one the starter finalizes with", () => {
+    const { c, hashA } = rolledBack();
+    expect(finalsByCounter(sealedIn(c, 7n), hashA)).toStrictEqual([]);
+  });
+
+  test("R-DISPUTE-FREEZE a frame sealed in another epoch is no proof of this one: its body pays nothing here", () => {
+    const { c, hashA } = rolledBack();
+    const asked = disputed(sealedIn(c, 7n));
+    const after = retried(frozenBob(moved(asked, 1n, startedAt(asked) + 1n, hashA), THAWED), ALICE);
+    expect(pendingTold(after, ALICE).map((n) => n.fate)).toStrictEqual([]);
+    expect(offdeltas(after)).toStrictEqual([-5n, -5n]);
+    expect([replicaOf(after, ALICE).pending, replicaOf(after, ALICE).mempool]).toStrictEqual([undefined, []]);
+    expect(same(after)).toBe(true);
+  });
+
+  test("R-DISPUTE-FREEZE a rolled-back offer with no payment is not paid by the committed body, and is sealed", () => {
+    const OIL = tokenOf(2n);
+    const swapping = settle(feed(paid, ALICE, { _tag: "set_credit", peer: BOB, token: OIL, limit: 100n }));
+    const quote: Command = {
+      _tag: "offer", peer: BOB, id: holdId(5n), give: { token: GOLD, amount: 10n }, want: { token: OIL, amount: 10n },
+      deadline: heightOf(115n),
+    };
+    const offered = settle(feed(frozenBob(swapping, FROZEN), ALICE, quote));
+    const rolled = replicaOf(offered, ALICE);
+    expect([rolled.pending, rolled.mempool.map((t) => t._tag), rolled.unsuperseded.length]).toStrictEqual([
+      undefined, ["offer"], 1,
+    ]);
+    const asked = disputed(offered);
+    const after = retried(frozenBob(finalizedByStart(asked), THAWED), ALICE);
+    expect(pendingTold(after, ALICE).map((n) => n.fate)).toStrictEqual([]);
+    expect([replicaOf(after, ALICE).state.quotes.length, replicaOf(after, ALICE).mempool]).toStrictEqual([1, []]);
+    expect(same(after)).toBe(true);
   });
 
   test("R-DISPUTE-FREEZE a rolled-back frame the chain did not pay by stays in the queue and is sealed once", () => {
@@ -508,6 +564,25 @@ describe("runtime/chain R-DISPUTE-FREEZE only a frame that spends is told as voi
     expect(told(locked, BOB, resolve)).toEqual([]);
   });
 
+  test("R-DISPUTE-FREEZE a pending lock the chain finalizes by is a clause on the chain, not a payment made", () => {
+    const asked = disputed(lostFrom(paid, ALICE, lock));
+    const after = moved(asked, 1n, startedAt(asked) + 1n, pendingHash(asked, ALICE));
+    const [told] = pendingTold(after, ALICE);
+    expect(pendingTold(after, ALICE).map((n) => [n.fate, n.txs.map((t) => t._tag)])).toStrictEqual([
+      ["clause_on_chain", ["lock"]],
+    ]);
+    expect(told?.nonce).toBe(startedAt(asked) + 2n);
+  });
+
+  test("R-DISPUTE-FREEZE a pending resolve the chain paid by is told as paid, though it is no payment", () => {
+    const resolve: Command = { _tag: "resolve", peer: ALICE, token: GOLD, id: holdId(1n), secret: secretOf(1) };
+    const asked = disputed(lostFrom(locked, BOB, resolve));
+    const after = moved(asked, 1n, startedAt(asked) + 1n, pendingHash(asked, BOB));
+    expect(pendingTold(after, BOB).map((n) => [n.fate, n.txs.map((t) => t._tag)])).toStrictEqual([
+      ["paid_on_chain", ["resolve"]],
+    ]);
+  });
+
   const swapping = settle(feed(locked, ALICE, { _tag: "set_credit", peer: BOB, token: OIL, limit: 100n }));
   const swap = { give: { token: GOLD, amount: 10n }, want: { token: OIL, amount: 10n }, deadline: heightOf(115n) };
 
@@ -523,6 +598,27 @@ describe("runtime/chain R-DISPUTE-FREEZE only a frame that spends is told as voi
   test("R-DISPUTE-FREEZE a pending fill is told like a payment", () => {
     const offered = settle(feed(swapping, ALICE, { _tag: "offer", peer: BOB, id: holdId(5n), ...swap }));
     expect(told(offered, BOB, { _tag: "fill", peer: ALICE, id: holdId(5n), ratio: 65_535 })).toEqual([["fill"]]);
+  });
+});
+
+describe("runtime/chain R-DISPUTE-FREEZE a frame the peer committed that the finalize did not hold lands again", () => {
+  test("R-DISPUTE-FREEZE a payment the peer committed and the chain did not pay is applied again on its re-ack", () => {
+    const mid = finalizedByStart(disputed(ackLost(paid, ALICE, 5n)));
+    expect(offdeltas(mid)).toStrictEqual([0n, 0n]);
+    expect(pendingTold(mid, ALICE).map((n) => n.fate)).toStrictEqual(["resent_in_new_epoch"]);
+    const after = retried(mid, ALICE);
+    expect([replicaOf(after, ALICE).pending, replicaOf(after, ALICE).mempool]).toStrictEqual([undefined, []]);
+    expect([offdeltas(after), same(after)]).toStrictEqual([[-5n, -5n], true]);
+    expect(pendingTold(after, ALICE).map((n) => n.fate)).toStrictEqual(["resent_in_new_epoch"]);
+  });
+
+  test("R-DISPUTE-FREEZE a payment the chain paid by is not applied again when the frame is re-acked", () => {
+    const lost = ackLost(paid, ALICE, 5n);
+    const asked = disputed(lost);
+    const after = retried(moved(asked, 1n, startedAt(asked) + 1n, pendingHash(asked, ALICE)), ALICE);
+    expect([replicaOf(after, ALICE).pending, replicaOf(after, ALICE).mempool]).toStrictEqual([undefined, []]);
+    expect([offdeltas(after), same(after)]).toStrictEqual([[0n, 0n], true]);
+    expect(pendingTold(after, ALICE).map((n) => n.fate)).toStrictEqual(["paid_on_chain"]);
   });
 });
 

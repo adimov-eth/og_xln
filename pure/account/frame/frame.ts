@@ -107,9 +107,10 @@ export type Refused<Tx, F> = Readonly<{ tx: Tx; fault: F | PeerRefused | SignedC
 type Declined<F> = Readonly<{ hash: FrameHash; attempt: number; index: number; fault: F }>;
 
 /**
- * `owed` is set by the Entity when the chain has paid some of this frame's txs (R-DISPUTE-FREEZE): the frame stays
- * pending, so the lineage the peer may have committed stays whole, but a rollback gives back only these txs (those the
- * chain did not pay), and every tx of the frame is paid when it is empty.
+ * `owed` is set by the Entity when a dispute finalize moved the epoch on without holding this frame (R-DISPUTE-FREEZE):
+ * the frame stays pending, so the lineage the peer may have committed stays whole, but a rollback, or a commit by the
+ * peer's ack (the epoch move zeroed its effect), gives back only these txs (those the chain did not pay), and every tx
+ * of the frame is paid when it is empty.
  */
 type Proposed<Tx, S> = Readonly<{ frame: Frame<Tx>; after: S; head: FrameHash; owed?: readonly Tx[] }>;
 
@@ -401,7 +402,11 @@ const onFrame = <Tx, S, F>(rules: Rules<Tx, S, F>, r0: Replica<Tx, S, F>, f: Fra
 const onAck = <Tx, S, F>(rules: Rules<Tx, S, F>, r: Replica<Tx, S, F>, hash: FrameHash): Heard<Tx, S, F> => {
   const pending = r.pending;
   if (pending === undefined || pending.head !== hash) return heard(r, NO_MESSAGES, { _tag: "ack_ignored" });
-  const committed = { ...commit(r, pending.frame, rules.name(pending.frame), hash, pending.after), pending: undefined };
+  const done = commit(r, pending.frame, rules.name(pending.frame), hash, pending.after);
+  // A frame the chain did not hold commits in a lineage whose effect the epoch move zeroed: the txs it owes go again.
+  const committed = pending.owed === undefined
+    ? { ...done, pending: undefined }
+    : { ...done, mempool: [...pending.owed, ...done.mempool], pending: undefined };
   return heard(committed, NO_MESSAGES, { _tag: "committed_own" });
 };
 

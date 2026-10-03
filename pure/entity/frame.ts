@@ -18,7 +18,7 @@ import { MAX_AMOUNT } from "../account/ledger.ts";
 import {
   answered, cosignFrozen, cosignLapsed, counterLapsed, countered, depositable, disputeAsked, disputeOpened, disputeOver,
   epochAdvanced, framed, freshChain, inDispute, keepHolding, nextSerial, paidOut, proofNonce, quiet, startLapsed,
-  windowOpened, windowOver, withWindows,
+  unregistered, windowOpened, windowOver, withWindows,
 } from "./chain.ts";
 import { entityRules, type EntityRules } from "./rules.ts";
 import { hashlocksOf, intentFor, learned, revealed, revealedBy, withEntry, type Intent } from "./paybook/paybook.ts";
@@ -232,13 +232,14 @@ const rebasing = (w: Work, peer: EntityId, finalized: Finalized | undefined): Wo
   const settled = finalized?.paid?.txs ?? [];
   const inFrame = withoutPaid(account.pending?.frame.txs ?? [], settled);
   const inQueue = withoutPaid(account.mempool, withoutPaid(settled, inFrame.removed).kept);
+  const owes = settled.length > 0 || (finalized !== undefined && lost(finalized.pending, finalized.nonce));
   return withReplica(told, peer, {
     ...account,
     state: rebased(account.state),
     mempool: inQueue.kept,
     pending: account.pending === undefined ? undefined : {
       ...account.pending, after: rebased(account.pending.after),
-      ...(settled.length === 0 ? {} : { owed: inFrame.kept }),
+      ...(owes ? { owed: inFrame.kept } : {}),
     },
   });
 };
@@ -351,8 +352,9 @@ const finalizedBy = (
  * the node is told which (`pending_rebased`): the frame stays pending and is sent again in the new epoch, where it
  * commits or comes back as `tx_refused`, so the owner waits and does not ask again. A pending frame whose own body the
  * chain paid by, a frame it signed and took back included (the peer holds its signature as well), is paid: the owner is
- * told so (`paid_on_chain`) and its txs are in no frame sealed again (the pending frame stays for the lineage the peer
- * may have committed, giving back only what was not paid). A committed head at or below the
+ * told so (`paid_on_chain`; a lock it holds is `clause_on_chain`, which the chain pays or refunds by the secret) and
+ * its txs are in no frame sealed again (the pending frame stays for the lineage the peer may have committed, giving
+ * back only what was not paid). A committed head at or below the
  * finalized nonce is held by the proof the chain paid by: not told. A finalize whose proof the node cannot name is told
  * with the finalized nonce unknown: the node does not guess whether its head was held. A settlement or a withdrawal
  * moving the epoch tells nothing. The offdelta the proof holds is not here: the node that lost something is not the
@@ -374,12 +376,14 @@ const destroyed = (w: Work, peer: EntityId, account: EntityReplica, finalized: F
       finalizedNonce: nonce,
     }), w);
   const settled = paid?.txs ?? [];
-  const spent = settled.filter((tx) => SPENDING.has(tx._tag));
-  const paidTold = paid === undefined || spent.length === 0
-    ? told
-    : noting(told, {
-      _tag: "pending_rebased", peer, epoch, nonce: paid.nonce, finalizedNonce: nonce, txs: spent, fate: "paid_on_chain",
-    });
+  // A lock is a clause the chain pays by the secret or refunds at its deadline: the proof holds it, it is not paid yet.
+  const clauses = settled.filter((tx) => tx._tag === "lock");
+  const outright = settled.filter((tx) => tx._tag !== "lock");
+  const tell = (acc: Work, txs: readonly AccountTx[], fate: "paid_on_chain" | "clause_on_chain"): Work =>
+    paid === undefined || txs.length === 0
+      ? acc
+      : noting(acc, { _tag: "pending_rebased", peer, epoch, nonce: paid.nonce, finalizedNonce: nonce, txs, fate });
+  const paidTold = tell(tell(told, outright, "paid_on_chain"), clauses, "clause_on_chain");
   const txs = withoutPaid(account.pending?.frame.txs ?? [], settled).kept.filter((tx) => SPENDING.has(tx._tag));
   return pending === undefined || !lost(pending, nonce) || txs.length === 0
     ? paidTold
@@ -455,8 +459,13 @@ const chainFact = (w: Work, terms: ProofTerms, e: JEvent): Work => {
         : disputeOpened(facts, e));
     case "j_countered":
       return withFacts(w, e.peer, countered(facts, e));
-    case "j_window_over":
-      return withFacts(w, e.peer, windowOver(facts));
+    case "j_window_over": {
+      const stale = unregistered(facts);
+      const over = withFacts(w, e.peer, windowOver(facts));
+      return stale === undefined
+        ? over
+        : noting(over, { _tag: "counter_unregistered", peer: e.peer, nonce: stale.counter.nonce });
+    }
     case "j_dispute_over":
       return finalized(w, e.peer);
     case "j_start_lapsed":
@@ -872,13 +881,16 @@ const finalFor = (terms: ProofTerms, w: Work, peer: EntityId, account: EntityRep
     }];
   }
   const { against } = facts;
-  if (answer?.registered === true && against !== undefined) {
+  const theirs = against?.over === true ? against.countered : undefined;
+  // The chain keeps one counter, the highest it saw: when the one it registered is not the node's own (its tower
+  // registered a newer one over it), a finalize by the node's own is skipped for good, so the registered one it is.
+  const own = answer?.registered === true ? answer.counter : undefined;
+  if (own !== undefined && against !== undefined && (theirs === undefined || theirs.nonce === own.nonce)) {
     return [{
-      _tag: "dispute_finalize", peer, nonce: answer.counter.nonce, proposerIsLeft: answer.counter.proposerIsLeft,
-      body: answer.counter.body, startedByLeft: !mine, initial: answer.counter.initial,
+      _tag: "dispute_finalize", peer, nonce: own.nonce, proposerIsLeft: own.proposerIsLeft,
+      body: own.body, startedByLeft: !mine, initial: own.initial,
     }];
   }
-  const theirs = against?.over === true ? against.countered : undefined;
   const held = against === undefined || theirs === undefined ? undefined : rebuilt(terms, facts, account, theirs);
   return against !== undefined && theirs !== undefined && held !== undefined
     ? [{

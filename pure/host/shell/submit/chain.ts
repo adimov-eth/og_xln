@@ -7,7 +7,7 @@
 import type { SignFault, Signer } from "./signer.ts";
 import { requirement } from "../../../j/gas/gas.ts";
 import type { Cause, Gas, HoldReason, Simulation } from "../../../j/gas/simulate.ts";
-import { seal, type JBatch, type SealOutcome } from "../../../j/batch/jbatch.ts";
+import { outrun, seal, type JBatch, type SealOutcome } from "../../../j/batch/jbatch.ts";
 import type { JAnswer, Returned, Skipped } from "../../../j/batch/answer.ts";
 import {
   MIN_GAS_BUDGET, processBatchCall, sealBatch, type ProcessBatchCall, type SealedBatch,
@@ -123,6 +123,21 @@ const bareBatchLands = async (io: Io, s: Submitter): Promise<Result<boolean, She
   return outcome.ok ? ok(outcome.value._tag === "ok") : outcome;
 };
 
+/**
+ * The batch's nonce was refused (E2), which a nonce the chain moved past does too: someone sent a batch this Entity
+ * signed and only simulated (a bare batch, replayed) and spent its nonce. The chain's nonce is read again and signing
+ * goes on above it (`outrun`); nothing is read, or changed, unless a refusal names E2, and the answer changes nothing
+ * when the chain's nonce is not above the highest signed.
+ */
+const renonced = async (io: Io, s: Submitter): Promise<Result<Submitter, ShellFault>> => {
+  const nonce = await io.port.nonce();
+  return nonce.ok ? ok({ ...s, jbatch: outrun(s.jbatch, nonce.value) }) : nonce;
+};
+
+const refusesNonce = (why: readonly HoldReason[]): boolean =>
+  why.some((reason) => reason._tag === "would_revert"
+    && reason.causes.some((cause) => cause._tag === "error" && cause.name === STALE_NONCE));
+
 /** The contract's DISPUTE_OP_COUNTER, and the skip reasons that are for good for a counter (Account.sol 69-83). */
 const COUNTER_OP = 1;
 export const COUNTER_SKIPPED_FOR_GOOD: ReadonlySet<number> = new Set([3, 4, 5, 6, 7]);
@@ -131,7 +146,8 @@ export const COUNTER_SKIPPED_FOR_GOOD: ReadonlySet<number> = new Set([3, 4, 5, 6
  * (E4), bad hash (E9). E2 and E4 are the batch's too (`bareBatchLands`): only with a bare batch that lands are they the
  * op's.
  */
-const REVERTED_FOR_GOOD: ReadonlySet<string> = new Set(["E2", "E4", "E9"]);
+const STALE_NONCE = "E2";
+const REVERTED_FOR_GOOD: ReadonlySet<string> = new Set([STALE_NONCE, "E4", "E9"]);
 
 const forGood = (cause: Cause): boolean =>
   cause._tag === "error"
@@ -185,8 +201,19 @@ const lapsedDisputes = async (io: Io, s: Submitter): Promise<Result<Pumped | und
   const bare = lost.length === 0 ? ok(false) : await bareBatchLands(io, s);
   if (!bare.ok) return bare;
   const named = gone.filter((op) => op._tag === "dispute_start" || (bare.value && lost.includes(op)));
-  const pumped: Pumped = { submitter: left, stage: "closed", returned: [], skipped: [], lapsed: named };
+  const outran = lost.length > 0 && !bare.value ? await renonced(io, left) : ok(left);
+  if (!outran.ok) return outran;
+  const pumped: Pumped = { submitter: outran.value, stage: "closed", returned: [], skipped: [], lapsed: named };
   return ok(gone.length === 0 ? undefined : pumped);
+};
+
+/** Signing goes on above the chain's nonce when that is past the highest signed; else the draft stays held. */
+const outrunBy = async (io: Io, s: Submitter): Promise<Result<Pumped, ShellFault>> => {
+  const again = await renonced(io, s);
+  if (!again.ok) return again;
+  const moved = again.value.jbatch.signedMax !== s.jbatch.signedMax;
+  const next: Pumped = { submitter: again.value, stage: "closed", returned: [], skipped: [], lapsed: [] };
+  return moved ? ok(next) : quiet(s, "held");
 };
 
 const sealing = async (io: Io, s: Submitter): Promise<Result<Pumped, ShellFault>> => {
@@ -198,7 +225,7 @@ const sealing = async (io: Io, s: Submitter): Promise<Result<Pumped, ShellFault>
   switch (out.value._tag) {
     case "nothing_to_send": return quiet(s, "idle");
     case "in_flight": return quiet(s, "waiting");
-    case "held": return quiet(s, "held");
+    case "held": return refusesNonce(out.value.why) ? outrunBy(io, s) : quiet(s, "held");
     case "sealed": {
       const done = sealedBy(s, out.value.jbatch, out.value.batch);
       if (!done.ok) return done;

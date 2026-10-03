@@ -148,8 +148,19 @@ export const startLapsed = (f: ChainFacts, nonce: bigint): ChainFacts =>
 export const windowOver = (f: ChainFacts): ChainFacts => ({
   ...f,
   starting: f.starting === undefined || f.starting.window === undefined ? f.starting : { ...f.starting, over: true },
-  against: f.against === undefined ? undefined : { ...f.against, over: true },
+  against: f.against === undefined
+    ? undefined
+    : { ...f.against, over: true, answer: unregisteredEnded(f.against.answer) },
 });
+
+/** The counter the node asked for that the chain never registered: with the window over it never will be. */
+export const unregistered = (f: ChainFacts): Answer | undefined => {
+  const answer = f.against?.answer;
+  return answer !== undefined && !answer.registered && !answer.lapsed ? answer : undefined;
+};
+
+const unregisteredEnded = (answer: Answer | undefined): Answer | undefined =>
+  (answer === undefined ? answer : { ...answer, lapsed: true });
 
 /** The first nonce a proof of an epoch may take: two above the stored nonce, since none is signed at stored + 1. */
 export const firstNonce = (f: ChainFacts): bigint => f.stored + 2n;
