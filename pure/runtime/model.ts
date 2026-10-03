@@ -27,7 +27,8 @@ export const timestamp = (ms: bigint): Result<Timestamp, BadTimestamp> =>
  */
 export type EntityBatch = Tagged<"entity", { at: Timestamp; to: EntityId; inputs: readonly EntityInput[] }>;
 
-export type NewHeight = Tagged<"j_height", { at: Timestamp; height: JHeight }>;
+/** `seconds` is the timestamp of the J block at `height`, from the same header (R-HOP-SLACK), and travels with it. */
+export type NewHeight = Tagged<"j_height", { at: Timestamp; height: JHeight; seconds?: bigint }>;
 
 export type Input = EntityBatch | NewHeight;
 
@@ -44,7 +45,7 @@ export type Row = Readonly<{
  * Accounts sign under (the deployment and the proof terms). Each Account's own context, with its key, its epoch and its
  * first nonce, is read off the Entity's chain facts for it (R-FRAME-SIGNATURE-NAMES-ACCOUNT).
  */
-export type Setup = Readonly<{ clock: ClockParams; view: JView; anchor: Anchor }>;
+export type Setup = Readonly<{ clock: ClockParams; view: JView; anchor: Anchor; seconds?: bigint }>;
 
 /**
  * `entities` is the state after the staged row, if there is one. `wal` is what is durable. `sent` is how many rows of
@@ -54,6 +55,8 @@ export type Runtime = Readonly<{
   setup: Setup;
   stamp: Timestamp;
   view: JView;
+  /** The timestamp of the J block at `view`, once a height has brought it (the Setup's, at the start, if any). */
+  seconds: bigint | undefined;
   entities: ReadonlyMap<EntityId, EntityState>;
   wal: readonly Row[];
   staged: Row | undefined;

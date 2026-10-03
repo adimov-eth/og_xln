@@ -5,7 +5,9 @@
 // an Account's next frame, so it is signed, acked and refused like any other; this file only says which.
 import { mapDelete, mapSet } from "../../kernel/core/collections.ts";
 import { keccakHex } from "../../kernel/encoding/bytes.ts";
-import { jHeight, type ClockParams, type JHeight, type JView } from "../../account/clause/clock.ts";
+import {
+  forwardable, jHeight, type ClockParams, type JHeight, type JView, type Reading,
+} from "../../account/clause/clock.ts";
 import { other, type Hold, type HoldId, type TokenId } from "../../account/model.ts";
 import { openHolds } from "../../account/state.ts";
 import type { AccountTx } from "../../account/tx.ts";
@@ -94,9 +96,10 @@ const resolveUp = (from: EntityId, hashlock: string, c: Clause, secret: Uint8Arr
     admitted: undefined, refused: undefined,
   });
 
-const nextDeadline = (clock: ClockParams, view: JView, hold: Hold): JHeight | undefined => {
+/** The deadline of the lock a hub forwards, one hop sooner, if the chain's seconds leave room for it (R-HOP-SLACK). */
+const nextDeadline = (clock: ClockParams, reading: Reading, view: JView, hold: Hold): JHeight | undefined => {
   const sooner = jHeight(hold.deadline - hopOf(clock));
-  return sooner.ok && sooner.value > view ? sooner.value : undefined;
+  return sooner.ok && forwardable(clock, reading, view, hold.deadline, sooner.value) ? sooner.value : undefined;
 };
 
 /** Whether the Host still owes the Entity events of its Account with `peer` (R-WATCH-STALL). */
@@ -116,11 +119,11 @@ type Forward = Of<Entry, "forward">;
 type Receive = Of<Entry, "receive">;
 
 const forwardOf = (
-  state: EntityState, clock: ClockParams, view: JView, hashlock: string, e: Forward,
+  state: EntityState, clock: ClockParams, reading: Reading, view: JView, hashlock: string, e: Forward,
 ): Intent | undefined => {
   const c = incoming(state, e.from, hashlock);
   if (c === undefined) return undefined;
-  const deadline = nextDeadline(clock, view, c.hold);
+  const deadline = nextDeadline(clock, reading, view, c.hold);
   if (state.blind || behind(state, e.to) || deadline === undefined || !state.accounts.has(e.to) || e.to === e.from) {
     return cancelUp(e.from, hashlock, c);
   }
@@ -142,11 +145,11 @@ const receiveOf = (state: EntityState, hashlock: string, e: Receive): Intent | u
     : cancelUp(e.from, hashlock, c);
 };
 
-const intentOf = (state: EntityState, clock: ClockParams, view: JView, hashlock: string, e: Entry):
+const intentOf = (state: EntityState, clock: ClockParams, reading: Reading, view: JView, hashlock: string, e: Entry):
   Intent | undefined => {
   switch (e._tag) {
     case "forward":
-      return forwardOf(state, clock, view, hashlock, e);
+      return forwardOf(state, clock, reading, view, hashlock, e);
     case "receive":
       return receiveOf(state, hashlock, e);
     case "pass": {
@@ -167,10 +170,10 @@ export const hashlocksOf = (state: EntityState): readonly string[] => [...state.
 
 /** What the paybook asks of the Accounts now for one hashlock, judged on the state as it stands. */
 export const intentFor = (
-  state: EntityState, clock: ClockParams, view: JView, hashlock: string,
+  state: EntityState, clock: ClockParams, reading: Reading, view: JView, hashlock: string,
 ): Intent | undefined => {
   const entry = state.paybook.get(hashlock);
-  return entry === undefined ? undefined : intentOf(state, clock, view, hashlock, entry);
+  return entry === undefined ? undefined : intentOf(state, clock, reading, view, hashlock, entry);
 };
 
 /** An entry in place of the one for `hashlock`, or none. */
