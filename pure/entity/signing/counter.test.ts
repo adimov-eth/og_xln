@@ -91,7 +91,7 @@ describe("entity/signing R-DISPUTE-WATCH a dispute from an older proof is answer
     expect(finalsOf(done.chain)).toEqual([]);
   });
 
-  test("a counter of another nonce or author is not the node's: it waits, and is not asked after the window", () => {
+  test("a counter of another nonce or author is not the node's: it still waits", () => {
     const [counter] = countersOf(heard.chain);
     if (counter?._tag !== "counter") return expect.unreachable("no counter");
     const other = run(heard.state, {
@@ -344,7 +344,7 @@ describe("entity/signing R-WATCH-CALLDATA the body a start revealed is the one a
     expect(finalsOf(run(dropped.state, over).chain)).toEqual([]);
   });
 
-  test("R-WATCH-CALLDATA a node whose counter is still asked does not accept the opening state in the window", () => {
+  test("R-WATCH-CALLDATA a node whose counter is still asked does not accept the opening state", () => {
     const heard = run(ackLost.bob, opened({ body: start.body }));
     expect(finalsOf(heard.chain)).toEqual([]);
     expect(countersOf(heard.chain)).toHaveLength(1);
