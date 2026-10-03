@@ -14,7 +14,7 @@ import { proofBodyOf, type ProofTerms } from "../account/proof/body.ts";
 import { proofBodyHash, type ProofBody } from "../chain/proof/proof.ts";
 import type { Check } from "./signing/attest.ts";
 import { signingOf, type Anchor } from "./signing/signing.ts";
-import { dissolved, holderOf, ledgerOf, rebased, withHeld } from "../account/state.ts";
+import { dissolved, holderOf, ledgerOf, openHolds, rebased, withHeld } from "../account/state.ts";
 import { MAX_AMOUNT } from "../account/ledger.ts";
 import {
   accountLost, answered, behindFrom, behindOver, cosignFrozen, cosignLapsed, counterLapsed, countered, depositable,
@@ -137,8 +137,7 @@ const takenFrom = (w: Work, a: PeerMessage, outcome: Outcome<PeerFault>): Work =
 
 /** The hashlocks an Entity can lose on: a hold of any Account (committed, proposed or queued), a paybook entry. */
 const named = (state: EntityState): ReadonlySet<string> => {
-  const held = (s: AccountState): readonly string[] =>
-    [...s.ledgers.values()].flatMap((l) => l.holds.map((h) => h.hashlock));
+  const held = (s: AccountState): readonly string[] => openHolds(s).map((h) => h.hashlock);
   const queued = (r: EntityReplica): readonly string[] =>
     r.mempool.flatMap((tx) => (tx._tag === "lock" ? [tx.hold.hashlock] : []));
   const proposed = (r: EntityReplica): readonly string[] => (r.pending === undefined ? [] : held(r.pending.after));
@@ -478,8 +477,6 @@ const ledgersOf = (w: Work, peer: EntityId) => w.state.accounts.get(peer)?.state
  */
 const paid = (w: Work, peer: EntityId): Work =>
   withFacts(w, peer, paidOut(disputeOver(factsOf(w, peer)), ledgersOf(w, peer)));
-
-
 
 /** The chain finalized the dispute: the Account is paid out and its holds are dissolved. */
 const finalized = (w: Work, peer: EntityId): Work => reconciled(paid(dissolving(w, peer), peer), peer);
@@ -1001,15 +998,15 @@ const dutiful = (judge: Judge, terms: ProofTerms) => (w: Work, peer: EntityId): 
   return { ...countering, chain: [...countering.chain, ...finals] };
 };
 
-const isArrival = (i: EntityInput): i is Arrival =>
-  i._tag === "peer_message" || i._tag === "cosign_ask" || i._tag === "j_secret" || i._tag === "j_epoch"
-  || i._tag === "j_dispute"
-  || i._tag === "j_countered" || i._tag === "j_window_over" || i._tag === "j_dispute_over"
-  || i._tag === "j_start_lapsed" || i._tag === "j_counter_lapsed" || i._tag === "j_collateral"
-  || i._tag === "j_op_lapsed" || i._tag === "j_finalize_unread" || i._tag === "j_start_unread"
-  || i._tag === "j_behind" || i._tag === "j_behind_over" || i._tag === "j_read_waits"
-  || i._tag === "j_account_lost" || i._tag === "j_blind"
-  || i._tag === "j_blind_over";
+/** Every tag an Arrival has: a new one is a compile error here until it is listed, not a silent Command. */
+const ARRIVAL_TAGS: Readonly<Record<Arrival["_tag"], true>> = {
+  peer_message: true, cosign_ask: true, j_secret: true, j_epoch: true, j_dispute: true, j_countered: true,
+  j_window_over: true, j_dispute_over: true, j_start_lapsed: true, j_counter_lapsed: true, j_collateral: true,
+  j_op_lapsed: true, j_finalize_unread: true, j_start_unread: true, j_behind: true, j_behind_over: true,
+  j_read_waits: true, j_account_lost: true, j_blind: true, j_blind_over: true,
+};
+
+const isArrival = (i: EntityInput): i is Arrival => Object.hasOwn(ARRIVAL_TAGS, i._tag);
 
 const arrivalsOf = (inputs: readonly EntityInput[]): readonly Arrival[] => inputs.filter(isArrival);
 

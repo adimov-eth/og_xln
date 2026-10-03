@@ -13,6 +13,7 @@
 // they are told when the transaction can be read, or when waiting no longer helps.
 import type { JHeight } from "../../../account/clause/clock.ts";
 import type { ChainFacts, EntityId, EntityInput } from "../../../entity/model.ts";
+import { owed } from "../../../entity/chain.ts";
 import { entityId } from "../../../entity/model.ts";
 import { readOf, type Carried, type Read } from "../../../j/calldata/decode.ts";
 import {
@@ -22,7 +23,8 @@ import type { ReadWait } from "../../../j/log.ts";
 import { hexToBytes } from "../../../kernel/encoding/bytes.ts";
 import { bytes32, type Bytes32, type ChainEvent, type Deployed, type RawLog } from "../../../j/log.ts";
 import {
-  advance, calldataWanted, finalizedAt, needsBytes, prepare, readings, splitStalled, unreadTxs, watching, withCalldata,
+  advance, after, calldataWanted, finalizedAt, needsBytes, prepare, readings, splitStalled, unreadTxs, watching,
+  withCalldata,
   type Block, type Prepared, type Watch, type WatchFault, type Window,
 } from "../../../j/watch.ts";
 import { mapSet } from "../../../kernel/core/collections.ts";
@@ -136,7 +138,7 @@ export type Standing = Readonly<{
 export const NO_STANDING: Standing = { lastHeard: new Map(), behind: new Set(), lost: new Set(), view: 0n };
 
 /** A transaction a delivery waits on, and the Account it holds back. */
-export type Stall = Readonly<{ tx: Bytes32; peer: Bytes32; fault: PortFault; tries: number }>;
+export type Stall = Readonly<{ tx: Bytes32; fault: PortFault; tries: number }>;
 
 /**
  * One delivery: the J events for the node's Entity, in the chain's order, and then the height they end at, with what
@@ -202,14 +204,14 @@ const joined = (a: Gathered, b: Gathered): Gathered => ({
   noMethod: new Set([...a.noMethod, ...b.noMethod]),
 });
 
-const peerOf = (event: { peer: Bytes32 }): Result<EntityId, BadPeer> => {
-  const peer = entityId(event.peer);
-  return peer.ok ? peer : err({ _tag: "bad_peer", text: event.peer });
+const peerOf = (text: string): Result<EntityId, BadPeer> => {
+  const peer = entityId(text);
+  return peer.ok ? peer : err({ _tag: "bad_peer", text });
 };
 
 /** The Entity's input for what the watcher told: the peer's id for an Account's event, the bytes of a secret. */
 const inputOf = (event: Addressed["event"]): Result<EntityInput, BadPeer | BadSecret> => {
-  if (event._tag !== "j_secret") return map(peerOf(event), (peer) => ({ ...event, peer }) as EntityInput);
+  if (event._tag !== "j_secret") return map(peerOf(event.peer), (peer) => ({ ...event, peer }) as EntityInput);
   const bytes = hexToBytes(event.secret);
   return bytes.ok
     ? ok({ _tag: "j_secret", secret: bytes.value, at: event.at })
@@ -246,7 +248,7 @@ export const windowsOf = (
  * not read again, so it holds nothing back.
  */
 export const resumeAt = (view: bigint, chain: ReadonlyMap<EntityId, ChainFacts>): bigint =>
-  [...chain.values()].flatMap((facts) => (facts.behind === undefined || facts.lost ? [] : [facts.behind - 1n]))
+  [...chain.values()].filter(owed).map((facts) => facts.behind - 1n)
     .reduce((least, block) => (block < least ? block : least), view);
 
 /** What a poll reads of the chain, checked: the blocks past the cursor that are final, their logs and the batch. */
@@ -331,13 +333,18 @@ const givenUp = (stand: Standing, last: Block, hosted: Bytes32, e: ChainEvent, f
   return failing.tries >= FEW_TRIES && (heard === undefined || last.number >= heard);
 };
 
+/** `from` with `peer` at `block`, unless it is already at that block or an earlier one. */
+const earlier = <K>(from: ReadonlyMap<K, bigint>, peer: K, block: bigint): ReadonlyMap<K, bigint> => {
+  const was = from.get(peer);
+  return was !== undefined && was <= block ? from : mapSet(from, peer, block);
+};
+
 /** The Accounts the events held back are about, each with the first block of its held events. */
-const heldFrom = (hosted: Bytes32, held: readonly ChainEvent[]): ReadonlyMap<Bytes32, bigint> =>
-  new Map(held.flatMap((e) => {
+const heldFrom = (hosted: Bytes32, held: readonly ChainEvent[]): ReadonlyMap<string, bigint> =>
+  held.reduce<ReadonlyMap<string, bigint>>((from, e) => {
     const peer = peerOfEvent(hosted, e);
-    return peer === undefined ? [] : [[peer, held.filter((o) => peerOfEvent(hosted, o) === peer)
-      .reduce((first, o) => (o.block < first ? o.block : first), e.block)] as const];
-  }));
+    return peer === undefined ? from : earlier(from, peer, e.block);
+  }, new Map());
 
 /** What the Entity is told about the Accounts held back: the ones that begin being held, and the ones that are not. */
 const behindTold = (
@@ -345,9 +352,9 @@ const behindTold = (
 ): Result<Readonly<{ begun: readonly EntityInput[]; over: readonly EntityInput[] }>, BadPeer> => {
   const now = heldFrom(hosted, held);
   const begun = traverse([...now].filter(([peer]) => !was.has(peer)), ([peer, from]) =>
-    map(peerOf({ peer }), (id): EntityInput => ({ _tag: "j_behind", peer: id, from })));
-  const over = traverse([...was].filter((peer) => !now.has(peer as Bytes32) && height >= stand.view), (peer) =>
-    map(peerOf({ peer: peer as Bytes32 }), (id): EntityInput => ({ _tag: "j_behind_over", peer: id })));
+    map(peerOf(peer), (id): EntityInput => ({ _tag: "j_behind", peer: id, from })));
+  const over = traverse([...was].filter((peer) => !now.has(peer) && height >= stand.view), (peer) =>
+    map(peerOf(peer), (id): EntityInput => ({ _tag: "j_behind_over", peer: id })));
   return flatMap(begun, (b) => map(over, (o) => ({ begun: b, over: o })));
 };
 
@@ -355,21 +362,28 @@ const behindTold = (
  * What a poll's events come to once the node has answered for the transactions: `context` is every event the poll
  * sees, with the bytes the node gave read into it (a start still waiting for its bytes is as the log has it, body-less
  * and not unread), `ready` the ones told now (`late` those of them a poll held back before), the finalizes held back
- * and nothing else, the starts still reading, and the transactions that are still waited on, each with the peer of the
- * Account it waits for. A start already told while it was waiting is not told again until it is read or given up.
+ * and nothing else, the starts still reading, and the transactions that are still waited on. A start already told
+ * while it was waiting is not told again until it is read or given up.
  */
 type Plan = Readonly<{
   ready: Prepared; context: readonly ChainEvent[]; late: ReadonlySet<ChainEvent>;
-  held: readonly ChainEvent[]; reading: readonly ChainEvent[];
-  stalled: ReadonlyMap<Bytes32, Failing>; peers: ReadonlyMap<Bytes32, Bytes32>;
+  held: readonly ChainEvent[]; reading: readonly ChainEvent[]; stalled: ReadonlyMap<Bytes32, Failing>;
 }>;
+
+/** The place of an event on the chain, in the order the chain logged it. */
+const byPlace = (a: ChainEvent, b: ChainEvent): number =>
+  (a.block === b.block ? Number(a.index - b.index) : Number(a.block - b.block));
+
+const eventKey = (e: ChainEvent): string => `${e.blockHash}:${e.index}:${e._tag}`;
+
+const keysOf = (events: readonly ChainEvent[]): ReadonlySet<string> => new Set(events.map(eventKey));
 
 /** A later dissolve cannot discard locks whose secret an earlier finalize of the same Account still owes. */
 const afterUnread = (
   events: readonly ChainEvent[], awaited: (e: ChainEvent) => boolean, hosted: Bytes32, e: ChainEvent,
 ): boolean => e._tag === "dispute_finalized" && events.some((prior) =>
   prior._tag === "dispute_finalized" && awaited(prior) && peerOfEvent(hosted, prior) === peerOfEvent(hosted, e)
-  && (prior.block < e.block || (prior.block === e.block && prior.index < e.index)));
+  && after(e, prior));
 
 const planned = (
   batch: Prepared, carry: Carry, failing: ReadonlyMap<Bytes32, Failing>, found: ReadonlyMap<Bytes32, readonly Read[]>,
@@ -382,27 +396,20 @@ const planned = (
   const pending = (e: ChainEvent): boolean => e._tag === "dispute_started" && awaited(e);
   const withBytes = withCalldata(batch, found).events;
   const context = batch.events.map((e, i) => (pending(e) ? e : (withBytes[i] ?? e)));
-  const stays = batch.events.map((e) => carry.reading.some((old) => eventKey(old) === eventKey(e)) && pending(e));
+  const readingKeys = keysOf(carry.reading);
+  const heldKeys = keysOf(carry.held);
+  const stays = batch.events.map((e) => readingKeys.has(eventKey(e)) && pending(e));
   const told = context.filter((_, i) => !stays[i]);
   const split = splitStalled(told, (e) => awaited(e) || afterUnread(batch.events, awaited, hosted, e));
   const waiting = batch.events.filter(awaited);
   return {
     ready: { ...batch, events: split.ready }, context, held: split.held, reading: context.filter(pending),
     late: new Set(batch.events.flatMap((e, i) =>
-      (carry.held.some((old) => eventKey(old) === eventKey(e)) || (covered(stand) && e.block <= stand.view)
+      (heldKeys.has(eventKey(e)) || (covered(stand) && e.block <= stand.view)
         ? [context[i] ?? e] : []))),
     stalled: new Map([...failing].filter(([tx]) => waiting.some((e) => "tx" in e && e.tx === tx))),
-    peers: new Map(waiting.flatMap((e) => {
-      const peer = peerOfEvent(hosted, e);
-      return "tx" in e && peer !== undefined ? [[e.tx, peer] as const] : [];
-    })),
   };
 };
-
-const byPlace = (a: ChainEvent, b: ChainEvent): number =>
-  (a.block === b.block ? Number(a.index - b.index) : Number(a.block - b.block));
-
-const eventKey = (e: ChainEvent): string => `${e.blockHash}:${e.index}:${e._tag}`;
 
 /** Older WALs without payload identities keep the archive-read path until a delivery records them. */
 const covered = (stand: Standing): boolean => stand.pending !== undefined
@@ -432,7 +439,7 @@ const waitInputs = (
     return old.map(waitKey).join("|") === pending.map(waitKey).join("|") ? [] : [{ peer, pending }];
   });
   return traverse(changed, ({ peer, pending }) =>
-    map(peerOf({ peer: peer as Bytes32 }), (id): EntityInput => ({ _tag: "j_read_waits", peer: id, pending })));
+    map(peerOf(peer), (id): EntityInput => ({ _tag: "j_read_waits", peer: id, pending })));
 };
 
 /** Whether the Host owes the Entity nothing of an event: it is about an Account whose past it can no longer read. */
@@ -440,6 +447,12 @@ const gone = (hosted: Bytes32, lost: ReadonlyMap<Bytes32, bigint>, e: ChainEvent
   const peer = peerOfEvent(hosted, e);
   const from = peer === undefined ? undefined : lost.get(peer);
   return from !== undefined && e.block >= from;
+};
+
+/** Whether the event is about an Account the Entity was already told is lost, of whatever block. */
+const ofLost = (hosted: Bytes32, lost: ReadonlySet<string>, e: ChainEvent): boolean => {
+  const peer = peerOfEvent(hosted, e);
+  return peer !== undefined && lost.has(peer);
 };
 
 /** What the node's state says of the Accounts a poll's events need, and the Accounts whose state it no longer has. */
@@ -461,17 +474,15 @@ const seen = async (
   const read = answers.value.flatMap(([r, at]) => (at === "pruned" ? [] : [[readingKey(r), at] as const]));
   const lost = answers.value.flatMap(([r, at]) =>
     (at === "pruned" ? [[r.left === hosted ? r.right : r.left, r.block] as const] : []));
-  const earliest = lost.reduce<ReadonlyMap<Bytes32, bigint>>((first, [peer, block]) => {
-    const was = first.get(peer);
-    return was !== undefined && was <= block ? first : mapSet(first, peer, block);
-  }, new Map());
+  const earliest = lost.reduce<ReadonlyMap<Bytes32, bigint>>(
+    (from, [peer, block]) => earlier(from, peer, block), new Map());
   return ok({ accounts: new Map([...carried, ...read]), lost: earliest });
 };
 
 /** The Entity is told of each Account lost, ahead of the rest of the delivery. */
 const lostTold = (lost: ReadonlyMap<Bytes32, bigint>): Result<readonly EntityInput[], BadPeer> =>
   traverse([...lost], ([peer, from]) =>
-    map(peerOf({ peer }), (id): EntityInput => ({ _tag: "j_account_lost", peer: id, from })));
+    map(peerOf(peer), (id): EntityInput => ({ _tag: "j_account_lost", peer: id, from })));
 
 /**
  * The next delivery, or nothing when no block past the cursor is final yet. `hosted` is the Entity the node hosts, and
@@ -488,9 +499,8 @@ export const poll = async (
   if (!ranged.ok) return ranged;
   const range = ranged.value;
   if (range === undefined) return ok(undefined);
-  const owed = owedEvents(range.prepared.events, carry, stand);
-  const standing = new Map([...stand.lost].map((peer): readonly [Bytes32, bigint] => [peer as Bytes32, 0n]));
-  const live = { ...range.prepared, events: owed.filter((e) => !gone(hosted, standing, e)) };
+  const due = owedEvents(range.prepared.events, carry, stand);
+  const live = { ...range.prepared, events: due.filter((e) => !ofLost(hosted, stand.lost, e)) };
   const known = await seen(port, hosted, live, carry.readings);
   if (!known.ok) return known;
   const { accounts, lost } = known.value;
@@ -498,26 +508,27 @@ export const poll = async (
   const calldata = await calldataOf(port, batch, hosted, carry, range.head);
   const failing = failingNow(calldata, carry, range.head);
   const plan = planned(batch, carry, failing, calldata.gathered.found, stand, hosted);
-  const remembered = waitInputs(hosted, stand, [...plan.held, ...plan.reading], plan.context, accounts);
+  const heldBack = [...plan.held, ...plan.reading];
+  const remembered = waitInputs(hosted, stand, heldBack, plan.context, accounts);
   if (!remembered.ok) return remembered;
   const step = advance(watch, plan.ready, [hosted], accounts, windows, { context: plan.context, late: plan.late });
   if (!step.ok) return step;
   const behind = new Set([...stand.behind, ...heldFrom(hosted, [...carry.held, ...carry.reading]).keys()]);
-  const told = behindTold(hosted, behind, [...plan.held, ...plan.reading], stand, step.value.height);
+  const told = behindTold(hosted, behind, heldBack, stand, step.value.height);
   if (!told.ok) return told;
   const gave = lostTold(lost);
   if (!gave.ok) return gave;
   const events = traverse(step.value.events, ({ event }) => inputOf(event));
   if (!events.ok) return events;
   const { stalled } = plan;
-  const kept = new Set([...plan.held, ...plan.reading].flatMap((e) => ("tx" in e ? [e.tx] : [])));
+  const kept = new Set(heldBack.flatMap((e) => ("tx" in e ? [e.tx] : [])));
   const found = calldata.gathered.found;
   const reads = new Map(calldata.wanted.flatMap((tx) => {
     const got = found.get(tx);
     const traced = carry.reads.get(tx)?.traced === true || calldata.traced.has(tx);
     return got === undefined || !(kept.has(tx) || stalled.has(tx)) ? [] : [[tx, { reads: got, traced }] as const];
   }));
-  const carried = readings({ ...batch, events: [...plan.held, ...plan.reading] }, [hosted]).flatMap((r) => {
+  const carried = readings({ ...batch, events: heldBack }, [hosted]).flatMap((r) => {
     const at = accounts.get(readingKey(r));
     return at === undefined ? [] : [[readingKey(r), at] as const];
   });
@@ -526,7 +537,7 @@ export const poll = async (
     events: [...gave.value, ...told.value.begun, ...events.value, ...remembered.value, ...told.value.over],
     height: step.value.height,
     carry: { failing: stalled, reads, held: plan.held, reading: plan.reading, readings: new Map(carried) },
-    stalls: [...stalled].map(([tx, f]): Stall => ({ tx, peer: plan.peers.get(tx) ?? hosted, ...f })),
+    stalls: [...stalled].map(([tx, { fault, tries }]): Stall => ({ tx, fault, tries })),
     untraceable: calldata.gathered.noMethod.size > 0,
   });
 };

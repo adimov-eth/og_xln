@@ -19,6 +19,10 @@ export const freshChain: ChainFacts =
 export const behindFrom = (f: ChainFacts, from: bigint): ChainFacts =>
   (f.behind !== undefined && f.behind <= from ? f : { ...f, behind: from });
 
+/** The Host still owes this Account's held events: it is behind and has not given the Account up as lost. */
+export const owed = (f: ChainFacts): f is ChainFacts & Readonly<{ behind: bigint }> =>
+  f.behind !== undefined && !f.lost;
+
 /** The Host has delivered what it held: an Account it can no longer read stays behind (R-WATCH-STALL). */
 export const behindOver = (f: ChainFacts): ChainFacts => (f.lost ? f : { ...f, behind: undefined });
 
