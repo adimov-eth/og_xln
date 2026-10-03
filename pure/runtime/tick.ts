@@ -12,7 +12,8 @@ import { entityFrame } from "../entity/frame.ts";
 import type { EntityId, EntityInput, EntityState, Fold, JAction, Outbound } from "../entity/model.ts";
 import type { Frame } from "../entity/frame.ts";
 import { ownView } from "../account/clause/clock.ts";
-import type { EntityBatch, Halt, NewHeight, Input, Row, Runtime, Setup, Timestamp } from "./model.ts";
+import { proofBodyHash, type ProofBody } from "../chain/proof/proof.ts";
+import type { EntityBatch, Halt, NewHeight, Observation, Input, Row, Runtime, Setup, Timestamp } from "./model.ts";
 
 export const startRuntime = (setup: Setup, entities: readonly EntityState[]): Runtime => ({
   setup, stamp: 0n as Timestamp, view: setup.view, entities: new Map(entities.map((e) => [e.id, e])),
@@ -22,7 +23,7 @@ export const startRuntime = (setup: Setup, entities: readonly EntityState[]): Ru
 const later = (a: Timestamp, b: Timestamp): Timestamp => (a > b ? a : b);
 
 const frameOf = (rt: Runtime, entity: EntityState, inputs: readonly EntityInput[]): Frame =>
-  entityFrame({ clock: rt.setup.clock, view: rt.view }, rt.setup.signing, entity, inputs);
+  entityFrame({ clock: rt.setup.clock, view: rt.view }, rt.setup.anchor, entity, inputs);
 
 /** The frame an input makes on the Runtime as it stands: the entities' next states and the row that records it. */
 const stageEntity = (rt: Runtime, stamp: Timestamp, input: EntityBatch): Runtime => {
@@ -53,8 +54,39 @@ const stageHeight = (rt: Runtime, stamp: Timestamp, input: NewHeight): Runtime =
   return { ...raised, stamp, entities: new Map(frames.map(([id, f]) => [id, f.state])), staged: row };
 };
 
-const stage = (rt: Runtime, stamp: Timestamp, input: Input): Runtime =>
-  (input._tag === "entity" ? stageEntity(rt, stamp, input) : stageHeight(rt, stamp, input));
+type Observed = Readonly<{ runtime: Runtime; rows: readonly Row[] }>;
+
+const collected = (before: Observed, runtime: Runtime): Observed => ({
+  runtime, rows: runtime.staged === undefined ? before.rows : [...before.rows, runtime.staged],
+});
+
+/**
+ * R-HEIGHT-ORDER: a crash may keep the whole delivery or none of it. Committing its events and read-wait identities
+ * before a separate height row allowed an already-applied finalize to replay as fresh after a crash in that gap.
+ * Frames retain their old-view judgment and positional output order; none leaves until this one row is durable.
+ */
+const stageObservation = (rt: Runtime, stamp: Timestamp, input: Observation): Runtime => {
+  const events = input.batches.reduce<Observed>((before, inputs) => collected(before,
+    stageEntity(before.runtime, stamp, { _tag: "entity", at: input.at, to: input.to, inputs })),
+  { runtime: rt, rows: [] });
+  const done = input.height > rt.view
+    ? collected(events, stageHeight(events.runtime, stamp, { _tag: "j_height", at: input.at, height: input.height }))
+    : events;
+  const row: Row = {
+    height: BigInt(rt.wal.length) + 1n, stamp, input,
+    outputs: done.rows.flatMap((r) => r.outputs), chain: done.rows.flatMap((r) => r.chain),
+    notices: done.rows.flatMap((r) => r.notices),
+  };
+  return { ...done.runtime, stamp, staged: row };
+};
+
+const stage = (rt: Runtime, stamp: Timestamp, input: Input): Runtime => {
+  switch (input._tag) {
+    case "entity": return stageEntity(rt, stamp, input);
+    case "j_height": return stageHeight(rt, stamp, input);
+    case "j_observation": return stageObservation(rt, stamp, input);
+  }
+};
 
 /** Takes the Host's next input. A bad input is a row that refuses it; only a Host that skips `commit` can halt. */
 export const apply = (rt: Runtime, input: Input): Result<Runtime, Halt> =>
@@ -92,11 +124,28 @@ const outputIds = (row: Row): readonly string[] => row.outputs.map((o) => `${o.f
 
 const foldId = (f: Fold): string => `${f.token}:${f.offdelta}`;
 
+/** A proof body by its hash: every field of it is in the identity of the dispute that carries it. */
+const bodyId = (body: ProofBody): string => {
+  const hashed = proofBodyHash(body);
+  return hashed.ok ? hashed.value : "unhashable";
+};
+
+/** The dispute a counter, or a finalize of a counter, answers: its nonce and the hash of the body it opened with. */
+const initialId = (initial: Readonly<{ nonce: bigint; bodyHash: string }> | undefined): string =>
+  (initial === undefined ? "own" : `${initial.nonce} ${initial.bodyHash}`);
+
 const chainId = (action: JAction): string =>
   match(action, {
+    fund: (f) => `fund ${f.token} ${f.amount}`,
     reveal: (r) => `reveal ${r.peer} ${r.token} ${r.id} ${r.hashlock}`,
     deposit: (d) => `deposit ${d.peer} ${d.token} ${d.amount}`,
-    counter: (c) => `counter ${c.peer} ${c.nonce} ${c.head}`,
+    dispute_start: (d) =>
+      `dispute_start ${d.peer} ${d.nonce} ${d.epoch} ${d.proposerIsLeft} ${bodyId(d.body)} ${d.sig}`,
+    dispute_finalize: (d) =>
+      `dispute_finalize ${d.peer} ${d.nonce} ${d.proposerIsLeft} ${d.startedByLeft} ${bodyId(d.body)}`
+      + ` ${initialId(d.initial)}`,
+    counter: (c) =>
+      `counter ${c.peer} ${c.nonce} ${c.head} ${c.proposerIsLeft} ${bodyId(c.body)} ${c.sig} ${initialId(c.initial)}`,
     c2r: (c) => `c2r ${c.peer} ${c.serial} ${c.token} ${c.amount}`,
     settle: (s) => `settle ${s.peer} ${s.serial} ${s.token} ${s.amount} ${s.folds.map(foldId).join(",")}`,
   });

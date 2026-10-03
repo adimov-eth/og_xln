@@ -2,9 +2,8 @@
 // do not care about a crash in between. Only tests import this.
 import { expect } from "bun:test";
 import { heightOf } from "../account/fixtures.ts";
-import { credit, entityOf, GOLD, judge, open, pay } from "../entity/fixtures.ts";
+import { anchor, credit, entityOf, GOLD, heardSigned, judge, open, pay } from "../entity/fixtures.ts";
 import { emptyEntity, type EntityId, type EntityInput, type JAction, type Outbound } from "../entity/model.ts";
-import { signing } from "../account/fixtures.ts";
 import { unwrapOr } from "../kernel/core/result.ts";
 import type { Result } from "../kernel/core/result.ts";
 import type { JView } from "../account/clause/clock.ts";
@@ -13,7 +12,7 @@ import { apply, commit, flush, recover, startRuntime } from "./tick.ts";
 
 export { credit, entityOf, GOLD, open, pay };
 
-export const setup: Setup = { clock: judge.clock, view: judge.view, signing };
+export const setup: Setup = { clock: judge.clock, view: judge.view, anchor };
 
 export const stamp = (ms: bigint): Timestamp => ms as Timestamp;
 
@@ -76,7 +75,7 @@ export const deliver = (c: Cluster): Cluster => {
   const [next, ...rest] = c.inflight;
   return next === undefined
     ? c
-    : feed({ ...c, inflight: rest }, next.to, { _tag: "peer_message", from: next.from, msg: next.msg });
+    : feed({ ...c, inflight: rest }, next.to, heardSigned(next));
 };
 
 /** The link delivers until nothing is in flight. */

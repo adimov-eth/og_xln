@@ -9,7 +9,7 @@ import { setup } from "../runtime/fixtures.ts";
 import { begin, idle, limits, persisted, receive, reopen, submit } from "./host.ts";
 import type { Host, Item } from "./model.ts";
 import {
-  BOUNDS, entityOf, hostFor, hostOf, inputsOf, meet, sentIn, settle, stamp, tell, turn, unhalted,
+  BOUNDS, entityOf, hostFor, hostOf, inputsOf, meet, onTheLink, sentIn, settle, stamp, tell, turn, unhalted,
 } from "./fixtures.ts";
 
 const ALICE = entityOf(1);
@@ -19,7 +19,7 @@ const CAROL = entityOf(3);
 const peer = (from: EntityId, to: EntityId, msg: Msg<AccountTx>): Outbound => ({ from, to, msg });
 
 const frameOf = (parent: FrameHash, txs: readonly AccountTx[]): Msg<AccountTx> => {
-  const frame: Frame<AccountTx> = { author: "left", parent, attempt: 0, slot: 2, txs };
+  const frame: Frame<AccountTx> = { author: "left", parent, attempt: 0, slot: 2, epoch: 0n, firstNonce: 2n, txs };
   return { _tag: "frame", frame };
 };
 
@@ -77,7 +77,7 @@ describe("host", () => {
   test("R-DURABLE the outputs of a row leave only once the row is durable, once, and never an earlier row's", () => {
     const { bob, sent } = aliceToBob();
     expect(sent.map((o) => o.msg._tag)).toEqual(["frame"]);
-    const heard = unhalted(begin(receive(bob, sent[0] as Outbound).host, stamp(30n)));
+    const heard = unhalted(begin(receive(bob, onTheLink(sent[0] as Outbound)).host, stamp(30n)));
     expect(sentIn(heard.effects)).toEqual([]);
     const done = unhalted(persisted(heard.host));
     expect(sentIn(done.effects).map((o) => o.msg._tag)).toEqual(["ack"]);
