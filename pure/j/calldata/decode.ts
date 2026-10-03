@@ -27,6 +27,7 @@ import {
   abiBytes, abiBytesElement, abiFits, abiLengthRef, abiLengthWord, abiRoot, abiStaticBytes, abiStaticWord,
   abiTupleBytes, abiTupleElement, abiTupleRef, abiWord, type AbiLength, type AbiTuple,
 } from "../../kernel/encoding/abi-read.ts";
+import { firstBy } from "../../kernel/core/collections.ts";
 import { bytesToHex, concat, hexToBytes, keccak256, keccakHex, utf8 } from "../../kernel/encoding/bytes.ts";
 import type { Bytes32 } from "../log.ts";
 
@@ -203,11 +204,11 @@ const scan = ({ data, route }: Carried): readonly Call[] => {
 };
 
 /**
- * The bytes of a transaction, the calls the scan found in them and the finalizes those calls carry. The scan and the
- * decode are the costly part, so the Host makes a `Read` once per transaction and keeps it for as long as the
- * transaction is in its range, however many polls and logs name it (R-WATCH-CALLDATA).
+ * The calls the scan found in the bytes of a transaction and the finalizes those calls carry. The scan and the decode
+ * are the costly part, so the Host makes a `Read` once per transaction and keeps it for as long as the transaction is
+ * in its range, however many polls and logs name it (R-WATCH-CALLDATA).
  */
-export type Read = Readonly<{ carried: Carried; calls: readonly Call[]; finalizes: readonly Finalize[] }>;
+export type Read = Readonly<{ calls: readonly Call[]; finalizes: readonly Finalize[] }>;
 
 const finalizesOf = (calls: readonly Call[]): readonly Finalize[] =>
   distinct(calls.flatMap((call) =>
@@ -216,7 +217,7 @@ const finalizesOf = (calls: readonly Call[]): readonly Finalize[] =>
 
 export const readOf = (carried: Carried): Read => {
   const calls = scan(carried);
-  return { carried, calls, finalizes: finalizesOf(calls) };
+  return { calls, finalizes: finalizesOf(calls) };
 };
 
 /** A finalize or a start op in an input, and where it lies: one op is read once however many offsets reach it. */
@@ -227,7 +228,7 @@ const placed = <T>(kind: string, buf: Uint8Array, at: number, read: () => T): Pl
 
 /** The ops without repeats, none at all when there are more than the most that are read. */
 const distinct = <T>(ops: readonly Placed<T>[]): readonly Placed<T>[] => {
-  const once = ops.filter((op, i) => ops.findIndex((other) => other.place === op.place) === i);
+  const once = firstBy(ops, (op) => op.place);
   return once.length > MOST_OPS ? [] : once;
 };
 
@@ -252,11 +253,7 @@ const towerFinalizes = (args: Uint8Array, route: Route): readonly Placed<Finaliz
   return [placed("tower", args, params, () => finalizeOf(args, params, NO_SIGNATURE))];
 };
 
-/**
- * The finalize ops of every call in an input, each read once, none for an input with no call, none for a list past what
- * the contract accepts (it would revert) and none for an input with more distinct ops than `MOST_OPS`: a transaction
- * that carried a `DisputeFinalized` some other way is told as unread.
- */
+/** The finalizes of an input: see `finalizesOf` (each op read once, none past the limits). */
 export const finalizesIn = ({ finalizes }: Read): readonly Finalize[] => finalizes;
 
 /**

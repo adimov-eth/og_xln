@@ -14,7 +14,7 @@ import { all, err, flatMap, map, mapErr, ok, traverse, type Result } from "../..
 import type { PortFault } from "../submit/chain.ts";
 import type { Probe, Traced, WatchPort } from "../watch/loop.ts";
 import { bad, hexQuantity, oneWord, quantity, withArguments, wordsOf, type ReplyFault } from "./calls.ts";
-import { fieldsOf, isText, listOf, portFault, readsOf, type Fields, type Rpc } from "./port.ts";
+import { fieldsOf, isText, listOf, portFault, readsOf, type Fields, type Reads, type Rpc } from "./port.ts";
 
 const hash32 = (value: unknown): Result<Bytes32, ReplyFault> =>
   (isText(value) ? mapErr(bytes32(value.toLowerCase()), () => bad("not a 32-byte hash")) : err(bad("not a hash")));
@@ -48,13 +48,18 @@ const rawLogOf = (raw: unknown): Result<RawLog, ReplyFault> =>
  * pruned, or not yet indexed by this backend) is `undefined`, an answer the loop decides on by its age.
  */
 const inputOf = (depository: Address) => (raw: unknown): Result<Carried | undefined, ReplyFault> =>
-  raw === null ? ok(undefined) : flatMap(fieldsOf(raw), (o) => {
-    const input = o["input"];
-    const bytes = isText(input) ? hexToBytes(input.toLowerCase()) : undefined;
-    const to = o["to"];
-    const route = isText(to) && to.toLowerCase() === depository ? "direct" : "wrapper";
-    return bytes?.ok === true ? ok({ data: bytes.value, route }) : err(bad("a transaction without input"));
-  });
+  raw === null ? ok(undefined) : flatMap(fieldsOf(raw), (o) =>
+    carriedOf(o["input"], isDepository(depository)(o["to"]) ? "direct" : "wrapper", "a transaction without input"));
+
+/** Whether a `to` field names the Depository. */
+const isDepository = (depository: Address) => (to: unknown): boolean =>
+  isText(to) && to.toLowerCase() === depository;
+
+/** The bytes of an `input` field, with the route they took, or the fault `what` says they are not bytes. */
+const carriedOf = (input: unknown, route: Carried["route"], what: string): Result<Carried, ReplyFault> => {
+  const bytes = isText(input) ? hexToBytes(input.toLowerCase()) : undefined;
+  return bytes?.ok === true ? ok({ data: bytes.value, route }) : err(bad(what));
+};
 
 /**
  * The calls of a trace come from the EVM, not from a number chosen here: a transaction holds as many frames as its gas
@@ -73,9 +78,10 @@ const below = (frames: readonly Fields[]): Result<readonly unknown[], ReplyFault
     return Array.isArray(calls) ? ok(calls as readonly unknown[]) : err(bad("the calls of a call are not a list"));
   }), (lists) => lists.flat());
 
+/** One level further down; a level with no calls left is the last, and later steps leave it as it is. */
 const deeper = (walk: Result<Level, ReplyFault>): Result<Level, ReplyFault> =>
-  flatMap(walk, ({ next, seen }) => flatMap(traverse(next, fieldsOf), (frames) =>
-    map(below(frames), (calls): Level => ({ next: calls, seen: [...seen, frames] }))));
+  flatMap(walk, (level) => (level.next.length === 0 ? ok(level) : flatMap(traverse(level.next, fieldsOf), (frames) =>
+    map(below(frames), (calls): Level => ({ next: calls, seen: [...level.seen, frames] })))));
 
 /** Every frame of a `callTracer` trace, whatever its size, and none for a tree deeper than the EVM goes. */
 const framesOf = (raw: unknown): Result<readonly Fields[], ReplyFault> => {
@@ -88,13 +94,8 @@ const framesOf = (raw: unknown): Result<readonly Fields[], ReplyFault> => {
 /** The input of each call of the trace whose target is the Depository, each one `direct`. */
 const callsOf = (depository: Address) => (raw: unknown): Result<readonly Carried[], ReplyFault> =>
   flatMap(framesOf(raw), (frames) => {
-    const ours = frames.filter((n) => isText(n["to"]) && n["to"].toLowerCase() === depository);
-    return traverse(ours, (n): Result<Carried, ReplyFault> => {
-      const bytes = isText(n["input"]) ? hexToBytes(n["input"].toLowerCase()) : undefined;
-      return bytes?.ok === true
-        ? ok({ data: bytes.value, route: "direct" })
-        : err(bad("a call of the trace without input"));
-    });
+    const ours = frames.filter((n) => isDepository(depository)(n["to"]));
+    return traverse(ours, (n) => carriedOf(n["input"], "direct", "a call of the trace without input"));
   });
 
 /**
@@ -141,8 +142,6 @@ const nonceOf = (raw: unknown): Result<bigint, ReplyFault> =>
   flatMap(wordsOf(raw), ([nonce]) => (nonce === undefined ? err(bad("an empty Account row")) : ok(nonce)));
 
 const TRACER = { tracer: "callTracer" };
-
-type Reads = ReturnType<typeof readsOf>;
 
 const CALLS = ["CALL", "STATICCALL", "DELEGATECALL", "CALLCODE"];
 const KINDS = [...CALLS, "CREATE", "CREATE2", "SELFDESTRUCT"];

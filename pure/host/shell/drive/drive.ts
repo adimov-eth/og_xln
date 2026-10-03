@@ -5,6 +5,7 @@
 //
 // This module reads no clock and holds no state of its own: the clock is the shell's `now`, and the Station it returns
 // is the whole state, so a crash is a Station thrown away and `start` run again over the same two files.
+import { owed } from "../../../entity/chain.ts";
 import type { EntityId, EntityInput, EntityState, Outbound } from "../../../entity/model.ts";
 import type { Returned, Skipped } from "../../../j/batch/answer.ts";
 import type { JOp } from "../../../j/op/ops.ts";
@@ -216,7 +217,7 @@ export const start = async (shell: Shell, boot: Boot): Promise<Result<Turn, Driv
   if (!reopened.ok) return reopened;
   const peers = [...reopened.value.host.runtime.entities.values()].flatMap((entity) =>
     [...entity.chain].flatMap(([peer, facts]) =>
-      (facts.behind !== undefined && !facts.lost && facts.readWaits === undefined ? [peer] : [])));
+      (owed(facts) && facts.readWaits === undefined ? [peer] : [])));
   if (peers.length > 0) return err({ _tag: "read_wait_upgrade", peers });
   const resumed = await resume(shell.io, boot.where, rows.value);
   if (!resumed.ok) return resumed;

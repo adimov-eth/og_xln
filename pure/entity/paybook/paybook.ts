@@ -11,6 +11,7 @@ import { openHolds } from "../../account/state.ts";
 import type { AccountTx } from "../../account/tx.ts";
 import type { Of } from "../../kernel/core/tagged.ts";
 import { traverse } from "../../kernel/core/result.ts";
+import { owed } from "../chain.ts";
 import {
   entityId, sideOf, type AccountCommand, type ChainFacts, type Entry, type EntityId, type EntityState, type Paybook,
 } from "../model.ts";
@@ -30,8 +31,9 @@ export const hopOf = (clock: ClockParams): bigint => clock.reserve + clock.lag;
  */
 export const lastHeard = (state: EntityState, clock: ClockParams): ReadonlyMap<EntityId, bigint> =>
   [...state.paybook].reduce<ReadonlyMap<EntityId, bigint>>((last, [hashlock, entry]) => {
-    const inbound = entry._tag === "locked" ? clauseIn(state, entry.from, hashlock) : undefined;
-    if (entry._tag !== "locked" || inbound === undefined) return last;
+    if (entry._tag !== "locked") return last;
+    const inbound = clauseIn(state, entry.from, hashlock);
+    if (inbound === undefined) return last;
     const at = inbound.hold.deadline - clock.lag;
     const latest = last.get(entry.to);
     return latest !== undefined && latest >= at ? last : mapSet(last, entry.to, at);
@@ -47,7 +49,7 @@ export type Waits = Readonly<{
 
 export const waitsOf = (state: EntityState, clock: ClockParams): Waits => ({
   lastHeard: lastHeard(state, clock),
-  behind: heldPeers(state, (facts) => facts.behind !== undefined && !facts.lost),
+  behind: heldPeers(state, owed),
   lost: heldPeers(state, (facts) => facts.lost),
 });
 
@@ -107,9 +109,12 @@ const behind = (state: EntityState, peer: EntityId): boolean => state.chain.get(
  * an Account the Host owes events of, so a secret in a finalize it has not read may already have paid the next hop. An
  * expiry of the inbound hold of such a hash is never co-signed: it would give back to the payer what the chain paid on.
  */
-export const unruled = (state: EntityState): ReadonlySet<string> =>
-  new Set([...state.paybook].flatMap(([hashlock, entry]) =>
-    (entry._tag === "locked" && behind(state, entry.to) ? [hashlock] : [])));
+export const unruled = (state: EntityState): Pick<ReadonlySet<string>, "has"> => ({
+  has: (hashlock) => {
+    const entry = state.paybook.get(hashlock);
+    return entry?._tag === "locked" && behind(state, entry.to);
+  },
+});
 
 /** A forward whose lock is in: the same amount and hashlock on the next hop, one hop sooner, or the lock given up. */
 type Forward = Of<Entry, "forward">;

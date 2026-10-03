@@ -25,18 +25,25 @@ const later = (a: Timestamp, b: Timestamp): Timestamp => (a > b ? a : b);
 const frameOf = (rt: Runtime, entity: EntityState, inputs: readonly EntityInput[]): Frame =>
   entityFrame({ clock: rt.setup.clock, view: rt.view }, rt.setup.anchor, entity, inputs);
 
+type Effects = Pick<Row, "outputs" | "chain" | "notices">;
+
+/** The row that records an input and what the frames it made gave out, in the order the frames ran. */
+const rowOf = (rt: Runtime, stamp: Timestamp, input: Input, parts: readonly Effects[]): Row => ({
+  height: BigInt(rt.wal.length) + 1n, stamp, input,
+  outputs: parts.flatMap((p) => p.outputs), chain: parts.flatMap((p) => p.chain),
+  notices: parts.flatMap((p) => p.notices),
+});
+
 /** The frame an input makes on the Runtime as it stands: the entities' next states and the row that records it. */
 const stageEntity = (rt: Runtime, stamp: Timestamp, input: EntityBatch): Runtime => {
-  const height = BigInt(rt.wal.length) + 1n;
   const entity = rt.entities.get(input.to);
   if (entity === undefined) {
     const unknown = { _tag: "unknown_entity", entity: input.to } as const;
-    const refused: Row = { height, stamp, input, outputs: [], chain: [], notices: [unknown] };
-    return { ...rt, stamp, staged: refused };
+    return { ...rt, stamp, staged: rowOf(rt, stamp, input, [{ outputs: [], chain: [], notices: [unknown] }]) };
   }
   const frame = frameOf(rt, entity, input.inputs);
-  const row: Row = { height, stamp, input, outputs: frame.outputs, chain: frame.chain, notices: frame.notices };
-  return { ...rt, stamp, entities: mapSet(rt.entities, input.to, frame.state), staged: row };
+  const staged = rowOf(rt, stamp, input, [frame]);
+  return { ...rt, stamp, entities: mapSet(rt.entities, input.to, frame.state), staged };
 };
 
 const byId = ([a]: readonly [EntityId, unknown], [b]: readonly [EntityId, unknown]): number => (a < b ? -1 : 1);
@@ -46,11 +53,7 @@ const stageHeight = (rt: Runtime, stamp: Timestamp, input: NewHeight): Runtime =
   const view = input.height > rt.view ? ownView(input.height, input.height) : rt.view;
   const raised = { ...rt, view };
   const frames = [...rt.entities].toSorted(byId).map(([id, entity]) => [id, frameOf(raised, entity, [])] as const);
-  const row: Row = {
-    height: BigInt(rt.wal.length) + 1n, stamp, input,
-    outputs: frames.flatMap(([, f]) => f.outputs), chain: frames.flatMap(([, f]) => f.chain),
-    notices: frames.flatMap(([, f]) => f.notices),
-  };
+  const row = rowOf(rt, stamp, input, frames.map(([, f]) => f));
   return { ...raised, stamp, entities: new Map(frames.map(([id, f]) => [id, f.state])), staged: row };
 };
 
@@ -72,12 +75,7 @@ const stageObservation = (rt: Runtime, stamp: Timestamp, input: Observation): Ru
   const done = input.height > rt.view
     ? collected(events, stageHeight(events.runtime, stamp, { _tag: "j_height", at: input.at, height: input.height }))
     : events;
-  const row: Row = {
-    height: BigInt(rt.wal.length) + 1n, stamp, input,
-    outputs: done.rows.flatMap((r) => r.outputs), chain: done.rows.flatMap((r) => r.chain),
-    notices: done.rows.flatMap((r) => r.notices),
-  };
-  return { ...done.runtime, stamp, staged: row };
+  return { ...done.runtime, stamp, staged: rowOf(rt, stamp, input, done.rows) };
 };
 
 const stage = (rt: Runtime, stamp: Timestamp, input: Input): Runtime => {

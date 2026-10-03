@@ -77,7 +77,8 @@ type Seen = Readonly<{ block: bigint; index: bigint }>;
 
 const NOTHING_SEEN: Seen = { block: -1n, index: -1n };
 
-const after = (log: Seen, seen: Seen): boolean =>
+/** Whether a log lies after the place already seen, in the chain's order. */
+export const after = (log: Seen, seen: Seen): boolean =>
   log.block > seen.block || (log.block === seen.block && log.index > seen.index);
 
 /** Every log sits in a block of the batch, with that block's hash, and the logs run in strictly rising order. */

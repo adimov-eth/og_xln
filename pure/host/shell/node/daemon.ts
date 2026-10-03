@@ -26,7 +26,7 @@ import {
 } from "../mesh/mesh.ts";
 import {
   beginAt, NO_CARRY, poll, resumeAt, windowsOf, type BadPeer, type BadSecret, type Carry, type Delivery, type JFault,
-  type Standing, type Stall, type WatchConfig,
+  NO_STANDING, type Standing, type Stall, type WatchConfig,
 } from "../watch/loop.ts";
 import type { PortFault } from "../submit/chain.ts";
 import { waitsOf } from "../../../entity/paybook/paybook.ts";
@@ -266,13 +266,17 @@ const cursorOf = (rig: Rig, watch: WatchConfig, state: State): Promise<Result<Wa
     ? beginAt(watch, resumeAt(state.station.host.runtime.view, chainOf(rig, state)))
     : Promise.resolve(ok(state.cursor)));
 
-const NO_WAITS = { lastHeard: new Map<EntityId, bigint>(), behind: new Set<EntityId>(), lost: new Set<EntityId>() };
+/** Whether the node may hold value: its Entity forwards no lock until the provider is shown to trace calls. */
+const holdsValue = (config: Config): boolean => config.watch?.value === true;
+
+/** Whether the Entity `self` of the Station has been told the provider shows no call trace. */
+const blindIn = (station: Station, self: EntityId): boolean => station.host.runtime.entities.get(self)?.blind === true;
 
 /** What the loop needs of the Entity: where waiting for a secret stops paying, who is held back, and the view. */
 const standing = (rig: Rig, state: State): Standing => {
   const { runtime } = state.station.host;
   const entity = runtime.entities.get(rig.self);
-  const waits = entity === undefined ? NO_WAITS : waitsOf(entity, rig.config.boot.setup.clock);
+  const waits = entity === undefined ? NO_STANDING : waitsOf(entity, rig.config.boot.setup.clock);
   const pending = new Map([...chainOf(rig, state)].flatMap(([peer, facts]) =>
     (facts.readWaits === undefined ? [] : [[peer, facts.readWaits] as const])));
   return { ...waits, view: runtime.view, pending };
@@ -299,8 +303,8 @@ const watchFaultOf = (stalls: readonly Stall[]): string | undefined =>
  * exit would stop. It is told once: the Entity knows (`blind`). The probe then asks for a trace at each new head.
  */
 const blinding = (rig: Rig, state: State, delivery: Delivery): readonly EntityInput[] => {
-  const known = state.station.host.runtime.entities.get(rig.self)?.blind === true;
-  return rig.config.watch?.value === true && delivery.untraceable && !known ? [{ _tag: "j_blind", boot: false }] : [];
+  const known = blindIn(state.station, rig.self);
+  return holdsValue(rig.config) && delivery.untraceable && !known ? [{ _tag: "j_blind", boot: false }] : [];
 };
 
 /** The provider does not trace: told once for each time the node goes blind, naming what said so. */
@@ -310,18 +314,18 @@ const untracedNotices = (state: State, why: string | undefined): readonly HostNo
 /** Event effects, read waits and height commit together; only then does the cursor move (R-HEIGHT-ORDER). */
 const delivered = async (rig: Rig, state: State, delivery: Delivery): Promise<State> => {
   const inputs = [...blinding(rig, state, delivery), ...delivery.events];
-  const second = await concluded(rig, state,
+  const observed = await concluded(rig, state,
     await observe(rig.config.shell, state.station, rig.self, inputs, delivery.height));
   const { carry, stalls } = delivery;
-  const said = rig.config.watch?.value === true && delivery.untraceable
+  const said = holdsValue(rig.config) && delivery.untraceable
     ? untracedNotices(state, "a transaction's call trace: no such method") : [];
-  const told = recent([...second.notices, ...stallNotices(state.carry, stalls), ...said]);
-  return second.fatal === undefined
+  const told = recent([...observed.notices, ...stallNotices(state.carry, stalls), ...said]);
+  return observed.fatal === undefined
     ? {
-      ...second, cursor: delivery.watch, carry, notices: told, watchFault: watchFaultOf(stalls), fatal: undefined,
-      untraced: second.untraced || said.length > 0,
+      ...observed, cursor: delivery.watch, carry, notices: told, watchFault: watchFaultOf(stalls),
+      untraced: observed.untraced || said.length > 0,
     }
-    : second;
+    : observed;
 };
 
 const listening = async (rig: Rig, state: State): Promise<State> => {
@@ -353,8 +357,7 @@ const sighted = async (rig: Rig, state: State): Promise<State> => {
  */
 const probing = async (rig: Rig, state: State): Promise<State> => {
   const { watch } = rig.config;
-  const blind = state.station.host.runtime.entities.get(rig.self)?.blind === true;
-  if (watch?.value !== true || !blind || state.fatal !== undefined) return state;
+  if (watch?.value !== true || !blindIn(state.station, rig.self) || state.fatal !== undefined) return state;
   const head = await watch.port.head();
   if (!head.ok) return heldUp(state, head.error);
   if (state.probed === head.value) return state;
@@ -444,8 +447,7 @@ const STOPPED: Result<never, Stopped> = err({ _tag: "stopped" });
  */
 const blindStart = (config: Config, station: Station): Station => {
   const self = config.boot.genesis.id;
-  const blind = station.host.runtime.entities.get(self)?.blind === true;
-  return config.watch?.value === true && !blind
+  return holdsValue(config) && !blindIn(station, self)
     ? { ...station, host: submit(station.host, { to: self, input: { _tag: "j_blind", boot: true } }) }
     : station;
 };
