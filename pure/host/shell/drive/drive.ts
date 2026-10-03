@@ -5,32 +5,46 @@
 //
 // This module reads no clock and holds no state of its own: the clock is the shell's `now`, and the Station it returns
 // is the whole state, so a crash is a Station thrown away and `start` run again over the same two files.
-import type { EntityId, EntityInput, EntityState, Outbound } from "../../../entity/model.ts";
+import type { EntityId, EntityInput, EntityState, Outbound, Reading } from "../../../entity/model.ts";
+import { wantsOf } from "../../../entity/paybook/registry.ts";
 import type { Returned, Skipped } from "../../../j/batch/answer.ts";
 import type { JOp } from "../../../j/op/ops.ts";
 import { err, map, ok, type Result } from "../../../kernel/core/result.ts";
 import type { Tagged } from "../../../kernel/core/tagged.ts";
 import { startRuntime } from "../../../runtime/tick.ts";
 import type { Halt, Row, Setup, Timestamp } from "../../../runtime/model.ts";
-import { begin, persisted, reopen, startHost, submit } from "../../host.ts";
+import { begin, persisted, reopen, startHost, submit, TICK, upcoming, type Readings } from "../../host.ts";
 import type { Effect, Host, Limits, Stepped } from "../../model.ts";
 import type { Disk } from "../disk/disk.ts";
 import { keep, openWal, type StoreFault, type Unwritable } from "../disk/store.ts";
 import {
-  COUNTER_SKIPPED_FOR_GOOD, resume, settle, type Io, type Pumped, type ShellFault, type Where,
+  COUNTER_SKIPPED_FOR_GOOD, resume, settle, type Io, type PortFault, type Pumped, type RegistryRead, type ShellFault,
+  type Where,
 } from "../submit/chain.ts";
 import type { Signer } from "../submit/signer.ts";
 import { take, type Submitter, type Taken } from "../submit/submit.ts";
 
-/** What the shell is made of: where the rows are kept, how the chain is reached, and the time. */
-export type Shell = Readonly<{ wal: Disk; io: Io; now: () => Timestamp }>;
+/**
+ * What the shell is made of: where the rows are kept, how the chain is reached, and the time. `registry` reads the
+ * chain's registry at a J block for the frames of a Runtime that decides on it (`Setup.registry`, R-REGISTRY-AT-VIEW).
+ */
+export type Shell = Readonly<{ wal: Disk; io: Io; now: () => Timestamp; registry?: RegistryRead }>;
 
 /** What a Host is started with: its Runtime's setup, the Entity's state, and the chain's address of the Entity. */
 export type Boot = Readonly<{ setup: Setup; genesis: EntityState; limits: Limits; where: Where }>;
 
 export type Station = Readonly<{ host: Host; submitter: Submitter }>;
 
-export type DriveFault = StoreFault | Unwritable | ShellFault | Halt | Tagged<"stuck", { height: bigint }>;
+export type DriveFault =
+  | StoreFault | Unwritable | ShellFault | Halt | Tagged<"stuck", { height: bigint }> | Tagged<"no_registry">;
+
+/**
+ * A read of the registry the node could not make, or the node no longer serves: the hashlock and why (`fault` is none
+ * for a block the node no longer serves). The frame is begun without that reading, so the decision it would have
+ * made is refused (it can pass) or waits, and the owner is told; nothing else of the frame, the Account or the node
+ * waits.
+ */
+export type Unread = Readonly<{ hashlock: string; fault: PortFault | undefined }>;
 
 /** What a move of the shell made: the messages that leave, what the builder did with each ask, and what came back. */
 export type Turn = Readonly<{
@@ -41,9 +55,12 @@ export type Turn = Readonly<{
   skipped: readonly Skipped[];
   /** The dispute starts the builder dropped because they would revert; the Entity is told (R-DISPUTE-LAPSED). */
   lapsed: readonly JOp[];
+  /** The registry reads that failed or were no longer served, in the order they were asked. */
+  unread: readonly Unread[];
 }>;
 
-const nothing = (station: Station): Turn => ({ station, sent: [], taken: [], returned: [], skipped: [], lapsed: [] });
+const nothing = (station: Station): Turn =>
+  ({ station, sent: [], taken: [], returned: [], skipped: [], lapsed: [], unread: [] });
 
 /** The Entity's own rows are all it asks of the chain for: a row that names an Entity this Station is not is no ask. */
 const takeOne = (turn: Turn, effect: Effect): Turn => {
@@ -149,11 +166,40 @@ const durable = async (shell: Shell, turn: Turn, row: Row): Promise<Result<Turn,
   return taken.ok ? afterAsks(shell, taken.value) : taken;
 };
 
+type Asked = Readonly<{ hashlock: string; read: Awaited<ReturnType<RegistryRead>> }>;
+
+const unreadOf = (a: Asked): readonly Unread[] => {
+  if (!a.read.ok) return [{ hashlock: a.hashlock, fault: a.read.error }];
+  return a.read.value === "pruned" ? [{ hashlock: a.hashlock, fault: undefined }] : [];
+};
+
+/**
+ * R-REGISTRY-AT-VIEW: what the next frame decides on is read from the chain's registry at the view it decides at, and
+ * handed to the frame, so the row holds what the decision rested on. A Runtime that does not decide on the registry
+ * reads nothing. A reading that cannot be had is no reading: the Runtime treats it as unknown, and so does any reading
+ * of another block.
+ */
+const readings = async (shell: Shell, turn: Turn): Promise<Readonly<{ got: Readings; unread: readonly Unread[] }>> => {
+  const { host } = turn.station;
+  const next = host.runtime.setup.registry === true ? upcoming(host) : undefined;
+  if (next === undefined || shell.registry === undefined) return { got: undefined, unread: [] };
+  const { registry } = shell;
+  const at: bigint = next.view;
+  const entities = [...host.runtime.entities.values()].filter((e) => next.to === undefined || e.id === next.to);
+  const wanted = [...new Set(entities.flatMap((e) => wantsOf(e, next.inputs)))].toSorted();
+  const asked: readonly Asked[] = await Promise.all(
+    wanted.map(async (hashlock) => ({ hashlock, read: await registry(hashlock, at) })));
+  const seen = asked.flatMap((a): readonly Reading[] =>
+    (a.read.ok && a.read.value !== "pruned" ? [{ hashlock: a.hashlock, at, seconds: a.read.value }] : []));
+  return { got: seen.length === 0 ? undefined : seen, unread: asked.flatMap(unreadOf) };
+};
+
 /** One frame: staged, made durable, committed, and what it leaves handed on. Nothing leaves before the sync. */
 const frame = async (shell: Shell, turn: Turn): Promise<Result<Turn, DriveFault>> => {
-  const stepped = begin(turn.station.host, shell.now());
+  const read = await readings(shell, turn);
+  const stepped = begin(turn.station.host, shell.now(), TICK, read.got);
   if (!stepped.ok) return stepped;
-  const staged = withHost(turn, stepped.value.host);
+  const staged = { ...withHost(turn, stepped.value.host), unread: [...turn.unread, ...read.unread] };
   const [first] = stepped.value.effects;
   return first?._tag === "persist" ? durable(shell, staged, first.row) : ok(staged);
 };
@@ -182,6 +228,7 @@ export const drain = (shell: Shell, station: Station): Promise<Result<Turn, Driv
 
 /** The Station over the WAL and the journal as they are: new on empty files, and after a crash what they hold. */
 export const start = async (shell: Shell, boot: Boot): Promise<Result<Turn, DriveFault>> => {
+  if (boot.setup.registry === true && shell.registry === undefined) return err({ _tag: "no_registry" });
   const rows = await openWal(shell.wal);
   if (!rows.ok) return rows;
   const reopened = rows.value.length === 0
