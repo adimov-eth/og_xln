@@ -640,14 +640,138 @@ const dispute: Step<World> = {
   },
 };
 
-// ---- S9 ----------------------------------------------------------------------------------------------------------
-// Not run. The dispute starts through the node (S8) and the proof body carries a clause per open hold, but the Entity keeps the holds
-// of an Account the chain finalized, and the chain's finalize waits for the deadline second of an unrevealed clause. The rule that dissolves
-// the holds (R-HOLD-DISSOLVE) and the step are on the parked branch claude/e2e-clause; they wait for the counter and the freeze (a stale
-// dispute is answered, a payment sent into a window is not lost), since a clause makes both matter.
+/** The lock the clause step leaves open, in whole tokens. */
+const CLAUSE_LOCK = 5n;
+
 const disputeClause: Step<World> = {
-  id: "dispute-clause", title: "Forced dispute while an HTLC is open in the signed proof", needs: ["htlc"],
-  run: async () => { throw new Blocked(["disputeWithClause"], `the proof body can carry a clause per open hold, but the Entity does not yet dissolve the holds a finalize resolved (R-HOLD-DISSOLVE, parked on claude/e2e-clause behind the counter and the freeze): ${GAPS.disputeWithClause.supplier}`); },
+  id: "dispute-clause", title: "Forced dispute on hubX-hubY with an HTLC open in the signed proof: the chain waits for the deadline, then pays by the proof", needs: ["htlc"],
+  run: async (w) => {
+    const chain = chainOf(w);
+    const net = netOf(w);
+    const { hubX, hubY } = partiesOf(w);
+    const t = token(chain);
+    const [x, y] = [eid(hubX), eid(hubY)];
+    // The nodes sign every Account under the terms they were opened with; this Account's key, epoch and first nonce are read from the chain now.
+    const terms = (w.signing ?? (() => { throw new Error("no signing context"); })()).terms;
+    const signing: SigningContext = { ...(await signingFor(chain, hubX, hubY)), terms };
+    const floor = BigInt(chain.manifest.dispute.responseFloorSeconds);
+    const secret = ethers.getBytes(ethers.keccak256(ethers.toUtf8Bytes("xln-testnet-e2e-skeleton/secret-3")));
+    const hashlock = keccakHex(secret);
+    const amount = CLAUSE_LOCK * unit(chain);
+    const deadline = must(jHeight(net.view() + 60n), "deadline");
+    // The finalize of the step before is read at depth: one more block, and the nodes settle.
+    await chain.provider.send("evm_mine", []);
+    console.error("S9 mined");
+    await net.settle();
+    console.error("S9 after await net.settle();");
+    console.error("S9 settled");
+    const [rx0, ry0] = [net.account(x, y), net.account(y, x)];
+    if (ledgerOf(rx0.state, t).holds.length !== 0 || rx0.pending !== undefined || rx0.head !== ry0.head) throw new Error("hubX-hubY does not start flat and at one head");
+    // hubX locks for hubY; nobody holds the secret, so the clause stays open in the next head, which both sides sign.
+    await net.tell(x, { _tag: "lock", peer: y, token: t, hold: { id: holdId(20n), payer: rx0.side, amount, hashlock, deadline } });
+    console.error("S9 locked");
+    await net.settle();
+    console.error("S9 after await net.settle();");
+    console.error("S9 lock settled");
+    const replica = net.account(x, y);
+    if (replica.head !== net.account(y, x).head || replica.pending !== undefined || ledgerOf(replica.state, t).holds.length !== 1) throw new Error("the lock did not commit on both sides as one open hold");
+    const ledger = ledgerOf(replica.state, t);
+    const body = must(proofBodyOf(signing.terms, replica.state), "proof body of the committed state");
+    const bodyHash = must(proofBodyHash(body), "proof body hash");
+    if (body.transformers.length !== 1) throw new Error(`the proof body carries ${body.transformers.length} clauses, expected one for the hold`);
+    const onChain = await accountOnChain(chain, hubX, hubY);
+    if (onChain.epoch !== signing.ondeltaEpoch) throw new Error(`the chain's epoch is ${onChain.epoch}, the frames were signed at ${signing.ondeltaEpoch}`);
+    const nonce = signing.firstNonce + BigInt(replica.used - 1);
+    const digestFor = (proposerIsLeft: boolean): string => must(accountMessageHash(chain.dep, { accountKey: signing.accountKey, ondeltaEpoch: onChain.epoch, nonce }, {
+      _tag: "dispute_proof", proposerIsLeft, proofBodyHash: bodyHash, watchSeed: body.watchSeed,
+    }), "dispute proof digest");
+    const authorIsLeft = [true, false].find((left) => digestFor(left) === replica.head);
+    if (authorIsLeft === undefined) throw new Error(`the head ${replica.head} is the dispute-proof digest of neither author: the frame was not signed as the chain reads it`);
+    const left = leftOf(hubX, hubY);
+    const xBefore = await reserveOf(chain, hubX);
+    const yBefore = await reserveOf(chain, hubY);
+    const held = await collateralOf(chain, hubX, hubY);
+    const before = net.askedBy(x).length;
+    const fromBlock = (await chain.provider.getBlockNumber()) + 1;
+    await net.tell(x, { _tag: "dispute", peer: y });
+    await net.settle({ pending: true });
+    console.error("S9 after await net.settle({ pending: true });");
+    const start = net.askedBy(x).slice(before).flatMap((ask) => (ask._tag === "dispute_start" ? [ask] : []));
+    if (start.length !== 1 || start[0] === undefined) throw new Error(`hubX's node asked for ${start.length} dispute starts, expected one`);
+    if (start[0].nonce !== nonce || must(proofBodyHash(start[0].body), "ask body hash") !== bodyHash || start[0].body.transformers.length !== 1) {
+      throw new Error("the dispute start hubX's node asked for differs from the proof the head names (nonce or body with its one clause)");
+    }
+    if (!(await accountOnChain(chain, hubX, hubY)).disputeOpen) throw new Error("no dispute is open after the start");
+    const finals = (): number => net.askedBy(x).slice(before).filter((ask) => ask._tag === "dispute_finalize").length;
+    const landedFinals = async (): Promise<number> => (await chain.depository.queryFilter(chain.depository.filters.DisputeFinalized(), fromBlock)).length;
+    const reachChain = async (): Promise<void> => {
+      for (let tries = 0; tries < 6; tries += 1) await net.reach(BigInt(await chain.provider.getBlockNumber()), { pending: true });
+    };
+    // Both windows pass, and the deadline of the clause does not: the chain's clock is at the end of the dispute, short of the second the clause's reveal is
+    // judged by. hubX's node asks to finalize, and the chain reverts it (PaymentRevealWindowActive: the payee may still reveal); the node's Host holds it.
+    const deadlineSecond = terms.secondsOf(deadline);
+    const stamp = async (): Promise<bigint> => BigInt((await chain.provider.getBlock("latest"))!.timestamp);
+    if ((await stamp()) + 2n * floor + 10n >= deadlineSecond) throw new Error(`the clause's deadline second ${deadlineSecond} is within the dispute windows of the chain's clock ${await stamp()}: the step cannot tell the wait from the end`);
+    await advanceTime(chain, Number(2n * floor + 10n));
+    console.error("S9 after await advanceTime(chain, Number(2n * flo");
+    await reachChain();
+    console.error("S9 after await reachChain();");
+    const early = { finals: finals(), landed: await landedFinals(), open: (await accountOnChain(chain, hubX, hubY)).disputeOpen };
+    if (early.finals === 0) throw new Error("hubX's node never asked the chain to finalize after the windows");
+    if (early.landed !== 0 || !early.open) throw new Error(`the finalize landed before the clause's deadline (${early.landed} finalized, dispute open ${early.open}): the chain should have made it wait`);
+    const transformer = new ethers.Contract(chain.manifest.contracts.deltaTransformer.address, ["function hashToTimestamp(bytes32) view returns (uint256)"], chain.provider);
+    if ((await transformer.hashToTimestamp!(hashlock)) !== 0n) throw new Error("the secret was revealed on chain: this step is the unrevealed path");
+    // The deadline second passes: the same finalize lands, and the unrevealed clause is unpaid.
+    await advanceTime(chain, Number(deadlineSecond - (await stamp()) + 5n));
+    console.error("S9 after await advanceTime(chain, Number(deadline");
+    for (let tries = 0; tries < 6 && (await accountOnChain(chain, hubX, hubY)).disputeOpen; tries += 1) await reachChain();
+    const finished = await chain.depository.queryFilter(chain.depository.filters.DisputeFinalized(), fromBlock);
+    const skipped = await chain.depository.queryFilter(chain.depository.filters.DisputeOpSkipped(), fromBlock);
+    if (finished.length !== 1 || finished[0] === undefined) throw new Error(`the chain finalized ${finished.length} disputes after the start, expected one`);
+    if (skipped.length !== 0) throw new Error(`the chain skipped ${skipped.length} dispute ops after the start`);
+    const sender = (await finished[0].getTransaction()).from;
+    if (finished[0].args.sender !== hubX.id || sender.toLowerCase() !== hubX.wallet.address.toLowerCase()) throw new Error(`the finalize names ${finished[0].args.sender} and was sent from ${sender}, expected hubX's Entity ${hubX.id} from ${hubX.wallet.address}`);
+    // Paid by the proof, the clause unpaid: delta = ondelta + offdelta, clamped to the collateral; nothing is taken from the payer for the lock.
+    const delta = held.ondelta + ledger.offdelta;
+    const leftShare = delta < 0n ? 0n : delta > held.collateral ? held.collateral : delta;
+    const share = (side: Side): bigint => (side === "left" ? leftShare : held.collateral - leftShare);
+    const xGot = (await reserveOf(chain, hubX)) - xBefore;
+    const yGot = (await reserveOf(chain, hubY)) - yBefore;
+    const sideX = replica.side;
+    if (xGot !== share(sideX) || yGot !== share(sideX === "left" ? "right" : "left")) {
+      throw new Error(`payout: hubX got ${xGot} and hubY ${yGot}; the ledger (ondelta ${held.ondelta} + offdelta ${ledger.offdelta}, collateral ${held.collateral}) says ${share(sideX)} and ${share(sideX === "left" ? "right" : "left")}, the clause unpaid`);
+    }
+    const after = await accountOnChain(chain, hubX, hubY);
+    if ((await collateralOf(chain, hubX, hubY)).collateral !== 0n || after.epoch !== onChain.epoch + 1n || after.disputeOpen) throw new Error(`after the finalize: epoch ${after.epoch}, dispute open ${after.disputeOpen}`);
+    // R-HOLD-DISSOLVE: both Runtimes heard it, and neither keeps the hold; the Account is in the new epoch and carries on.
+    await net.settle();
+    console.error("S9 after await net.settle();");
+    const [rx, ry] = [net.account(x, y), net.account(y, x)];
+    [rx, ry].forEach((r, i) => {
+      const l = ledgerOf(r.state, t);
+      if (l.holds.length !== 0 || r.pending !== undefined || l.offdelta !== 0n || l.collateral !== 0n) throw new Error(`${i === 0 ? "hubX" : "hubY"}'s Account after the finalize: ${l.holds.length} holds, pending ${r.pending !== undefined}, offdelta ${l.offdelta}, collateral ${l.collateral}`);
+    });
+    if (rx.head !== ry.head) throw new Error("the two Runtimes hold different heads after the finalize");
+    const next = 2n * unit(chain);
+    await net.tell(x, { _tag: "pay", peer: y, token: t, amount: next });
+    await net.settle();
+    console.error("S9 after await net.settle();");
+    const [px, py] = [net.account(x, y), net.account(y, x)];
+    const sign = px.side === "left" ? -1n : 1n;
+    if (px.head !== py.head || ledgerOf(px.state, t).offdelta !== next * sign || ledgerOf(py.state, t).offdelta !== next * sign) throw new Error("a payment in the new epoch did not commit on both sides");
+    const parties = partiesOf(w);
+    const now = await heldBy(chain, Object.values(parties), [[parties.alice, hubX], [hubX, hubY], [hubY, parties.bob]]);
+    if (now !== w.held) throw new Error(`money is not conserved: ${w.held} before the dispute, ${now} after`);
+    return {
+      checks: [
+        `hubX locked ${CLAUSE_LOCK} for hubY (deadline J height ${deadline}, second ${deadlineSecond}); both Runtimes committed the lock at head ${replica.head.slice(0, 12)}, and the proof body they signed carries one clause for the hold (hash ${hashlock.slice(0, 12)}, paid only if revealed by second ${deadlineSecond}), whose digest the chain computes as that head`,
+        `hubX's node asked for the start with that body and the chain opened the dispute; after both ${floor} s windows hubX's node asked to finalize (${early.finals} ask${early.finals === 1 ? "" : "s"}) and the chain did not let it land while the clause's deadline second was open (the payee may still reveal); no reveal of the hash was on chain`,
+        `after the deadline second the same finalize landed from hubX's wallet (one DisputeFinalized, nothing skipped) and paid hubX ${fmt(chain, xGot)} and hubY ${fmt(chain, yGot)}: the ledger's ondelta ${held.ondelta} plus offdelta ${ledger.offdelta}, the clause unpaid; epoch ${onChain.epoch} to ${after.epoch}`,
+        `R-HOLD-DISSOLVE: both Runtimes read collateral 0, offdelta 0, no hold, nothing pending, one head; a payment of 2 then commits in the new epoch; money held by the four entities is unchanged at ${fmt(chain, now)}`,
+      ],
+      gaps: [],
+    };
+  },
 };
 
 // ---- S10 ---------------------------------------------------------------------------------------------------------
