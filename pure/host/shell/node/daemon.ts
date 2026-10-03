@@ -54,6 +54,20 @@ export type Stopped = Tagged<"stopped">;
 export type ClockBelowDepth = Tagged<"clock_below_depth", { lag: bigint; depth: bigint }>;
 export type ClockDepthOff = Tagged<"clock_depth_off", { clock: bigint | undefined; depth: bigint }>;
 
+/**
+ * A node that may hold value forwards a lock only if the chain's seconds leave room for it (R-HOP-SLACK), which it
+ * cannot tell without the chain's slot, the slots it may miss and the poll delay it keeps (`ClockParams.pace`): it does
+ * not start without them, and not with a poll delay shorter than its own tick implies (`pollDelayOf`).
+ */
+export type NoPace = Tagged<"no_pace">;
+export type PollDelayBelowTick = Tagged<"poll_delay_below_tick", { pollDelay: bigint; least: bigint }>;
+
+/** The blocks that may pass between a block being final and a poll that reads it, for a tick of `tickMs` and a slot. */
+export const pollDelayOf = (tickMs: number, slot: bigint): bigint => {
+  const slotMs = slot * 1000n;
+  return (BigInt(tickMs) + slotMs - 1n) / slotMs + 1n;
+};
+
 /** What ends a node's work: a disk, the chain's submit path, the Runtime, or a watcher invariant broken. */
 export type NodeFault = DriveFault | WatchFault | BadPeer | BadSecret;
 
@@ -108,6 +122,8 @@ type State = Readonly<{
   probed: bigint | undefined;
   /** Whether the notice that the provider does not trace was told since the node last was shown a trace. */
   untraced: boolean;
+  /** The poll of this tick heard late (`poll_late`): the probe waits for the next tick, a poll on time, to end it. */
+  late: boolean;
   watchFault: string | undefined;
   /** What the J loop carries between polls: the transactions it cannot read, their reads, the events held back. */
   carry: Carry;
@@ -298,7 +314,18 @@ const watchFaultOf = (stalls: readonly Stall[]): string | undefined =>
  */
 const blinding = (rig: Rig, state: State, delivery: Delivery): readonly EntityInput[] => {
   const known = state.station.host.runtime.entities.get(rig.self)?.blind === true;
-  return rig.config.watch?.value === true && delivery.untraceable && !known ? [{ _tag: "j_blind", boot: false }] : [];
+  const goes = delivery.untraceable || lateNotices(rig, delivery).length > 0;
+  return rig.config.watch?.value === true && goes && !known ? [{ _tag: "j_blind", boot: false }] : [];
+};
+
+/**
+ * A poll that finds more final blocks unread than the poll delay the clock was made for is a node that heard late: the
+ * hub's claim no longer fits its hop. It is told loud and the Entity is blind (no forward) until a poll is on time.
+ */
+const lateNotices = (rig: Rig, delivery: Delivery): readonly HostNotice[] => {
+  const bound = rig.config.boot.setup.clock.pace?.pollDelay;
+  return rig.config.watch?.value === true && bound !== undefined && delivery.unread > bound
+    ? [{ _tag: "poll_late", behind: delivery.unread, bound }] : [];
 };
 
 /** The provider does not trace: told once for each time the node goes blind, naming what said so. */
@@ -312,16 +339,17 @@ const delivered = async (rig: Rig, state: State, delivery: Delivery): Promise<St
   const queued = inputs.reduce((host, input) => submit(host, { to: rig.self, input }), state.station.host);
   const first = await concluded(rig, state, await drain(shell, { ...state.station, host: queued }));
   if (first.fatal !== undefined) return first;
-  const height = { ...first.station, host: heard(first.station.host, delivery.height) };
+  const height = { ...first.station, host: heard(first.station.host, delivery.height, delivery.seconds) };
   const second = await concluded(rig, first, await drain(shell, height));
   const { carry, stalls } = delivery;
   const said = rig.config.watch?.value === true && delivery.untraceable
     ? untracedNotices(state, "a transaction's call trace: no such method") : [];
-  const told = recent([...second.notices, ...stallNotices(state.carry, stalls), ...said]);
+  const late = lateNotices(rig, delivery);
+  const told = recent([...second.notices, ...stallNotices(state.carry, stalls), ...said, ...late]);
   return second.fatal === undefined
     ? {
       ...second, cursor: delivery.watch, carry, notices: told, watchFault: watchFaultOf(stalls), fatal: undefined,
-      untraced: second.untraced || said.length > 0,
+      untraced: second.untraced || said.length > 0, late: late.length > 0,
     }
     : second;
 };
@@ -357,6 +385,7 @@ const probing = async (rig: Rig, state: State): Promise<State> => {
   const { watch } = rig.config;
   const blind = state.station.host.runtime.entities.get(rig.self)?.blind === true;
   if (watch?.value !== true || !blind || state.fatal !== undefined) return state;
+  if (state.late) return { ...state, late: false };
   const head = await watch.port.head();
   if (!head.ok) return heldUp(state, head.error);
   if (state.probed === head.value) return state;
@@ -458,8 +487,13 @@ const blindStart = (config: Config, station: Station): Station => {
  */
 export const startDaemon = async (
   config: Config, listener: Listener,
-): Promise<Result<Daemon, DriveFault | ClockBelowDepth | ClockDepthOff>> => {
-  const { lag, depth } = config.boot.setup.clock;
+): Promise<Result<Daemon, DriveFault | ClockBelowDepth | ClockDepthOff | NoPace | PollDelayBelowTick>> => {
+  const { lag, depth, pace } = config.boot.setup.clock;
+  if (config.watch?.value === true && pace === undefined) return err({ _tag: "no_pace" });
+  const least = pace === undefined ? 0n : pollDelayOf(config.tickMs, pace.slot);
+  if (pace !== undefined && config.watch?.value === true && pace.pollDelay < least) {
+    return err({ _tag: "poll_delay_below_tick", pollDelay: pace.pollDelay, least });
+  }
   if (config.watch !== undefined && lag <= config.watch.depth) {
     return err({ _tag: "clock_below_depth", lag, depth: config.watch.depth });
   }
@@ -475,7 +509,8 @@ export const startDaemon = async (
     station: blindStart(config, started.value.station), mesh: startMesh(config.key, config.table), wires: new Map(),
     next: 1, dialing: new Set(), stalled: new Map(), counts: { sent: 0, heard: 0, dropped: 0 }, notices: [],
     refused: [],
-    fatal: undefined, cursor: undefined, probed: undefined, untraced: false, watchFault: undefined, carry: NO_CARRY,
+    fatal: undefined, cursor: undefined, probed: undefined, untraced: false, late: false, watchFault: undefined,
+    carry: NO_CARRY,
     timer: undefined,
   };
   const finished = leaving(rig, first, started.value.sent)

@@ -14,7 +14,7 @@ import { err, map, ok, type Result } from "../kernel/core/result.ts";
 import type { Tagged } from "../kernel/core/tagged.ts";
 import type { JHeight } from "../account/clause/clock.ts";
 import { heardOf, type EntityId, type EntityState, type Outbound } from "../entity/model.ts";
-import type { Halt, Row, Runtime, Setup, Timestamp } from "../runtime/model.ts";
+import type { Halt, NewHeight, Row, Runtime, Setup, Timestamp } from "../runtime/model.ts";
 import { apply, commit, flush, recover } from "../runtime/tick.ts";
 import type { Effect, Host, HostNotice, Item, Limits, Stepped } from "./model.ts";
 
@@ -34,7 +34,7 @@ export const limits = (perPeer: number, perFrame: number): Result<Limits, BadLim
     : err({ _tag: "bad_limits", perPeer, perFrame }));
 
 export const startHost = (runtime: Runtime, bounds: Limits): Host =>
-  ({ runtime, limits: bounds, queue: [], height: undefined });
+  ({ runtime, limits: bounds, queue: [], height: undefined, seconds: undefined });
 
 const hosts = (host: Host, id: EntityId): boolean => host.runtime.entities.has(id);
 
@@ -68,8 +68,10 @@ export const receive = (host: Host, message: Outbound): Received => {
  * J events of its delivery are in the WAL, because a height goes ahead of the queue, and it moves the watcher's cursor
  * only once a committed `j_height` row holds the height, because a waiting height is lost in a crash.
  */
-export const heard = (host: Host, height: JHeight): Host =>
-  (height > host.runtime.view && (host.height === undefined || height > host.height) ? { ...host, height } : host);
+export const heard = (host: Host, height: JHeight, seconds?: bigint): Host =>
+  (height > host.runtime.view && (host.height === undefined || height > host.height)
+    ? { ...host, height, seconds }
+    : host);
 
 /** No frame is staged: the Host can begin one. */
 export const idle = (host: Host): boolean => host.runtime.staged === undefined;
@@ -79,10 +81,13 @@ const persist = (row: Row | undefined): readonly Effect[] => (row === undefined 
 const settled = (host: Host, runtime: Runtime): Stepped =>
   ({ host: { ...host, runtime }, effects: persist(runtime.staged) });
 
+const secondsIn = (input: NewHeight, seconds: bigint | undefined): NewHeight =>
+  (seconds === undefined ? input : { ...input, seconds });
+
 /** A waiting J height is a frame of every Entity, and the Runtime needs it before any deadline is judged. */
 const beginHeight = (host: Host, height: JHeight, at: Timestamp, ops: Tick): Result<Stepped, Halt> =>
-  map(ops.apply(host.runtime, { _tag: "j_height", at, height }), (runtime) =>
-    settled({ ...host, height: undefined }, runtime));
+  map(ops.apply(host.runtime, secondsIn({ _tag: "j_height", at, height }, host.seconds)), (runtime) =>
+    settled({ ...host, height: undefined, seconds: undefined }, runtime));
 
 /** The Entity first in line takes its queued inputs, up to the frame's bound, in arrival order. */
 const beginEntity = (host: Host, first: Item, at: Timestamp, ops: Tick): Result<Stepped, Halt> => {

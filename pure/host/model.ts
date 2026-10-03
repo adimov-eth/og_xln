@@ -32,7 +32,8 @@ export type HostNotice =
   | Tagged<"misrouted", { to: EntityId; from: EntityId }>
   | Tagged<"queue_full", { from: EntityId }>
   | Tagged<"watch_stalled", { tx: string; reason: string }>
-  | Tagged<"no_call_trace", { why: string }>;
+  | Tagged<"no_call_trace", { why: string }>
+  | Tagged<"poll_late", { behind: bigint; bound: bigint }>;
 
 /** Which chain action of which committed row an effect came from: the WAL height and the place in the row's `chain`. */
 export type RowId = Readonly<{ height: bigint; index: number }>;
@@ -56,6 +57,8 @@ export type Effect =
  */
 export type Host = Readonly<{
   runtime: Runtime; limits: Limits; queue: readonly Item[]; height: JHeight | undefined;
+  /** The timestamp of the J block at `height`, as its header gave it: it goes into the frame with the height. */
+  seconds: bigint | undefined;
 }>;
 
 /** One step of the Host: where it is now and what its shell must do. */
