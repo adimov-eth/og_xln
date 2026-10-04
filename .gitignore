@@ -142,6 +142,9 @@ frontend/ios/App/CapApp-SPM/.build/
 ui/tests/test-results/
 .gstack/
 
+# Local codegraph index. The CLI reads this directory; it is not source.
+.codegraph/
+
 # Formal-proof build and model-checker output (reproducible, never source).
 /proofs/**/target/
 /proofs/tla/states/
