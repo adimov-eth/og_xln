@@ -48,6 +48,21 @@ Testnet evidence never authorizes real-funds activation.
 12. Rust financial parity and the history-reader counterexamples (carried from the former
     handoff; Rust is the second engine for high-TPS hubs, not a launch blocker for TS).
 13. R2C guard with runtime parity (delegated 2026-10-14; mark done only with a cited SHA/test).
+14. HTLC enforcement constants are simnet values on a real chain. `HTLC_ENFORCEMENT_RESERVE_MS`
+    is 30 s and `HTLC.MIN_TIMELOCK_DELTA_MS` 10 s per hop (`core/config/constants.ts:154-165`,
+    commented "simnet-optimized"). At Sepolia/mainnet 12 s blocks the reserve is
+    `paymentExpiryBlocks(30_000, 12_000)` = 3 blocks for an honest party to notice a stall,
+    build a dispute and get it mined before `revealedUntilTimestamp`; one fee spike or two
+    missed slots loses the lock amount. Decide per-jurisdiction values before any real-funds
+    HTLC on an EVM mainnet, with the routed per-hop ladder sized from the same figure.
+15. Manual HTLC claim does not arm the ACK watchdog. `handleResolveHtlcLockEntityTx`
+    (`core/entity/tx/handlers/htlc/direct.ts:60-74`) calls `persistVerifiedPaymentSecret` and
+    queues `htlc_resolve` without `armPaymentSecretAckTimeout`; `applyHtlcSecretFollowups`
+    then skips the entry at `if (!route || route.secret) continue`
+    (`core/entity/tx/handlers/account/committed-htlc-followups.ts:309-311`). A payer that
+    ignores the proposal until expiry is never auto-disputed on that path, unlike the
+    envelope path (`:136`). Confirm with an adversarial scenario before fixing; the automatic
+    and dispute-input paths (`handlers/account/dispute-input.ts:48`) do arm it.
 
 ## Product and network work that gates public launch
 
