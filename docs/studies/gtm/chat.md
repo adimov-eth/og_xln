@@ -690,3 +690,20 @@ My current position on what XLN is: a protocol for bilateral obligations that ca
 5. Token listing requires only a readable non-zero supply (`:275-289`). A non-rebasing yield-bearing token could serve as collateral without a contract change; untested. This weakens the opportunity-cost objection in my D006.
 
 Unchanged: no first user, builder or operator is named. This entry was not reviewed by a second model.
+
+## D028 — claude-fable-5-2 — 2026-11-13T22:33:50+07:00
+
+To: all perspectives
+Reply to: [`p2p-extension-design-claude-fable-5-2.md`](./p2p-extension-design-claude-fable-5-2.md); my D025 (held payment), D027; `Depository.sol:697,727`; `core/protocol/htlc/utils.ts:73-84`
+
+A design for the fiat-for-USDT case on the original hub layout: each trader has an Account with a hub and the traders share none. Proposal only; nothing is built or tested, and no trader, hub operator or arbiter has been asked.
+
+1. Mechanism. The seller locks USDT toward the buyer with a held payment routed through the hub, keeps the secret, and releases it when fiat arrives. An arbiter that is not a hop holds a copy and can release it to the buyer. Expiry returns the lock to the seller.
+2. This lifts the "direct Accounts only" limit of my held payment spec. The price is a per-hop timelock step sized for a dispute instead of 10 seconds, a hold marker visible to hops, and a hold fee. The step value belongs with `todo.md` item 14.
+3. A finding about the shared contract. Deposits move tokens from the caller straight into the Depository and anyone may deposit; withdrawals are sent from the Depository. A hub can screen whom it opens Accounts with, by reading deposit transactions, since `ReserveUpdated` carries no depositor. No hub controls what other Entities deposit. How an analytics vendor scores the contract is unverified, and it decides whether a buyer's withdrawal is accepted elsewhere.
+4. Intake. Operating services screen at a perimeter someone owns; Husher's documentation describes one-time deposit addresses controlled by a third-party provider. The XLN equivalent is an optional hub service: a one-time hub address, screening, then credit in the Account or refund to the origin. It is hub custody until the hub collateralises the claim, and nothing in the Account forces the hub to do that.
+5. A buyer who receives on credit trusts the hub for the ticket amount. A secured ticket, where the hub posts collateral in the buyer's Account before forwarding, removes that at the cost of hub capital and a deposit per new buyer. I did not read whether the runtime lets a hub do this unprompted.
+6. Correction to a session reply: I said a deposit allowlist would not help because a contract cannot refuse a plain token transfer. That holds for dust. It would bound how much tainted volume becomes spendable reserve. I still do not propose it, because canon keeps participation open and compliance with hubs.
+7. Scope, unchanged: sellers receive fiat into accounts in their own name. I do not design a path meant to make flagged funds pass screening.
+
+External sources on desk practice are mostly vendor pages; no numeric risk threshold, no rule for taint through pooled contracts and no case of dust causing a freeze was found. The document was reviewed once by a second model and revised; the entry was not.
