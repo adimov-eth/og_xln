@@ -10,6 +10,10 @@
 	--radius-pill: 999px;
 	/* Everyday uniform control/surface radius. */
 	--ev-radius: 8px;
+	/* Fractal grain for matte surfaces; laid over with overlay blend at --ev-grain-opacity. */
+	--ev-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+	/* Finer tooth for soft-touch faces. */
+	--ev-velvet: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='v'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23v)'/%3E%3C/svg%3E");
 	/* Progressive enhancement token for oklab gradient interpolation (avoids Chromium oklch neutral tint bug). */
 	--in-oklab: ;
 }
@@ -110,6 +114,21 @@
 	--ev-sheen: rgba(248, 250, 252, 0.18);
 	--ev-wash-arriving: rgba(140, 200, 255, 0.085);
 	--ev-wash-dispute: rgba(242, 109, 109, 0.11);
+	/* Materials. Soft-touch black sits darker than the lit ground; polished edges and rings catch the ground's glare. */
+	--ev-grain-opacity: 0.22;
+	--ev-soft-face: #09090a;
+	--ev-soft-rim: rgba(255, 255, 255, 0.05);
+	--ev-soft-sheen: rgba(255, 255, 255, 0.022);
+	--ev-soft-drop: rgba(0, 0, 0, 0.7);
+	--ev-glint: rgba(245, 247, 250, 0.85);
+	--ev-glint-base: rgba(197, 207, 222, 0.12);
+	--ev-ring-hi: #f5f7fa;
+	--ev-ring-mid: #8a9099;
+	--ev-ring-lo: #2b2e33;
+	--ev-ring-opacity: 0.38;
+	--ev-primary-streak: rgba(255, 255, 255, 0.62);
+	--ev-brush-hi: rgba(255, 255, 255, 0.05);
+	--ev-brush-lo: rgba(0, 0, 0, 0.035);
 	--btn-ink: #ffffff;
 	--scrim: rgba(4, 6, 10, 0.66);
 	--shadow-card: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -185,6 +204,20 @@
 	--ev-sheen: rgba(255, 255, 255, 0.78);
 	--ev-wash-arriving: rgba(3, 105, 161, 0.07);
 	--ev-wash-dispute: rgba(223, 27, 65, 0.08);
+	--ev-grain-opacity: 0.1;
+	--ev-soft-face: #e9ecf1;
+	--ev-soft-rim: rgba(255, 255, 255, 0.95);
+	--ev-soft-sheen: rgba(255, 255, 255, 0.45);
+	--ev-soft-drop: rgba(15, 23, 42, 0.1);
+	--ev-glint: rgba(60, 71, 89, 0.5);
+	--ev-glint-base: rgba(15, 23, 42, 0.08);
+	--ev-ring-hi: #ffffff;
+	--ev-ring-mid: #aeb6c2;
+	--ev-ring-lo: #6b7482;
+	--ev-ring-opacity: 0.5;
+	--ev-primary-streak: rgba(255, 255, 255, 0.14);
+	--ev-brush-hi: rgba(255, 255, 255, 0.035);
+	--ev-brush-lo: rgba(0, 0, 0, 0.08);
 	--btn-ink: #ffffff;
 	--scrim: rgba(26, 31, 54, 0.4);
 	--shadow-card: 0 0 0 1px rgba(26, 31, 54, 0.06), 0 2px 5px rgba(60, 66, 87, 0.08), 0 1px 1px rgba(0, 0, 0, 0.04);

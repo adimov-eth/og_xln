@@ -253,6 +253,23 @@
     --ink-delta-in: #4ade80;
     --ink-action: #f5f7fa;
     --ink-action-fg: #050608;
+    /* Materials (mirrors ui/src/styles/tokens.css): soft-touch grip, grain, polished edges lit by the ground glare. */
+    --ev-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    --ev-velvet: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='v'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23v)'/%3E%3C/svg%3E");
+    --ev-grain-opacity: 0.22;
+    --ev-soft-face: #09090a;
+    --ev-soft-rim: rgba(255, 255, 255, 0.05);
+    --ev-soft-sheen: rgba(255, 255, 255, 0.022);
+    --ev-soft-drop: rgba(0, 0, 0, 0.7);
+    --ev-glint: rgba(245, 247, 250, 0.85);
+    --ev-glint-base: rgba(197, 207, 222, 0.12);
+    --ev-ring-hi: #f5f7fa;
+    --ev-ring-mid: #8a9099;
+    --ev-ring-lo: #2b2e33;
+    --ev-ring-opacity: 0.38;
+    --ev-primary-streak: rgba(255, 255, 255, 0.62);
+    --ev-brush-hi: rgba(255, 255, 255, 0.05);
+    --ev-brush-lo: rgba(0, 0, 0, 0.035);
     --ev-light-x: 54%;
     --ev-light-y: -12%;
     --ev-bevel-angle: 128deg;
@@ -309,6 +326,20 @@
     --ink-delta-in: #15803d;
     --ink-action: #0f1216;
     --ink-action-fg: #f8fafc;
+    --ev-grain-opacity: 0.1;
+    --ev-soft-face: #e9ecf1;
+    --ev-soft-rim: rgba(255, 255, 255, 0.95);
+    --ev-soft-sheen: rgba(255, 255, 255, 0.45);
+    --ev-soft-drop: rgba(15, 23, 42, 0.1);
+    --ev-glint: rgba(60, 71, 89, 0.5);
+    --ev-glint-base: rgba(15, 23, 42, 0.08);
+    --ev-ring-hi: #ffffff;
+    --ev-ring-mid: #aeb6c2;
+    --ev-ring-lo: #6b7482;
+    --ev-ring-opacity: 0.5;
+    --ev-primary-streak: rgba(255, 255, 255, 0.14);
+    --ev-brush-hi: rgba(255, 255, 255, 0.035);
+    --ev-brush-lo: rgba(0, 0, 0, 0.08);
   }
   .everyday-backdrop::after {
     content: '';
@@ -411,5 +442,22 @@
     .everyday-backdrop, .everyday-shell :global(.ev-preview-stage) { background-image: none; }
     .everyday-shell :global(.ev-hero) { background: none; -webkit-background-clip: border-box; background-clip: border-box; color: CanvasText; }
     .everyday-backdrop[data-ev-state='disputed'] { border-top: 2px solid CanvasText; }
+  }
+
+  /* ---------- Materials (mirrors ui/src/styles/everyday.css) ----------
+   * The ground light is the only light; edges, rings and the primary streak catch it at --ev-glare-pos / --ev-bevel-angle. */
+  .everyday-backdrop::before { content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none; background-image: var(--ev-grain); background-size: 180px; mix-blend-mode: overlay; opacity: var(--ev-grain-opacity); }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger)), .everyday-shell :global(.ev-preview-pill), .everyday-shell :global(.ev-card), .ev-test-trigger, .ev-icon-btn { position: relative; isolation: isolate; background: radial-gradient(120% 90% at 50% 0% var(--in-oklab), var(--ev-soft-sheen), transparent 70%), var(--ev-soft-face); border-color: transparent; box-shadow: inset 0 1px 1.5px var(--ev-soft-rim), 0 1px 2px var(--ev-soft-drop); }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger))::after, .everyday-shell :global(.ev-preview-pill)::after, .everyday-shell :global(.ev-card)::after, .ev-test-trigger::after, .ev-icon-btn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background-image: var(--ev-velvet); background-size: 120px; mix-blend-mode: soft-light; opacity: 0.35; }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger))::before, .everyday-shell :global(.ev-preview-pill)::before, .ev-test-trigger::before, .ev-icon-btn::before { content: ''; position: absolute; inset: 0; z-index: 1; border-radius: inherit; padding: 1px; pointer-events: none; background: conic-gradient(from calc(var(--ev-bevel-angle) + 82deg), var(--ev-ring-lo), var(--ev-ring-hi) 7%, var(--ev-ring-mid) 16%, var(--ev-ring-lo) 38%, var(--ev-ring-mid) 58%, var(--ev-ring-hi) 70%, var(--ev-ring-mid) 78%, var(--ev-ring-lo)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude; opacity: var(--ev-ring-opacity); transition: opacity 140ms ease-out; }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger):hover:not(:disabled))::before, .everyday-shell :global(.ev-preview-pill:hover)::before, .ev-test-trigger:hover::before, .ev-icon-btn:hover::before { opacity: 0.65; }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger):active:not(:disabled)), .everyday-shell :global(.ev-preview-pill[aria-pressed='true']), .ev-test-trigger.active, .ev-icon-btn.active { background: var(--ev-soft-face); color: var(--ink-settled); box-shadow: inset 0 1px 3px var(--ev-soft-drop); }
+  .everyday-shell :global(.ev-preview-pill[aria-pressed='true'])::before, .ev-test-trigger.active::before, .ev-icon-btn.active::before { opacity: 1; }
+  .ev-test-trigger:hover, .ev-icon-btn:hover { background: radial-gradient(120% 90% at 50% 0% var(--in-oklab), var(--ev-soft-sheen), transparent 70%), var(--ev-soft-face); color: var(--ink-settled); }
+  .everyday-shell :global(.ev-card)::before { content: ''; position: absolute; left: 12px; right: 12px; top: 0; height: 1px; pointer-events: none; background: linear-gradient(90deg, transparent, var(--ev-glint-base) 14%, var(--ev-glint) var(--ev-glare-pos), var(--ev-glint-base) 86%, transparent); opacity: 0.7; }
+  .ev-topbar { padding-bottom: 14px; background: linear-gradient(90deg, transparent, var(--ev-glint-base) 14%, var(--ev-glint) var(--ev-glare-pos), var(--ev-glint-base) 86%, transparent) bottom / 100% 1px no-repeat; }
+  .everyday-shell :global(.ev-btn.primary) { background: linear-gradient(calc(var(--ev-bevel-angle) - 16deg), transparent calc(var(--ev-glare-pos) - 14%), var(--ev-primary-streak) var(--ev-glare-pos), transparent calc(var(--ev-glare-pos) + 12%)), repeating-linear-gradient(0deg, var(--ev-brush-hi) 0 1px, var(--ev-brush-lo) 1px 2px), linear-gradient(calc(var(--ev-bevel-angle) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%); }
+  @media (forced-colors: active) {
+    .everyday-backdrop::before, .everyday-shell :global(.ev-btn)::before, .everyday-shell :global(.ev-btn)::after, .everyday-shell :global(.ev-preview-pill)::before, .everyday-shell :global(.ev-preview-pill)::after, .everyday-shell :global(.ev-card)::before, .everyday-shell :global(.ev-card)::after, .ev-test-trigger::before, .ev-test-trigger::after, .ev-icon-btn::before, .ev-icon-btn::after { display: none; }
   }
 </style>

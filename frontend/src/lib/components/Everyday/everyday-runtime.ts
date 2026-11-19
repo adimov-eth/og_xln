@@ -163,7 +163,7 @@ export async function quoteSettleTabRoute(params: {
   });
 }
 
-export async function requestEverydayTestCash(params: { entityId: string; runtimeId: string; primaryHubId: string | null; tokenId: number; symbol: string }): Promise<string> {
+export async function requestEverydayTestCash(params: { entityId: string; runtimeId: string; primaryHubId: string | null; tokenId: number; symbol: string }): Promise<void> {
   const apiBase = resolveEverydayApiBase();
   const url = params.primaryHubId ? `${apiBase}/api/faucet/offchain` : `${apiBase}/api/faucet/reserve`;
   const payload = params.primaryHubId
@@ -172,7 +172,6 @@ export async function requestEverydayTestCash(params: { entityId: string; runtim
   const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(15_000) });
   const body = requireUnknownRecord(await res.json(), 'FAUCET_RESPONSE_INVALID');
   if (!res.ok || body['success'] !== true) throw new Error(String(body['error'] ?? `Test faucet failed (${res.status})`));
-  return params.primaryHubId ? '+$100 arriving · finishing...' : 'Requested 100 test USD — confirming...';
 }
 
 export function resolveRecoveryShieldInput(runtime: Runtime | null | undefined): RecoveryShieldStatusInput | null {

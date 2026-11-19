@@ -657,3 +657,135 @@
 		border-top: 2px solid CanvasText;
 	}
 }
+
+/* ---------- Materials: matte ground, soft-touch grip, polished edges ----------
+ * The ground light above is the only light. Every polished part below catches it
+ * at --ev-glare-pos / --ev-bevel-angle, so edges, rings and the primary streak drift
+ * with the glare and never place a highlight of their own. */
+
+/* Grain: the ground reads as a material, and the near-black gradients stop banding. */
+.app[data-posture='everyday']::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	z-index: 0;
+	pointer-events: none;
+	background-image: var(--ev-grain);
+	background-size: 180px;
+	mix-blend-mode: overlay;
+	opacity: var(--ev-grain-opacity);
+}
+
+/* Soft-touch: everything you grip. Set into the ground, light rolls off a rounded rim. */
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger),
+.app[data-posture='everyday'] .everyday-preview-pill,
+.app[data-posture='everyday'] .everyday-test-trigger,
+.app[data-posture='everyday'] .everyday-panel {
+	position: relative;
+	isolation: isolate;
+	background: radial-gradient(120% 90% at 50% 0% var(--in-oklab), var(--ev-soft-sheen), transparent 70%), var(--ev-soft-face);
+	border-color: transparent;
+	box-shadow: inset 0 1px 1.5px var(--ev-soft-rim), 0 1px 2px var(--ev-soft-drop);
+}
+
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger)::after,
+.app[data-posture='everyday'] .everyday-preview-pill::after,
+.app[data-posture='everyday'] .everyday-test-trigger::after,
+.app[data-posture='everyday'] .everyday-panel::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	background-image: var(--ev-velvet);
+	background-size: 120px;
+	mix-blend-mode: soft-light;
+	opacity: 0.35;
+}
+
+/* A 1px polished ring on soft-touch keys, lit from the bevel angle. */
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger)::before,
+.app[data-posture='everyday'] .everyday-preview-pill::before,
+.app[data-posture='everyday'] .everyday-test-trigger::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+	border-radius: inherit;
+	padding: 1px;
+	pointer-events: none;
+	background: conic-gradient(from calc(var(--ev-bevel-angle) + 82deg), var(--ev-ring-lo), var(--ev-ring-hi) 7%, var(--ev-ring-mid) 16%, var(--ev-ring-lo) 38%, var(--ev-ring-mid) 58%, var(--ev-ring-hi) 70%, var(--ev-ring-mid) 78%, var(--ev-ring-lo));
+	-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+	mask-composite: exclude;
+	opacity: var(--ev-ring-opacity);
+	transition: opacity var(--dur-fast) ease-out;
+}
+
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger):hover:not(:disabled)::before,
+.app[data-posture='everyday'] .everyday-preview-pill:hover::before,
+.app[data-posture='everyday'] .everyday-test-trigger:hover::before {
+	opacity: 0.65;
+}
+
+/* Pressed and selected sink further in; the ring comes up to full. */
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger):active:not(:disabled),
+.app[data-posture='everyday'] .everyday-preview-pill[aria-pressed='true'],
+.app[data-posture='everyday'] .everyday-test-trigger.active {
+	background: var(--ev-soft-face);
+	color: var(--display);
+	box-shadow: inset 0 1px 3px var(--ev-soft-drop);
+}
+
+.app[data-posture='everyday'] .everyday-preview-pill[aria-pressed='true']::before,
+.app[data-posture='everyday'] .everyday-test-trigger.active::before {
+	opacity: 1;
+}
+
+/* The panel's top chamfer is polished: one catch of light where the glare crosses it. */
+.app[data-posture='everyday'] .everyday-panel::before {
+	content: '';
+	position: absolute;
+	left: 12px;
+	right: 12px;
+	top: 0;
+	height: 1px;
+	pointer-events: none;
+	background: linear-gradient(90deg, transparent, var(--ev-glint-base) 14%, var(--ev-glint) var(--ev-glare-pos), var(--ev-glint-base) 86%, transparent);
+	opacity: 0.7;
+}
+
+.everyday-topbar {
+	border-bottom: 0;
+	background: linear-gradient(90deg, transparent, var(--ev-glint-base) 14%, var(--ev-glint) var(--ev-glare-pos), var(--ev-glint-base) 86%, transparent) bottom / 100% 1px no-repeat;
+}
+
+/* Brushed silver primary: the one large piece of metal, with a streak where the glare falls. */
+.app[data-posture='everyday'] .btn.primary {
+	background:
+		linear-gradient(calc(var(--ev-bevel-angle) - 16deg), transparent calc(var(--ev-glare-pos) - 14%), var(--ev-primary-streak) var(--ev-glare-pos), transparent calc(var(--ev-glare-pos) + 12%)),
+		repeating-linear-gradient(0deg, var(--ev-brush-hi) 0 1px, var(--ev-brush-lo) 1px 2px),
+		linear-gradient(calc(var(--ev-bevel-angle) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%);
+}
+
+/* Destructive stays red with its word; the soft-touch grip never hides it. */
+.app[data-posture='everyday'] .btn.danger {
+	background: var(--dispute-dim);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dispute) 30%, transparent);
+	color: var(--dispute);
+}
+
+@media (forced-colors: active) {
+	.app[data-posture='everyday']::before,
+	.app[data-posture='everyday'] .btn::before,
+	.app[data-posture='everyday'] .btn::after,
+	.app[data-posture='everyday'] .everyday-preview-pill::before,
+	.app[data-posture='everyday'] .everyday-preview-pill::after,
+	.app[data-posture='everyday'] .everyday-test-trigger::before,
+	.app[data-posture='everyday'] .everyday-test-trigger::after,
+	.app[data-posture='everyday'] .everyday-panel::before,
+	.app[data-posture='everyday'] .everyday-panel::after {
+		display: none;
+	}
+}

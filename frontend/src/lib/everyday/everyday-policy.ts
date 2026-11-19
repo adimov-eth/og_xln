@@ -123,7 +123,10 @@ export type HubRebalanceInspection = {
   status: 'settled' | 'settling' | 'fee-above-cap' | 'fee-consumes-transfer' | 'below-soft-limit' | 'pending-queue';
   outPeerCredit: bigint;
   requestedAmount: bigint;
+  /** Fee the provider will charge when the deposit is requested; zero once it is requested. */
   computedFee: bigint;
+  /** Fee already taken for the deposit in flight; zero until it is requested. */
+  paidFee: bigint;
   maxAcceptableFee: bigint;
 };
 
@@ -138,9 +141,13 @@ export function inspectHubRebalanceStatus(params: {
   const delta = params.doc.state.deltas.get(params.tokenId);
   const outPeerCredit = delta ? params.deriveDeltaFn(delta, params.isLeft).outPeerCredit : 0n;
   const requestedAmount = params.doc.state.requestedRebalance.get(params.tokenId) ?? 0n;
-  const base = { outPeerCredit, requestedAmount, maxAcceptableFee: params.policy.maxAcceptableFee };
+  const base = { outPeerCredit, requestedAmount, paidFee: 0n, maxAcceptableFee: params.policy.maxAcceptableFee };
   if (outPeerCredit === 0n) return { ...base, status: 'settled', computedFee: 0n };
-  if (requestedAmount > 0n) return { ...base, status: 'settling', computedFee: 0n };
+  if (requestedAmount > 0n) {
+    const feeState = params.doc.state.requestedRebalanceFeeState?.get(params.tokenId);
+    const paidFee = feeState ? feeState.feePaidUpfront - (feeState.refund?.refundedAmount ?? 0n) : 0n;
+    return { ...base, status: 'settling', computedFee: 0n, paidFee: paidFee > 0n ? paidFee : 0n };
+  }
   const side = params.isLeft ? 'right' : 'left';
   const snapshot = params.doc.state.rebalanceFeePolicies?.get(params.tokenId)?.[side];
   if (!snapshot) return { ...base, status: 'pending-queue', computedFee: 0n };
@@ -161,11 +168,28 @@ export function inspectHubRebalanceStatus(params: {
 export const EVERYDAY_ARRIVING_FEE_CAP_NOTE =
   'Automatic deposit paused — provider fee is above the $2 limit.';
 
+/**
+ * What the person is told while money is arriving. The provider's fee is known before it is
+ * charged, so the note states it and what will actually join Cash; nothing is left to infer
+ * from a balance that lands smaller than the amount that was sent.
+ */
 export function formatEverydayArrivingNote(
-  inspection: Pick<HubRebalanceInspection, 'status'> | null | undefined,
+  inspection: Pick<HubRebalanceInspection, 'status'> & Partial<Pick<HubRebalanceInspection, 'outPeerCredit' | 'computedFee' | 'paidFee'>> | null | undefined,
   defaultNote: string,
+  money?: (amount: bigint) => string,
 ): string {
-  return inspection?.status === 'fee-above-cap' || inspection?.status === 'fee-consumes-transfer'
-    ? EVERYDAY_ARRIVING_FEE_CAP_NOTE
-    : defaultNote;
+  if (inspection?.status === 'fee-above-cap' || inspection?.status === 'fee-consumes-transfer') {
+    return EVERYDAY_ARRIVING_FEE_CAP_NOTE;
+  }
+  if (!inspection || !money) return defaultNote;
+  const arriving = inspection.outPeerCredit ?? 0n;
+  const fee = inspection.computedFee ?? 0n;
+  const paid = inspection.paidFee ?? 0n;
+  if (inspection.status === 'pending-queue' && fee > 0n && arriving > fee) {
+    return `A ${money(fee)} provider fee comes out first, so ${money(arriving - fee)} joins your Cash.`;
+  }
+  if (inspection.status === 'settling' && paid > 0n) {
+    return `${money(paid)} provider fee paid. ${money(arriving)} joins your Cash when this finishes.`;
+  }
+  return defaultNote;
 }

@@ -8,6 +8,7 @@ import {
   planEverydayCashOut,
   planEverydaySend,
 } from '../../../frontend/src/lib/everyday/everyday-autopilot';
+import { EVERYDAY_ARRIVING_FEE_CAP_NOTE, formatEverydayArrivingNote } from '../../../frontend/src/lib/everyday/everyday-policy';
 import { projectEverydayWallet } from '../../../frontend/src/lib/everyday/everyday-projection';
 import { parseEverydayTowerUrls, resolveDefaultTowerUrls } from '../../../frontend/src/lib/everyday/everyday-recovery';
 
@@ -141,6 +142,53 @@ test('draftReserveDelta and inspectHubRebalanceStatus cover every settlement/bat
   expect(inspectHubRebalanceStatus({ doc: mkDoc(500_000n, 0n, { baseFee: 10n, gasFee: 0n, liquidityFeeBps: 0n }) as never, isLeft: true, tokenId: 1, policy, deriveDeltaFn: deriveDelta }).status).toBe('below-soft-limit');
   expect(inspectHubRebalanceStatus({ doc: mkDoc(2_000_000n, 0n, { baseFee: 3_000_000n, gasFee: 0n, liquidityFeeBps: 0n }) as never, isLeft: true, tokenId: 1, policy, deriveDeltaFn: deriveDelta }).status).toBe('fee-above-cap');
   expect(inspectHubRebalanceStatus({ doc: mkDoc(1_500_000n, 0n, { baseFee: 1_500_000n, gasFee: 0n, liquidityFeeBps: 0n }) as never, isLeft: true, tokenId: 1, policy, deriveDeltaFn: deriveDelta }).status).toBe('fee-consumes-transfer');
+});
+
+test('the arriving note states the provider fee before it is charged and after it is paid', () => {
+  const policy = { r2cRequestSoftLimit: 1_000_000n, hardLimit: 250_000_000n, maxAcceptableFee: 2_000_000n };
+  const usd = (amount: bigint): string => `USD ${(Number(amount) / 1e6).toFixed(2)}`;
+  const fallback = 'Finishing automatically before it joins your Cash.';
+  const doc = (outPeerCredit: bigint, requested: bigint, paid?: { feePaidUpfront: bigint; refundedAmount?: bigint }) => ({
+    currentFrame: { timestamp: 100 },
+    state: {
+      deltas: new Map([[1, { ...createDefaultDelta(1), offdelta: outPeerCredit }]]),
+      requestedRebalance: requested > 0n ? new Map([[1, requested]]) : new Map(),
+      requestedRebalanceFeeState: paid
+        ? new Map([[1, {
+            feePaidUpfront: paid.feePaidUpfront,
+            ...(paid.refundedAmount === undefined ? {} : { refund: { reason: 'timeout', refundedAmount: paid.refundedAmount } }),
+          }]])
+        : new Map(),
+      rebalanceFeePolicies: new Map([[1, { right: { baseFee: 100_000n, gasFee: 0n, liquidityFeeBps: 1n, effectiveAt: 0 } }]]),
+    },
+  });
+  const inspect = (value: ReturnType<typeof doc>) =>
+    inspectHubRebalanceStatus({ doc: value as never, isLeft: true, tokenId: 1, policy, deriveDeltaFn: deriveDelta });
+
+  // 100 arriving, fee not yet taken: 0.10 base + 1 bps of 100 = 0.11.
+  const queued = inspect(doc(100_000_000n, 0n));
+  expect(queued).toMatchObject({ status: 'pending-queue', computedFee: 110_000n, paidFee: 0n });
+  expect(formatEverydayArrivingNote(queued, fallback, usd))
+    .toBe('A USD 0.11 provider fee comes out first, so USD 99.89 joins your Cash.');
+
+  // Requested: the fee has left the balance, so what is arriving is already the net amount.
+  const settling = inspect(doc(99_890_000n, 99_890_000n, { feePaidUpfront: 110_000n }));
+  expect(settling).toMatchObject({ status: 'settling', computedFee: 0n, paidFee: 110_000n });
+  expect(formatEverydayArrivingNote(settling, fallback, usd))
+    .toBe('USD 0.11 provider fee paid. USD 99.89 joins your Cash when this finishes.');
+
+  // A refunded fee is not reported as paid.
+  const refunded = inspect(doc(100_000_000n, 100_000_000n, { feePaidUpfront: 110_000n, refundedAmount: 110_000n }));
+  expect(refunded.paidFee).toBe(0n);
+  expect(formatEverydayArrivingNote(refunded, fallback, usd)).toBe(fallback);
+
+  // No fee to state, no formatter, or nothing to inspect: the plain note.
+  expect(formatEverydayArrivingNote(inspect(doc(100_000_000n, 100_000_000n)), fallback, usd)).toBe(fallback);
+  expect(formatEverydayArrivingNote(queued, fallback)).toBe(fallback);
+  expect(formatEverydayArrivingNote(null, fallback, usd)).toBe(fallback);
+
+  // The fee-cap note still wins.
+  expect(formatEverydayArrivingNote({ status: 'fee-above-cap' }, fallback, usd)).toBe(EVERYDAY_ARRIVING_FEE_CAP_NOTE);
 });
 
 test('projectEverydayWallet drops mismatched activeEntity and negates right-side lendingBalances', () => {
