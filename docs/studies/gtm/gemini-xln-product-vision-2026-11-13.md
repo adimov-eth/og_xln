@@ -32,7 +32,7 @@ Both models, however, **break on repeat commercial stablecoin operations bridgin
 
 ### 1.2 Resolving the state-channel capital paradox
 
-In [`Depository.sol`](../jurisdictions/contracts/Depository.sol) (`lines 64–65`), `_collaterals[channelKey][tokenId]` is strictly bilateral: collateral locked by a hub inside `Account(Hub, Alice)` cannot simultaneously secure `Account(Hub, Bob)` without an on-chain rebalance.
+In [`Depository.sol`](../../../jurisdictions/contracts/Depository.sol) (`lines 64–65`), `_collaterals[channelKey][tokenId]` is strictly bilateral: collateral locked by a hub inside `Account(Hub, Alice)` cannot simultaneously secure `Account(Hub, Bob)` without an on-chain rebalance.
 
 This law dictates XLN's product design:
 
@@ -48,7 +48,7 @@ This law dictates XLN's product design:
 
 Both `Hyperliquid` and `Relay.link` proved the same launch law: **centralize operations into `Operator 0 = Principal 0` on Day 1, ship the narrowest high-velocity transaction loop behind a 1-signature UX, pay distributors 100% of their fee edge, and decentralize operator roles only *after* real volume exists.**
 
-To launch a living product instead of an eternal specification, this vision explicitly overrides six current rules across [`AGENTS.md`](../AGENTS.md), [`launch-pilot.md`](launch-pilot.md), [`launch-design.md`](launch-design.md), and [`rejected-ideas.md`](rejected-ideas.md):
+To launch a living product instead of an eternal specification, this vision explicitly overrides six current rules across [`AGENTS.md`](../../../AGENTS.md), [`launch-pilot.md`](../../launch-pilot.md), [`launch-design.md`](../../launch-design.md), and [`rejected-ideas.md`](../../rejected-ideas.md):
 
 | Current XLN canon | Launched product decision | Why this cut is mandatory |
 | --- | --- | --- |
@@ -69,18 +69,18 @@ To launch a living product instead of an eternal specification, this vision expl
 
 The single greatest UX breakthrough of `Hyperliquid` was separating the **cold funding wallet** (`Rabby` / `MetaMask` / `Ledger`) from the **hot execution session key** (`Agent Wallet`).
 
-XLN's deployed [`Depository.sol`](../jurisdictions/contracts/Depository.sol) **already supports this exact separation without changing a single byte of Solidity**:
+XLN's deployed [`Depository.sol`](../../../jurisdictions/contracts/Depository.sol) **already supports this exact separation without changing a single byte of Solidity**:
 
-1. **Instant local Entity creation (`<200 ms`):** When a user opens `xln.finance` (or runs `npx @xln/sdk init`), the client creates or unlocks a local XLN `Entity` (`entityId`) backed by WebCrypto/Passkey storage in browser IndexedDB (with optional 1-click upgrade to [`BrainVault`](../brainvault/README.md) memory-hard passphrase derivation for high-value desks).
+1. **Instant local Entity creation (`<200 ms`):** When a user opens `xln.finance` (or runs `npx @xln/sdk init`), the client creates or unlocks a local XLN `Entity` (`entityId`) backed by WebCrypto/Passkey storage in browser IndexedDB (with optional 1-click upgrade to [`BrainVault`](../../../brainvault/README.md) memory-hard passphrase derivation for high-value desks).
 2. **Single-transaction atomic Deposit + Channel Open:**
-   - In [`Depository.sol`](../jurisdictions/contracts/Depository.sol) (`lines 493–499` and `679–709`), `_externalTokenToReserve` pulls ERC-20/TRC-20 tokens from `msg.sender` (the user's `Rabby`, `MetaMask`, or `TronLink` wallet) and credits `params.entity = entityId`, **immediately before** `_reserveToCollateral` funds `Account(entityId, Hub 0)` inside the same `processBatch` call (`lines 356–381`).
+   - In [`Depository.sol`](../../../jurisdictions/contracts/Depository.sol) (`lines 493–499` and `679–709`), `_externalTokenToReserve` pulls ERC-20/TRC-20 tokens from `msg.sender` (the user's `Rabby`, `MetaMask`, or `TronLink` wallet) and credits `params.entity = entityId`, **immediately before** `_reserveToCollateral` funds `Account(entityId, Hub 0)` inside the same `processBatch` call (`lines 356–381`).
    - The local `Runtime` pre-signs `hankoData` silently in JavaScript (`0` wallet signature popups); the user approves and confirms **one** deposit transaction in `Rabby` (`~$0.02` on Arbitrum) or `TronLink`.
 3. **Zero-popup `<300 ms` execution forever:** Every subsequent payment, cross-chain conversion (`TRON USDT ⇄ Arbitrum USDC / Ethereum USDT`), credit draw, or `Builder Code` fee split is signed silently by the local `Entity` key. Zero MetaMask/TronLink popups, zero native gas tokens (`ETH` or `TRX`) required during operation.
 4. **Gasless TRON withdrawals:** Because `Depository.processBatch` is `external` and authenticates authority purely via `entityId`'s `hankoData` (`line 371`), a user holding `0 TRX` signs a cooperative `collateralToReserve + reserveToExternalToken` batch locally, and **`Hub 0` broadcasts it on TRON using `Hub 0`'s staked TRX Energy pool**. Users never buy `TRX` just to move `USDT`.
 
 ### 3.2 Killing the `32.1 s` wallet-import wall
 
-[`core/jurisdiction/adapter/receipt/reader.ts`](../core/jurisdiction/adapter/receipt/reader.ts) (`lines 392–448`) currently blocks cold wallet import for ~`32.1 seconds` scanning raw RPC block receipts. In the launched product:
+[`core/jurisdiction/adapter/receipt/reader.ts`](../../../core/jurisdiction/adapter/receipt/reader.ts) (`lines 392–448`) currently blocks cold wallet import for ~`32.1 seconds` scanning raw RPC block receipts. In the launched product:
 
 - `Hub 0` serves the latest dual-signed `AccountFrame` + signed checkpoint snapshot over WebSocket in **`<150 ms`**, rendering balances and executable quotes immediately under an explicit `Hub-Attested` badge.
 - A background Web Worker runs `readAuthenticatedReceiptRange` asynchronously after first paint, upgrading the status indicator to `Chain-Verified` without ever blocking user entry.
@@ -112,7 +112,7 @@ All internal state-channel scaffolding currently exposed in `ui/src/components/`
 ```
 
 1. **Clearing Tab (Home):**
-   - Strictly separates **Secured Principal** (100% backed by on-chain `Depository.sol` collateral, unilaterally recoverable if `Hub 0` disappears) from **Available Credit Line** (optional bounded `creditLimit` extended by `Hub 0` or a bilateral partner, adhering strictly to [`owner-profile.md`](owner-profile.md) `line 62`).
+   - Strictly separates **Secured Principal** (100% backed by on-chain `Depository.sol` collateral, unilaterally recoverable if `Hub 0` disappears) from **Available Credit Line** (optional bounded `creditLimit` extended by `Hub 0` or a bilateral partner, adhering strictly to [`owner-profile.md`](../../owner-profile.md) `line 62`).
    - Displays a live **Netting Efficiency Meter**: *"112 operations cleared off-chain this week · 2 chain settlements · $312 saved in TRON Energy & L1 gas."*
 2. **Instant Convert & Pay (Two Native Modes):**
    - **Mode A — Corridor Conversion (`<300 ms`):** Convert `USDC · Arbitrum`, `USDT · Arbitrum/Ethereum`, and `USDT · TRON` back and forth inside the Clearing Tab via `DeltaTransformer` hash-ladder swaps against `Hub 0`. Firm 5-second executable quotes; zero slippage; zero chain gas.
@@ -120,7 +120,7 @@ All internal state-channel scaffolding currently exposed in `ui/src/components/`
      - If the recipient is an XLN Entity: settles off-chain in `<200 ms` for `$0.00` with 100% Etherscan/Tronscan privacy.
      - If the recipient is a raw external `T...` TRON address or `0x...` EVM address: the sender debits their XLN Clearing Tab off-chain (`USDC_ARB` or `USDT_TRON`), and **`Hub 0` dispatches native `TRC-20 USDT` from `Hub 0`'s hot payout wallet using staked TRX Energy**, returning the signed TRON txid receipt in `<3 seconds`. A company holding `Arbitrum USDC` can pay 200 contractors in `TRON USDT` via one CSV upload or API call without ever touching `TRX`, TronLink, or a CEX.
 3. **Sovereign Safety & 1-Click Exit Drawer:**
-   - Live heartbeat of the independent **Secondary Watchtower** ([`last-resort-appointment.ts`](../core/watchtower/last-resort-appointment.ts)).
+   - Live heartbeat of the independent **Secondary Watchtower** ([`last-resort-appointment.ts`](../../../core/watchtower/last-resort-appointment.ts)).
    - 1-click **Download Signed Proof Bundle** (`AccountProof` JSON) and 1-click **Unilateral On-Chain Exit** showing exact worst-case gas (`~921,213` EVM gas) so custody safety is verifiable, never "trust us."
 
 ### 3.4 Headless `@xln/sdk` for SaaS platforms, bots, and AI gateways
@@ -142,7 +142,7 @@ const receipt = await xln.convertAndPayout({
 });
 ```
 
-This turns the existing [`cli/agent-payment.ts`](../cli/agent-payment.ts) durable-intent flow (`prepare` → WAL intent → `send` → receipt) into an embeddable B2B treasury and agent-clearing SDK.
+This turns the existing [`cli/agent-payment.ts`](../../../cli/agent-payment.ts) durable-intent flow (`prepare` → WAL intent → `send` → receipt) into an embeddable B2B treasury and agent-clearing SDK.
 
 ---
 
@@ -219,12 +219,12 @@ Because `Hub 0` has **zero special smart-contract privileges** in `Depository.so
 
 | Action | Repository target | Concrete change |
 | --- | --- | --- |
-| **1. Freeze & re-license custody boundary** | [`LICENSE`](../LICENSE), [`jurisdictions/contracts/`](../jurisdictions/contracts/) | Dual/split license: `MIT` headers on all `jurisdictions/contracts/*.sol` and `@xln/sdk`; publish deterministic compiler settings & verified source on Etherscan, Arbiscan, and Tronscan. Keep `FROZEN_CORE` untouched. |
-| **2. Add `Arbitrum One` + Mainnet configs** | [`jurisdictions/jurisdictions.json`](../jurisdictions/jurisdictions.json) | Register canonical `Ethereum Mainnet` (`USDT`, `USDC`), `Arbitrum One` (`USDC`, `USDT0`, `disputeTimeout >= 48h`), and `TRON Mainnet` (`USDT`). |
-| **3. Fast snapshot boot + async verifier** | [`core/jurisdiction/adapter/receipt/reader.ts`](../core/jurisdiction/adapter/receipt/reader.ts), `ui/` | Boot `ui/` in `<150 ms` from signed `Hub 0` checkpoint + `AccountFrame`; move `readAuthenticatedReceiptRange` into a non-blocking background Web Worker. |
-| **4. Strip `ui/` down to the 3 Clearing screens** | [`ui/src/components/`](../ui/src/components/), [`frontend/`](../frontend/) | Disable `BankLendingPolicy`, `Lending*`, `EntitySwitcher`, `Formation`, `ManualSwapRoutes`, `ReceiveCapacity` in production admission & UI. Replace Svelte AI-agent landing copy (`+page.svelte`) with live `Hub 0` executable corridor quotes (`TRON USDT ⇄ Arbitrum/ETH USDC`) and `@xln/sdk` `Builder Code` docs. |
+| **1. Freeze & re-license custody boundary** | [`LICENSE`](../../../LICENSE), [`jurisdictions/contracts/`](../../../jurisdictions/contracts/) | Dual/split license: `MIT` headers on all `jurisdictions/contracts/*.sol` and `@xln/sdk`; publish deterministic compiler settings & verified source on Etherscan, Arbiscan, and Tronscan. Keep `FROZEN_CORE` untouched. |
+| **2. Add `Arbitrum One` + Mainnet configs** | [`jurisdictions/jurisdictions.json`](../../../jurisdictions/jurisdictions.json) | Register canonical `Ethereum Mainnet` (`USDT`, `USDC`), `Arbitrum One` (`USDC`, `USDT0`, `disputeTimeout >= 48h`), and `TRON Mainnet` (`USDT`). |
+| **3. Fast snapshot boot + async verifier** | [`core/jurisdiction/adapter/receipt/reader.ts`](../../../core/jurisdiction/adapter/receipt/reader.ts), `ui/` | Boot `ui/` in `<150 ms` from signed `Hub 0` checkpoint + `AccountFrame`; move `readAuthenticatedReceiptRange` into a non-blocking background Web Worker. |
+| **4. Strip `ui/` down to the 3 Clearing screens** | [`ui/src/components/`](../../../ui/src/components/), [`frontend/`](../../../frontend/) | Disable `BankLendingPolicy`, `Lending*`, `EntitySwitcher`, `Formation`, `ManualSwapRoutes`, `ReceiveCapacity` in production admission & UI. Replace Svelte AI-agent landing copy (`+page.svelte`) with live `Hub 0` executable corridor quotes (`TRON USDT ⇄ Arbitrum/ETH USDC`) and `@xln/sdk` `Builder Code` docs. |
 | **5. Ship `Hub 0` Quoter, `Payout-on-Behalf` & `Builder Codes`** | `core/swapbook/cross-j/`, `core/api/payments/`, `@xln/sdk` | Add skew-aware `Hub 0` stablecoin quoter, `ApproveBuilderFee` frame split (`0` Solidity changes), external `TRC-20` `Payout-on-Behalf` receipt dispatcher backed by staked `TRX` Energy, and automated `USDT0`/CEX threshold rebalancer. |
-| **6. Stand up independent Watchtower** | [`core/watchtower/last-resort-appointment.ts`](../core/watchtower/last-resort-appointment.ts) | Deploy an always-on Watchtower on a separate cloud/provider from `Hub 0`, automatically registered on every `Hub 0` customer `Account`. |
+| **6. Stand up independent Watchtower** | [`core/watchtower/last-resort-appointment.ts`](../../../core/watchtower/last-resort-appointment.ts) | Deploy an always-on Watchtower on a separate cloud/provider from `Hub 0`, automatically registered on every `Hub 0` customer `Account`. |
 
 ### 6.2 Non-negotiable 90-day falsification gates
 

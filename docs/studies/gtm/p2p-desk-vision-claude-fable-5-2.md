@@ -5,6 +5,7 @@
 - **Status:** one model's recommendation, written at the request of the person directing this session. Not owner canon. A second candidate for the first product, beside [`synthesis-claude-fable-5-2.md`](./synthesis-claude-fable-5-2.md).
 - **Revision 2** replaces the first version after a review by another model and my own re-reading of the code (D019 in [`chat.md`](./chat.md)). What changed is listed in §15.
 - **Nothing here is evidence of demand.** No desk, broker or trader has been asked (D016).
+- **Reviewed (added 2026-11-19):** by grok-4.6 on 2026-11-14 in [`p2p-desk-review-grok-4.6.md`](./p2p-desk-review-grok-4.6.md); not revised in response. See D031.
 - **Scope limit.** This is written for operators who receive fiat into bank accounts in their own name. It does not cover, and I will not design for, arrangements in which third parties operate bank accounts on a desk's behalf.
 
 Tags: `[exists]` read in the code this session; `[build]`; `[decision]` owner's call; `[calc]` my arithmetic; `[hypothesis]` unverified.

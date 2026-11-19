@@ -131,3 +131,48 @@ Insert before `it('rejects historical cooperative signatures as a dispute bypass
 1 failing (1 mocha)
 Test run failed
 ```
+
+## Addendum 2026-11-19: a second path, and a correction to option 2
+
+Both regressions are now in `jurisdictions/test/dispute/Depository-part-2.ts`, uncommitted
+because they fail by design until a fix lands. Run from `jurisdictions/`:
+`bunx hardhat test test/dispute/Depository-part-2.ts --grep "pre-dispute"`. Result on a
+working tree based on `8f8a4a6a3`, contracts unchanged:
+
+```text
+  1) a pre-dispute proof with a higher nonce cannot be settled a second time after finalization
+      AssertionError: expected 750 to be at least 850.
+  2) a pre-dispute cooperative settlement with a higher nonce cannot be applied after finalization
+      AssertionError: expected 800 to equal 900.
+```
+
+**Second path: cooperative settlements.** `Account.sol` settlement and C2R accept any
+counterparty signature with `nonce > storedNonce` (`:1288`, settlement path `:1647`). Test 2:
+Right signs an `r2r` settlement (Right's reserve to Left's, 100, nonce 3), a unilateral dispute
+on nonce 1 finalizes (stored nonce becomes 2), then Left submits the settlement and Right pays
+100 more. `r2r` is a runtime operation (`core/protocol/settlement/operations.ts`). The runtime
+already treats such authorizations as dead after finality ("unusable even when its numeric nonce
+is higher", `core/entity/tx/j-events.ts`, `applyResolvedDisputeFinality`); the contract does not.
+
+Consequence for the options: option 1 (epoch in `encodeDisputeProof`) and option 3 (retired
+watch seed) close only the dispute-proof path. Option 2 closes both, because every signed path
+checks `nonce > storedNonce`. Option 1 closes both only if the epoch also goes into
+`hashCooperativeUpdateHankoPayload` and C2R.
+
+**Correction to option 2.** "An honest signer never signs more than one nonce ahead" is
+wrong about the on-chain nonce. The off-chain proof nonce advances per proof-changing frame
+(`core/account/consensus/index.ts:700`, `core/account/consensus/proposal/finalize.ts:107`);
+the stored nonce moves only on a settlement or a dispute, so the gap is unbounded. Option 2 holds
+only if no party ever signs a nonce at or above the next 2^32 boundary above the epoch base. No
+such cap exists today (the only bound is `Number.MAX_SAFE_INTEGER`, `core/account/consensus/dispute/hanko.ts:77`),
+so option 2 needs a fail-closed signing cap in TS and in `rscore`, plus the boundary bump mirrored
+where finality computes the nonce: `resolveFinalizationEvidence` in `core/entity/tx/j-events.ts`
+and `rscore/crates/entity-kernel/src/j_events/ingress.rs:1984`. Existing tests that assert exact
+post-finalization nonces (for example `account.nonce` equal to `2n` in `Depository-part-2.ts`) change.
+
+**Not tested.** The counter-dispute branch, where finalization adopts the counter-proof's nonce,
+uses the same `nonce > storedNonce` check and was not exercised separately. The runtime marks a
+finalized Account `disputed` with "reopen required", and no reopen handler exists, so an honest
+runtime never signs in the new epoch; the contract still accepts new funding and signatures there.
+
+Still needs an owner decision. Nothing in the contracts was changed.
