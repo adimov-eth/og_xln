@@ -34,3 +34,16 @@ test('published batch takes over the guard even after the funding screen unmount
 	expect(() => claimFundingSubmission(key)).not.toThrow();
 	releaseFundingSubmission(key);
 });
+
+test('funding submission locks normalize mixed-case entity IDs', () => {
+	const upperKey = fundingSubmissionKey('0xAaBb', '0xCcDd', 1);
+	const lowerKey = fundingSubmissionKey('0xaabb', '0xccdd', 1);
+	expect(upperKey).toBe(lowerKey);
+	claimFundingSubmission(upperKey);
+	expect(() => claimFundingSubmission(lowerKey)).toThrow('already has a top-up');
+	const state = initJBatch();
+	batchAddReserveToCollateral(state, '0xaabb', '0xccdd', 1, 10n);
+	observeFundingBatches('0xAaBb', [state.batch]);
+	expect(() => claimFundingSubmission(lowerKey)).not.toThrow();
+	releaseFundingSubmission(lowerKey);
+});

@@ -10,9 +10,11 @@
    */
 
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
   import type { Writable } from 'svelte/store';
   import { writable, get } from 'svelte/store';
   import { activeRuntime as activeRuntimeStore, vaultOperations } from '#lib/stores/vault/vaultStore.ts';
+  import { resolveEffectivePosture, walletPosture } from '#lib/stores/everyday/walletPostureStore.ts';
   import { errorLog } from '#lib/stores/errorLogStore.ts';
   import { settings } from '#lib/stores/settingsStore.ts';
   import {
@@ -918,7 +920,7 @@
   </main>
 {/if}
 
-{#if $settings.showTimeMachine}
+{#if $settings.showTimeMachine && resolveEffectivePosture($walletPosture, typeof window !== 'undefined' ? page.url.search : '') === 'pro'}
   <TimeMachine
     history={runtimeFrameHistory}
     timeIndex={runtimeFrameTimeIndex}

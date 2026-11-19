@@ -17,7 +17,7 @@ import {
   walletNetworks,
   type OutageTarget,
 } from './hub-outage';
-import { LOCAL_PASSWORD, enterStack } from './stack';
+import { LOCAL_PASSWORD, enterStack, gotoProWallet } from './stack';
 
 // Owner payout drill in real elapsed time. `start` runs inside the private
 // stand: it funds a fully secured Account through the live Hub, stops the Hub,
@@ -177,7 +177,7 @@ test(
       const contract = Depository__factory.connect(outage.funded.depository, provider);
       const page = await firstPage(context);
       const reopenAt = performance.now();
-      await page.goto('/');
+      await gotoProWallet(page, '/');
       await page.getByRole('button', { name: 'Continue', exact: true }).click({ timeout: 30_000 });
       await page.getByLabel('Password', { exact: true }).fill(LOCAL_PASSWORD);
       await page.getByRole('button', { name: 'Unlock', exact: true }).click();

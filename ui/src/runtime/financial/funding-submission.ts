@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { JBatch } from '@xln/core/api/public/runtime-module';
+import { batchFundsPair } from '@xln/frontend/lib/everyday/everyday-policy';
 
 // Ephemeral admission guard only. The canonical draft/sent batch remains the post-crash authority.
 const submissions = new Set<string>();
@@ -7,7 +8,8 @@ const listeners = new Set<() => void>();
 const notify = () => {
 	for (const listener of listeners) listener();
 };
-export const fundingSubmissionKey = (owner: string, account: string, token: number) => `${owner}:${account}:${token}`;
+export const fundingSubmissionKey = (owner: string, account: string, token: number) =>
+	`${owner.toLowerCase()}:${account.toLowerCase()}:${token}`;
 export function claimFundingSubmission(key: string): void {
 	if (submissions.has(key)) throw new Error('This account already has a top-up awaiting confirmation.');
 	submissions.add(key);
@@ -18,18 +20,20 @@ export function releaseFundingSubmission(key: string): void {
 	notify();
 }
 export function releaseFundingDrafts(owner: string): void {
-	for (const key of submissions) if (key.startsWith(`${owner}:`)) submissions.delete(key);
+	const normalizedOwner = owner.toLowerCase();
+	for (const key of submissions) if (key.startsWith(`${normalizedOwner}:`)) submissions.delete(key);
 	notify();
 }
 /** Transfer duplicate protection to the published batch as soon as admission is visible. */
 export function observeFundingBatches(owner: string, batches: readonly (JBatch | null | undefined)[]): void {
+	const normalizedOwner = owner.toLowerCase();
 	let changed = false;
 	for (const key of submissions) {
 		const [submissionOwner, account, token] = key.split(':');
 		if (
-			submissionOwner === owner &&
+			submissionOwner === normalizedOwner &&
 			account &&
-			batches.some(batch => batchFundsAccount(batch, owner, account, Number(token)))
+			batches.some(batch => batchFundsAccount(batch, normalizedOwner, account, Number(token)))
 		) {
 			submissions.delete(key);
 			changed = true;
@@ -48,18 +52,4 @@ export function useFundingSubmission(key: string): boolean {
 		() => submissions.has(key),
 	);
 }
-export function batchFundsAccount(
-	batch: JBatch | null | undefined,
-	owner: string,
-	account: string,
-	token: number,
-): boolean {
-	return Boolean(
-		batch?.reserveToCollateral.some(
-			op =>
-				op.tokenId === token &&
-				op.receivingEntity.toLowerCase() === owner &&
-				op.pairs.some(pair => pair.entity.toLowerCase() === account && pair.amount > 0n),
-		),
-	);
-}
+export const batchFundsAccount = batchFundsPair;

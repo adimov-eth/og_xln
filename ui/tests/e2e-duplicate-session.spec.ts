@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { enterStack, LOCAL_PASSWORD } from './stack';
+import { enterStack, gotoProWallet, LOCAL_PASSWORD } from './stack';
 
 test(
   'a second copy of a wallet cannot replace its live connection or offer payments',
@@ -11,7 +11,7 @@ test(
     const other = await browser.newContext({ baseURL: test.info().project.use.baseURL });
     try {
       const duplicate = await other.newPage();
-      await duplicate.goto('/');
+      await gotoProWallet(duplicate, '/');
       await duplicate.getByRole('button', { name: /Restore a wallet/ }).click();
       await duplicate.locator('textarea').fill(wallet.phrase);
       await duplicate.locator('button[type="submit"]').click();

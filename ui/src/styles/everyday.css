@@ -1,0 +1,296 @@
+/* Everyday Wallet styles: scoped under [data-posture='everyday'] and .everyday-* */
+
+.app[data-posture='everyday'] .rail,
+.app[data-posture='everyday'] .tabbar {
+	gap: 8px;
+}
+
+.app[data-posture='everyday'] .rail-item {
+	min-height: 48px;
+	height: auto;
+	padding: 10px 12px;
+	border-radius: 10px;
+}
+
+.app[data-posture='everyday'] .tabbar-item,
+.app[data-posture='everyday'] .icon-btn {
+	min-height: 48px;
+	min-width: 48px;
+}
+
+.app[data-posture='everyday'] .btn,
+.app[data-posture='everyday'] .tabs > button,
+.app[data-posture='everyday'] .chips button,
+.app[data-posture='everyday'] .segc button,
+.app[data-posture='everyday'] .row.tappable,
+.app[data-posture='everyday'] .input {
+	min-height: 48px;
+}
+
+.app[data-posture='everyday'] .tabs,
+.app[data-posture='everyday'] .chips,
+.app[data-posture='everyday'] .segc,
+.app[data-posture='everyday'] .actions {
+	gap: 10px;
+}
+
+.everyday-topbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 20px;
+	flex-wrap: wrap;
+}
+
+.everyday-context-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 48px;
+	padding: 8px 14px;
+	border-radius: var(--radius-pill);
+	background: var(--surface);
+	box-shadow: var(--shadow-card);
+	color: var(--ink);
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.everyday-screen {
+	width: 100%;
+	max-width: 680px;
+	padding: 24px 28px 88px;
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+}
+
+.everyday-hero-card {
+	background: var(--surface);
+	border-radius: 16px;
+	box-shadow: var(--shadow-card);
+	padding: 24px;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.everyday-label {
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	color: var(--ink-2);
+}
+
+.everyday-cash-value {
+	font-family: var(--font-num);
+	font-size: clamp(42px, 7vw, 60px);
+	font-weight: 650;
+	line-height: 1.1;
+	letter-spacing: -0.035em;
+	color: var(--display);
+	font-variant-numeric: tabular-nums;
+}
+
+.everyday-note {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--ink-2);
+	max-width: 55ch;
+}
+
+.everyday-arriving-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 14px;
+	border-radius: var(--radius-pill);
+	background: var(--hold-dim);
+	color: var(--hold);
+	font-size: 13.5px;
+	font-weight: 600;
+	width: fit-content;
+}
+
+.everyday-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.everyday-actions > .btn {
+	flex: 1 1 130px;
+	min-height: 48px;
+	justify-content: center;
+}
+
+.everyday-panel {
+	background: var(--surface);
+	border-radius: 14px;
+	box-shadow: var(--shadow-card);
+	padding: 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.everyday-panel-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.everyday-list-card {
+	background: var(--surface);
+	border-radius: 14px;
+	box-shadow: var(--shadow-card);
+	overflow: hidden;
+}
+
+.everyday-list-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 16px;
+	border-top: 1px solid var(--line);
+}
+
+.everyday-list-row:first-child {
+	border-top: 0;
+}
+
+.everyday-row-meta {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.everyday-row-title {
+	font-size: 15px;
+	font-weight: 600;
+	color: var(--display);
+}
+
+.everyday-row-sub {
+	font-size: 13.5px;
+	color: var(--ink-2);
+}
+
+.everyday-shield-notice {
+	padding: 14px 16px;
+	border-radius: 12px;
+	background: var(--surface-2);
+	border: 1px solid var(--line-2);
+	font-size: 14px;
+	line-height: 1.45;
+	color: var(--ink);
+}
+
+.everyday-shield-notice[data-category='unilateral-exit-needs-gas'],
+.everyday-shield-notice[data-category='tower-issue'] {
+	background: var(--debt-dim);
+	border-color: var(--debt);
+}
+
+.everyday-consent-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 48px;
+	padding: 8px 0;
+	font-size: 14px;
+	line-height: 1.4;
+	color: var(--ink);
+	cursor: pointer;
+}
+
+.everyday-consent-row input[type='checkbox'] {
+	width: 22px;
+	height: 22px;
+	flex: none;
+	accent-color: var(--accent);
+}
+
+.everyday-switch {
+	min-width: 48px;
+	min-height: 48px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	flex: none;
+}
+
+.everyday-switch-track {
+	width: 44px;
+	height: 26px;
+	border-radius: var(--radius-pill);
+	background: var(--surface-3);
+	border: 1px solid var(--line-2);
+	padding: 2px;
+	display: inline-flex;
+	align-items: center;
+	transition: background 180ms ease-out, border-color 180ms ease-out;
+}
+
+.everyday-switch[aria-checked='true'] .everyday-switch-track {
+	background: var(--accent-fill);
+	border-color: var(--accent-fill);
+}
+
+.everyday-switch-thumb {
+	width: 20px;
+	height: 20px;
+	border-radius: 50%;
+	background: #ffffff;
+	transform: translateX(0);
+	transition: transform 180ms ease-out;
+}
+
+.everyday-switch[aria-checked='true'] .everyday-switch-thumb {
+	transform: translateX(18px);
+}
+
+.everyday-qr-wrap {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.everyday-qr-img {
+	width: 180px;
+	height: 180px;
+	border-radius: 12px;
+	background: #ffffff;
+	padding: 8px;
+}
+
+.everyday-fee-line {
+	font-size: 13.5px;
+	color: var(--ink-2);
+}
+
+.everyday-alert {
+	padding: 12px 14px;
+	border-radius: 10px;
+	background: var(--dispute-dim);
+	color: var(--dispute);
+	font-size: 13.5px;
+	line-height: 1.45;
+}
+
+@media (max-width: 840px) {
+	.everyday-screen { padding: 10px 20px calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 36px); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.everyday-switch-track, .everyday-switch-thumb { transition: none; }
+}

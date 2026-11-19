@@ -9,9 +9,11 @@
 </script>
 
 <script lang="ts">
+  import { page } from '$app/state';
   import { Network, PlusCircle, Save, ShieldCheck, SlidersHorizontal } from 'lucide-svelte';
   import type { RuntimeReplica, HubRebalanceConfig } from '@xln/core/api/public/runtime-module';
   import { errorLog } from '#lib/stores/errorLogStore.ts';
+  import { resolveEffectivePosture, setWalletPosture, walletPosture } from '#lib/stores/everyday/walletPostureStore.ts';
   import { runtimeControllerHandle } from '#lib/stores/runtimeControllerStore.ts';
   import { settings, settingsOperations } from '#lib/stores/settingsStore.ts';
   import {
@@ -105,6 +107,7 @@
   let recoverySaving = false;
   let recoveryDiscoveryStatus: RuntimeRecoveryDiscoveryStatus | null = null;
   let recoveryDiscoveryLoadedFor = '';
+  let pendingPosture: 'everyday' | 'pro' | null = null;
 
   const themeOptions: Array<{ value: ThemeName; label: string }> = [
     { value: 'dark', label: 'Dark' },
@@ -612,6 +615,26 @@
       </label>
     </section>
   {:else}
+
+  <section class="panel" data-testid="settings-posture-panel">
+    <label class="settings-control settings-control--toggle">
+      <span class="settings-control-copy">
+        <strong>Trading &amp; operator tools (Pro)</strong>
+        <small>Show orderbooks, cross-chain swaps, credit lanes, and node controls.</small>
+      </span>
+      <!-- pendingPosture holds the clicked toggle state until EntityWorkspace swaps shells, preventing checkbox flicker during unmount. -->
+      <input
+        type="checkbox"
+        data-testid="toggle-pro-mode"
+        checked={(pendingPosture ?? resolveEffectivePosture($walletPosture, typeof window !== 'undefined' ? page.url.search : '')) === 'pro'}
+        on:change={(event) => {
+          const nextPosture = (event.currentTarget as HTMLInputElement).checked ? 'pro' : 'everyday';
+          pendingPosture = nextPosture;
+          setWalletPosture(nextPosture);
+        }}
+      />
+    </label>
+  </section>
 
   <div class="settings-grid">
     <section class="panel">

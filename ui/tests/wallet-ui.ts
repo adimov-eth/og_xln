@@ -5,6 +5,33 @@ import type { RuntimeReplica } from '../../core/runtime/types';
 export const BOOT_TIMEOUT = 180_000;
 export const LOCAL_PASSWORD = 'e2e-local-wallet-password';
 
+export function withProModeParam(target: string): string {
+  if (/^https?:\/\//i.test(target)) {
+    const url = new URL(target);
+    url.searchParams.set('mode', 'pro');
+    return url.toString();
+  }
+  const hashIdx = target.indexOf('#');
+  const beforeHash = hashIdx >= 0 ? target.slice(0, hashIdx) : target;
+  const hash = hashIdx >= 0 ? target.slice(hashIdx) : '';
+  const queryIdx = beforeHash.indexOf('?');
+  const path = queryIdx >= 0 ? beforeHash.slice(0, queryIdx) : beforeHash;
+  const params = new URLSearchParams(queryIdx >= 0 ? beforeHash.slice(queryIdx + 1) : '');
+  params.set('mode', 'pro');
+  return `${path}?${params.toString()}${hash}`;
+}
+
+export async function gotoProWallet(
+  page: Page,
+  target = '/',
+  options?: Parameters<Page['goto']>[1],
+): Promise<void> {
+  await page.goto(withProModeParam(target), options);
+  await page.evaluate(() => {
+    localStorage.setItem('xln-wallet-posture', 'pro');
+  });
+}
+
 /** Import through the public wallet UI, including production builds without diagnostics. */
 export async function importStackPhraseUi(page: Page, phrase: string): Promise<void> {
   await page.locator('[data-testid="gate-stack"][data-state="online"]').waitFor({ state: 'visible', timeout: 20_000 });
@@ -24,7 +51,7 @@ export async function importStackPhraseUi(page: Page, phrase: string): Promise<v
 export async function waitForWalletBoot(page: Page): Promise<void> {
   // Surface the first recovery invariant immediately instead of timing out on Home.
   await page
-    .locator('[data-testid="nav-home"]:visible, [role="alert"]')
+    .locator('[data-testid="nav-home"]:visible, [data-testid="nav-cash"]:visible, [role="alert"]')
     .first()
     .waitFor({ state: 'visible', timeout: BOOT_TIMEOUT });
   const errors = await page.getByRole('alert').allTextContents();

@@ -3,7 +3,7 @@ import { readCommittedPayment, readUsdcAccount } from './payment-evidence';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { enterStack, fundFromHub, readWalletCheckpoint, reopenStack, LOCAL_PASSWORD } from './stack';
+import { enterStack, fundFromHub, gotoProWallet, readWalletCheckpoint, reopenStack, LOCAL_PASSWORD } from './stack';
 
 // Bundle before opening a wallet: a raw core import makes Vite optimize new
 // dependencies and reload the live page, destroying its memory-only session.
@@ -69,7 +69,7 @@ test('tower backup restores funded Account proofs, refuses overwrite and continu
 		if (!Number.isSafeInteger(initialCoverageHeight) || initialCoverageHeight <= 0) throw new Error('TOWER_BACKUP_HEIGHT_INVALID');
 
 		const restoredPage = await target.newPage();
-		await restoredPage.goto('/');
+		await gotoProWallet(restoredPage, '/');
 		const restore = async () => {
 			await expect(restoredPage.getByTestId('gate-stack')).toHaveAttribute('data-state', 'online');
 			await restoredPage.getByRole('button', { name: /Restore a wallet/ }).click();

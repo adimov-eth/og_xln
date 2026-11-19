@@ -32,7 +32,9 @@ import {
   type VaultUnlockDurationMs,
 } from '../../security/vaultProtection';
 import { unwrapLiveRuntimeEnv } from '../../utils/runtime/liveRuntimeEnv';
+import { RETIRED_TESTNET_REBOOTSTRAP_KEY } from '../../utils/control/resetBrowserData';
 import { installRuntimeCommandJournalKeys } from '../commands/runtimeCommandJournalKeyring';
+import { parseEverydayTowerUrls, resolveDefaultTowerUrls } from '../../everyday/everyday-recovery';
 
 /**
  * Vault-shaped wrappers over the canonical recovery implementation in
@@ -397,57 +399,9 @@ export function getSignerDerivationIndex(signer: Signer | null | undefined): num
   return Number.isInteger(signer?.derivationIndex) ? Number(signer!.derivationIndex) : Number(signer?.index ?? 0);
 }
 
-export const parseRecoveryTowerUrls = (value: unknown): string[] => {
-  if (Array.isArray(value)) {
-    return value
-      .map(entry => {
-        if (typeof entry === 'string') return entry;
-        if (entry && typeof entry === 'object' && typeof (entry as { url?: unknown }).url === 'string') {
-          return String((entry as { url: string }).url);
-        }
-        return '';
-      })
-      .map(url => String(url || '').trim())
-      .filter(Boolean);
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return [];
-    try {
-      return parseRecoveryTowerUrls(parseJsonUnknown(trimmed, 'RECOVERY_TOWER_URLS_JSON_INVALID'));
-    } catch {
-      return trimmed
-        .split(',')
-        .map(entry => entry.trim())
-        .filter(Boolean);
-    }
-  }
-  return [];
-};
+export const parseRecoveryTowerUrls = parseEverydayTowerUrls;
 
-export const resolveDefaultRecoveryTowerUrls = (options: {
-  hostname: string;
-  globalUrls?: unknown;
-  localUrls?: unknown;
-  envUrls?: unknown;
-}): string[] => {
-  const globalTowerUrls = parseRecoveryTowerUrls(options.globalUrls);
-  if (globalTowerUrls.length > 0) return globalTowerUrls;
-  const localTowerUrls = parseRecoveryTowerUrls(options.localUrls);
-  if (localTowerUrls.length > 0) return localTowerUrls;
-  const envTowerUrls = parseRecoveryTowerUrls(options.envUrls);
-  if (envTowerUrls.length > 0) return envTowerUrls;
-  const hostname = String(options.hostname || '')
-    .trim()
-    .toLowerCase();
-  // Local/dev environments should not assume an always-on watchtower. Recovery towers
-  // there must be configured explicitly, otherwise fresh wallet creation gets blocked by
-  // an unrelated localhost dependency.
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    return [];
-  }
-  return ['https://xln.finance'];
-};
+export const resolveDefaultRecoveryTowerUrls = resolveDefaultTowerUrls;
 
 export const defaultRecoveryTowerUrls = (): string[] => {
   if (typeof window === 'undefined') return ['https://xln.finance'];
@@ -460,6 +414,7 @@ export const defaultRecoveryTowerUrls = (): string[] => {
   }
   return resolveDefaultRecoveryTowerUrls({
     hostname: window.location.hostname,
+    origin: window.location.origin,
     globalUrls: w.__XLN_WATCHTOWERS__,
     localUrls,
     envUrls: import.meta.env?.['VITE_XLN_WATCHTOWER_URL'],
@@ -747,4 +702,35 @@ export const applyRecoveryBundleMetadata = (runtime: Runtime, bundle: RuntimeRec
     }
   }
   return changed;
+};
+
+export { RETIRED_TESTNET_REBOOTSTRAP_KEY };
+
+const readRetiredTestnetRebootstrapIds = (): string[] => {
+  if (typeof localStorage === 'undefined' || typeof localStorage.getItem !== 'function') return [];
+  const raw = localStorage.getItem(RETIRED_TESTNET_REBOOTSTRAP_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = parseJsonUnknown(raw, 'REBOOTSTRAP_MARKER_JSON_INVALID');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(item => normalizeRuntimeId(String(item || ''))).filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
+export const hasRetiredTestnetRebootstrap = (runtimeId: string): boolean => {
+  const normalized = normalizeRuntimeId(runtimeId);
+  return Boolean(normalized && readRetiredTestnetRebootstrapIds().includes(normalized));
+};
+
+export const clearRetiredTestnetRebootstrap = (runtimeId: string): void => {
+  if (typeof localStorage === 'undefined' || typeof localStorage.setItem !== 'function' || typeof localStorage.removeItem !== 'function') {
+    return;
+  }
+  const normalized = normalizeRuntimeId(runtimeId);
+  if (!normalized) return;
+  const remaining = readRetiredTestnetRebootstrapIds().filter(id => id !== normalized);
+  if (remaining.length === 0) localStorage.removeItem(RETIRED_TESTNET_REBOOTSTRAP_KEY);
+  else localStorage.setItem(RETIRED_TESTNET_REBOOTSTRAP_KEY, JSON.stringify(remaining));
 };

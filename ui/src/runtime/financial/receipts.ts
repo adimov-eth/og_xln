@@ -10,6 +10,7 @@ import {
 	type PaymentTerminalReceiptPage,
 } from '@xln/frontend/lib/stores/network/paymentTerminalMonitor';
 import { getAdapter } from '../adapter';
+import { resolveEffectivePosture } from '../everyday';
 import { useApp } from '../store';
 
 /**
@@ -57,6 +58,7 @@ export function startPaymentTerminal(): () => void {
 				useApp.getState().toast(reason ? `Payment failed: ${reason}` : 'Payment failed', 'danger');
 				return;
 			}
+			if (resolveEffectivePosture() !== 'pro') return;
 			useReceipts.getState().show(event);
 		},
 		onError: error => {

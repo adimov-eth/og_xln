@@ -35,6 +35,7 @@
 		"paths": {
 			"@xln/core/*": ["../core/*"],
 			"@xln/frontend/*": ["../frontend/src/*"],
+			"@xln/surfaces/*": ["../docs/studies/ui/surfaces/*"],
 			"$lib/*": ["../frontend/src/lib/*"],
 			"@/*": ["./src/*"]
 		}

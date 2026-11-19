@@ -57,6 +57,7 @@ const EXCLUDED_REPOSITORY_PATHS: ReadonlySet<string> = new Set([
   'frontend/.svelte-kit-dev-https',
   'frontend/android/app/src/main/assets/public',
   'frontend/ios/App/App/public',
+  'frontend/static/docs-catalog',
   'jurisdictions/artifacts',
   'jurisdictions/build-tron',
   'jurisdictions/cache',

@@ -1,25 +1,12 @@
 import {
-  resolveDefaultRecoveryTowerUrls,
+  defaultRecoveryTowerUrls,
   type RecoveryTowerConfig,
-} from '#lib/stores/vault/vaultStore.ts';
+} from '#lib/stores/vault/vault-recovery.ts';
 
 export type RecoveryServiceMode = 'blind_backup' | 'delayed_last_resort';
 
 export function resolveOfficialRecoveryTowerUrl(): string | null {
-  if (typeof window === 'undefined') return 'https://xln.finance';
-  const w = window as Window & { __XLN_WATCHTOWERS__?: unknown };
-  let localUrls: string | null = null;
-  try {
-    localUrls = localStorage.getItem('xln-watchtower-urls');
-  } catch {
-    localUrls = null;
-  }
-  return resolveDefaultRecoveryTowerUrls({
-    hostname: window.location.hostname,
-    globalUrls: w.__XLN_WATCHTOWERS__,
-    localUrls,
-    envUrls: import.meta.env?.['VITE_XLN_WATCHTOWER_URL'],
-  })[0] || null;
+  return defaultRecoveryTowerUrls()[0] || null;
 }
 
 export function normalizeRecoveryUrl(value: string): string {

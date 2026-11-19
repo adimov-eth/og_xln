@@ -6,7 +6,7 @@
  */
 import { expect, test } from '@playwright/test';
 import { HDNodeWallet } from 'ethers';
-import { importStackPhraseUi } from './stack';
+import { gotoProWallet, importStackPhraseUi } from './stack';
 
 const BOOT_TIMEOUT = 30_000;
 /** A fresh phrase every run: the stack remembers accounts, a re-imported old phrase would replay a stale height. */
@@ -25,7 +25,7 @@ test.describe('wallet UI on a hosted stack', () => {
 			if (message.type() === 'error') process.stdout.write(`[browser] ${message.text().slice(0, 300)}\n`);
 		});
 
-		await page.goto('/');
+		await gotoProWallet(page, '/');
 		const stack = page.getByTestId('gate-stack');
 		await expect(stack).toHaveAttribute('data-state', 'online', { timeout: 20_000 });
 		await expect(stack).toContainText('Connected');

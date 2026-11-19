@@ -222,7 +222,7 @@ export function AccountDetail() {
 										<span className="v num" style={{ color: safety.securedUsd > 0 ? 'var(--coll)' : undefined }}>{formatUsd(safety.securedUsd)}</span>
 									</div>
 									<div className="kv">
-										<span className="k">Collateral you posted</span>
+										<span className="k">Collateral locked in this account</span>
 										<span className="v num">{formatUsd(account.tokens.reduce((sum, token) => sum + usdOf(token.tokenId, token.derived.collateral), 0))}</span>
 									</div>
 									<div className="kv">

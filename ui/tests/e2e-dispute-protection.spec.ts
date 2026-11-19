@@ -6,7 +6,7 @@ import { safeStringify } from '../../core/protocol/serialization';
 import { privateChain, chainMoney } from './dispute-chain';
 import { AMOUNT, WAIT, fundCollateral, readState } from './dispute-wallet';
 import { signedDisputePage, startStaleDispute } from './dispute-stale';
-import { enterStack, fundFromHub, reopenStack } from './stack';
+import { enterStack, fundFromHub, gotoProWallet, reopenStack } from './stack';
 
 test.skip(!process.env['XLN_UI_DISPUTE_PRIVATE_RPC'], 'requires the private dispute stand');
 
@@ -105,7 +105,7 @@ test(
       expect(finalReceipt?.gasUsed).toBeLessThanOrEqual(5_000_000n);
 
       const returned = await context.newPage();
-      await returned.goto('/');
+      await gotoProWallet(returned, '/');
       await reopenStack(returned, wallet);
       await expect
         .poll(async () => {

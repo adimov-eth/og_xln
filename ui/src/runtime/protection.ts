@@ -17,7 +17,7 @@ export type ProtectionReceipt = {
   receipt: TowerReceiptV1;
   automaticResponseEnabled: boolean;
 };
-export type ProtectionResult = { receipts: ProtectionReceipt[]; errors: string[] };
+export type ProtectionResult = { receipts: ProtectionReceipt[]; errors: string[]; unsupportedChains: string[] };
 
 function watchedEntities(env: RuntimeReplica, seed: string): LastResortEntityContext[] {
   const signers = recoverySigners(env, seed);
@@ -75,10 +75,15 @@ export async function appointProtection(
   env: RuntimeReplica,
   seed: string,
   towers: string[],
+  options?: { allowEmpty?: boolean },
 ): Promise<ProtectionResult> {
+  const result: ProtectionResult = { receipts: [], errors: [], unsupportedChains: [] };
+  if (towers.length === 0) return result;
   const encryptedBundle = await encryptTip(xln, env, seed);
-  if (!encryptedBundle) throw new Error('No committed state to protect yet.');
-  const result: ProtectionResult = { receipts: [], errors: [] };
+  if (!encryptedBundle) {
+    if (options?.allowEmpty) return result;
+    throw new Error('No committed state to protect yet.');
+  }
   for (const url of towers) {
     try {
       const health = await towerHealth(url);
@@ -97,10 +102,18 @@ export async function appointProtection(
         ),
       );
       // An account that cannot be appointed is reported; the others still upload.
+      let actionableFailures = 0;
       for (const failure of failures) {
-        result.errors.push(`${url}: ${failure.entityId}:${failure.counterpartyId}:${failure.error}`);
+        const summary = `${url}: ${failure.entityId}:${failure.counterpartyId}:${failure.error}`;
+        if (failure.error.includes('WATCHTOWER_TRON_SUBMISSION_UNSUPPORTED')) {
+          result.unsupportedChains.push(summary);
+          continue;
+        }
+        actionableFailures += 1;
+        result.errors.push(summary);
       }
-      if (uploads.length === 0 && failures.length === 0) {
+      if (uploads.length === 0 && actionableFailures === 0) {
+        if (options?.allowEmpty) continue;
         throw new Error('No eligible signed account proofs. Make a payment and try again.');
       }
       for (const { appointment } of uploads) {

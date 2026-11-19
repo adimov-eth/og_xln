@@ -64,8 +64,11 @@ test('validated units retain number identity and exact catalog amounts', () => {
   };
   const metadata: TokenMeta = { ...token, color: '#627eea' };
   expect(JSON.stringify({ tokenId: token.tokenId, decimals: metadata.decimals })).toBe('{"tokenId":2,"decimals":18}');
-  expect(getHubOpeningCredit(token.tokenId)).toBe(4n * 10n ** 18n);
-  expect(parseAmount('4', metadata.decimals)).toBe(getHubOpeningCredit(token.tokenId));
+  expect(getHubOpeningCredit(token.tokenId)).toBe(10n ** 17n);
+  expect(parseAmount('0.1', metadata.decimals)).toBe(getHubOpeningCredit(token.tokenId));
+  expect(getHubOpeningCredit(token.tokenId, 'pro')).toBe(4n * 10n ** 18n);
+  expect(parseAmount('4', metadata.decimals)).toBe(getHubOpeningCredit(token.tokenId, 'pro'));
+  expect(wholeUsdToTokenAmount(asTokenId(1), 250n)).toBe(250_000_000n);
   expect(wholeUsdToTokenAmount(asTokenId(1), 10_000n)).toBe(10_000_000_000n);
 });
 

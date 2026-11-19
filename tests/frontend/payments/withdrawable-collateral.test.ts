@@ -9,11 +9,15 @@ test('collateral withdrawals never spend unsecured capacity or funds already hel
   expect(withdrawableCollateral({ outCollateral: 100n, outTotalHold: 120n })).toBe(0n);
 });
 
-test('hub onboarding uses the reference credit and autopilot defaults at token precision', () => {
-  expect(getHubOpeningCredit(asTokenId(1))).toBe(10_000_000_000n);
-  expect(getHubOpeningCredit(asTokenId(2))).toBe(4n * 10n ** 18n);
-  expect(getOpenAccountRebalancePolicyData(asTokenId(1))).toEqual({ r2cRequestSoftLimit: 500_000_000n, hardLimit: 10_000_000_000n, maxAcceptableFee: 15_000_000n });
-  expect(getOpenAccountRebalancePolicyData(asTokenId(2))).toEqual({ r2cRequestSoftLimit: 2n * 10n ** 17n, hardLimit: 4n * 10n ** 18n, maxAcceptableFee: 6n * 10n ** 15n });
+test('hub onboarding uses the Everyday and Pro reference credit and autopilot defaults at token precision', () => {
+  expect(getHubOpeningCredit(asTokenId(1))).toBe(250_000_000n);
+  expect(getHubOpeningCredit(asTokenId(2))).toBe(10n ** 17n);
+  expect(getOpenAccountRebalancePolicyData(asTokenId(1))).toEqual({ r2cRequestSoftLimit: 1_000_000n, hardLimit: 250_000_000n, maxAcceptableFee: 2_000_000n });
+  expect(getOpenAccountRebalancePolicyData(asTokenId(2))).toEqual({ r2cRequestSoftLimit: 4n * 10n ** 14n, hardLimit: 10n ** 17n, maxAcceptableFee: 8n * 10n ** 14n });
+  expect(getHubOpeningCredit(asTokenId(1), 'pro')).toBe(10_000_000_000n);
+  expect(getHubOpeningCredit(asTokenId(2), 'pro')).toBe(4n * 10n ** 18n);
+  expect(getOpenAccountRebalancePolicyData(asTokenId(1), 'pro')).toEqual({ r2cRequestSoftLimit: 500_000_000n, hardLimit: 10_000_000_000n, maxAcceptableFee: 15_000_000n });
+  expect(getOpenAccountRebalancePolicyData(asTokenId(2), 'pro')).toEqual({ r2cRequestSoftLimit: 2n * 10n ** 17n, hardLimit: 4n * 10n ** 18n, maxAcceptableFee: 6n * 10n ** 15n });
   // @ts-expect-error Exercise runtime rejection of an unvalidated caller.
   expect(() => getHubOpeningCredit(-1)).toThrow('TOKEN_USD_RATE_UNAVAILABLE');
 });

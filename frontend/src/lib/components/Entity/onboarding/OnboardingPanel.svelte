@@ -59,6 +59,8 @@ import { asTokenId } from "@xln/core/protocol/units";
     type OnboardingRuntimeProjection,
   } from './onboarding-runtime-input';
   import { hubDiscoveryJurisdictionKey } from './hub-discovery-profile';
+  import { readWalletPosture } from '../../../everyday/wallet-posture';
+  import { resolvePolicyForPosture } from '../../../everyday/everyday-policy';
   import { readJsonUnknown, rejectExtraKeys, requireFiniteNumber, requireString, requireUnknownRecord } from '#lib/utils/boundary/index.ts';
   import type {
     AccountRoleEvidence,
@@ -70,15 +72,17 @@ import { asTokenId } from "@xln/core/protocol/units";
   export let daemonCustody: boolean = false;
 
   const dispatch = createEventDispatcher();
+  const initialPosture = readWalletPosture();
+  const initialPolicy = resolvePolicyForPosture(initialPosture);
 
   let termsAccepted = true;
   let displayName = '';
-  let softLimitUsd = 500;
-  let hardLimitUsd = 10_000;
-  let maxFeeUsd = 15;
-  let defaultSoftLimitUsd = 500;
-  let defaultHardLimitUsd = 10_000;
-  let defaultMaxFeeUsd = 15;
+  let softLimitUsd = initialPolicy.softLimitUsd;
+  let hardLimitUsd = initialPolicy.hardLimitUsd;
+  let maxFeeUsd = initialPolicy.maxFeeUsd;
+  let defaultSoftLimitUsd = initialPolicy.softLimitUsd;
+  let defaultHardLimitUsd = initialPolicy.hardLimitUsd;
+  let defaultMaxFeeUsd = initialPolicy.maxFeeUsd;
   let autoJoinHubs: HubJoinPreference = '1';
   let submitting = false;
   let error = '';
@@ -855,6 +859,7 @@ import { asTokenId } from "@xln/core/protocol/units";
       </div>
     </section>
 
+    {#if initialPosture === 'pro'}
     <section class="setup-section">
       <div class="section-headline">
         <h3>Default limits</h3>
@@ -908,6 +913,7 @@ import { asTokenId } from "@xln/core/protocol/units";
         </div>
       {/if}
     </section>
+    {/if}
 
     <details class="setup-advanced">
       <summary>

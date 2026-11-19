@@ -15,8 +15,10 @@ import type { RuntimeAdapterEntitySummary } from '@xln/core/api/public/runtime-m
 import { useAdapterRead } from '../../runtime/hooks';
 import { getEmbeddedEnv } from '../../runtime/adapter';
 import { accountOpenedOrPending } from '../../runtime/hosted';
+import { useWalletPosture } from '../../runtime/use-everyday-wallet';
 
 export function OpenAccountSheet({ wallet, onClose }: { wallet: WalletView; onClose: () => void }) {
+  const { posture } = useWalletPosture();
   const commandReady = useApp(s => s.commandReady);
   const toast = useApp(s => s.toast);
   const selectedTokenId = useApp(s => s.selectedTokenId);
@@ -27,7 +29,7 @@ export function OpenAccountSheet({ wallet, onClose }: { wallet: WalletView; onCl
   );
   const summaries = peerRead.data ?? wallet.summaries;
   const [creditText, setCreditText] = useState('');
-  const [policy] = useState(readSavedCollateralPolicy);
+  const [policy] = useState(() => readSavedCollateralPolicy(posture));
   const [autoCollateral, setAutoCollateral] = useState(policy.mode === 'autopilot');
   const [softText, setSoftText] = useState(String(policy.softLimitUsd));
   const [hardText, setHardText] = useState(String(policy.hardLimitUsd));
@@ -125,7 +127,7 @@ export function OpenAccountSheet({ wallet, onClose }: { wallet: WalletView; onCl
             style={{ padding: '10px 10px' }}
             onClick={() => {
               setTargetId(id);
-              setCreditText(wallet.hubs.has(id) ? amountInputText(getHubOpeningCredit(selectedTokenId), meta.decimals) : '0');
+              setCreditText(wallet.hubs.has(id) ? amountInputText(getHubOpeningCredit(selectedTokenId, posture), meta.decimals) : '0');
             }}
           >
             <span className="t">
@@ -145,7 +147,7 @@ export function OpenAccountSheet({ wallet, onClose }: { wallet: WalletView; onCl
           onChange={event => {
             const id = event.target.value.trim().toLowerCase();
             setTargetId(id);
-            setCreditText(wallet.hubs.has(id) ? amountInputText(getHubOpeningCredit(selectedTokenId), meta.decimals) : '0');
+            setCreditText(wallet.hubs.has(id) ? amountInputText(getHubOpeningCredit(selectedTokenId, posture), meta.decimals) : '0');
           }}
           spellCheck={false}
           data-testid="open-account-target"

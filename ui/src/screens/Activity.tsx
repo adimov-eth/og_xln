@@ -1,17 +1,18 @@
-import { useLocation } from 'react-router-dom';
-import { SwapHistory } from '../components/history/SwapHistory';
 import { useEffect, useMemo, useState } from 'react';
-import { Sheet } from '../components/Sheet';
+import { useLocation } from 'react-router-dom';
+import { EverydayRecoveryNotice } from '../components/everyday/EverydayRecoveryNotice';
 import { ActivityHead, ActivityRow } from '../components/history/ActivityRow';
+import { exportCsv } from '../components/history/export';
+import { MovementDetail } from '../components/history/MovementDetail';
+import { SwapHistory } from '../components/history/SwapHistory';
 import { Icon } from '../components/Icons';
 import { PageHead } from '../components/PageHead';
-import { MovementDetail } from '../components/history/MovementDetail';
-import { exportCsv } from '../components/history/export';
-import { useApp } from '../runtime/store';
-import { formatUsd } from '../runtime/format';
-import { useWallet } from '../runtime/views';
+import { Sheet } from '../components/Sheet';
 import { usdOf } from '../runtime/financial/prices';
 import { USER_ACTIVITY_TYPES, useMovements } from '../runtime/financial/movements';
+import { formatUsd } from '../runtime/format';
+import { useApp } from '../runtime/store';
+import { useEverydayWallet, useWalletPosture } from '../runtime/use-everyday-wallet';
 export { ActivityRow, formatMovementAmount, movementParty } from '../components/history/ActivityRow';
 export { USER_ACTIVITY_TYPES };
 
@@ -25,6 +26,10 @@ const FILTERS: Array<{ id: string; label: string; types: string[] }> = [
 	{ id: 'accounts', label: 'Accounts', types: ['account'] },
 ];
 
+const EVERYDAY_FILTERS = [
+	{ id: 'all', label: 'All', types: ['payment', 'htlc'] },
+];
+
 const PAGE = 200;
 
 export function ActivityScreen() {
@@ -33,31 +38,35 @@ export function ActivityScreen() {
 }
 
 function EntityActivity({ entityId }: { entityId: string | null }) {
-	const wallet = useWallet(entityId);
+	const { posture } = useWalletPosture();
+	const { wallet, projection } = useEverydayWallet(entityId);
 	const [filter, setFilter] = useState('all');
 	const location = useLocation();
 	const [selectedId, setSelectedId] = useState<string | null>(() =>
 		typeof location.state?.movementId === 'string' ? location.state.movementId : null);
 	const [search, setSearch] = useState('');
-	// A page, not a ceiling: the books outlive any fixed number of rows.
 	const [cursors, setCursors] = useState<Array<number | null>>([null]);
 	const [from, setFrom] = useState('');
 	const [to, setTo] = useState('');
 	const limit = PAGE;
+	const activeFilters = posture === 'everyday' ? EVERYDAY_FILTERS : FILTERS;
+	const activeFilter = activeFilters.find(entry => entry.id === filter) ?? activeFilters[0]!;
+	const showSwaps = posture === 'pro' && activeFilter.id === 'swaps';
 	const filters = useMemo(() => ({
 		...(cursors.at(-1) !== null ? { beforeHeight: cursors.at(-1)! } : {}),
 		...(search.trim() ? { q: search.trim() } : {}),
-		// Day filters: from the start of the first day to the end of the last, in local time.
 		...(from ? { fromTimestamp: new Date(`${from}T00:00:00`).getTime() } : {}),
 		...(to ? { toTimestamp: new Date(`${to}T23:59:59.999`).getTime() } : {}),
 		scanLimit: 1000,
 	}), [cursors, search, from, to]);
-	const types = FILTERS.find(entry => entry.id === filter)?.types ?? USER_ACTIVITY_TYPES;
+	const types = activeFilter.types;
 	const accountIds = useMemo(() => wallet.accounts.map(account => account.counterpartyId), [wallet.accounts]);
-	const { movements: loaded, loading, error, nextBeforeHeight, partial } = useMovements(filter === 'swaps' ? null : entityId, types, limit, accountIds, filters);
+	const { movements: loaded, loading, error, nextBeforeHeight, partial } = useMovements(showSwaps ? null : entityId, types, limit, accountIds, filters);
 	const more = nextBeforeHeight !== null;
-	const movements = loaded;
-	// Desktop shows the latest movement's receipt until the user picks another; on a phone the sheet opens only on tap.
+	const movements = useMemo(
+		() => (posture === 'everyday' ? loaded.filter(m => m.kind === 'payment') : loaded),
+		[loaded, posture],
+	);
 	const [desktop, setDesktop] = useState(() => window.matchMedia('(min-width: 1101px)').matches);
 	useEffect(() => {
 		const media = window.matchMedia('(min-width: 1101px)');
@@ -65,9 +74,8 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 		media.addEventListener('change', changed);
 		return () => media.removeEventListener('change', changed);
 	}, []);
-	const selected = filter === 'swaps' ? null : movements.find(movement => movement.id === selectedId) ?? (desktop ? (movements[0] ?? null) : null);
+	const selected = showSwaps ? null : movements.find(movement => movement.id === selectedId) ?? (desktop && posture === 'pro' ? (movements[0] ?? null) : null);
 
-	// The day at a glance, for whoever closes the till: what came in, what went out, how many movements.
 	const today = useMemo(() => {
 		const startOfDay = new Date();
 		startOfDay.setHours(0, 0, 0, 0);
@@ -87,22 +95,24 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 	const searching = search.trim();
 
 	return (
-		<div className="screen fade-in">
+		<div className={posture === 'everyday' ? 'everyday-screen fade-in' : 'screen fade-in'}>
 			<PageHead
 				title="Activity"
-				eyebrow={`Wallet${wallet.jurisdiction ? ` · ${wallet.jurisdiction}` : ''}`}
+				{...(posture === 'pro' ? { eyebrow: `Wallet${wallet.jurisdiction ? ` · ${wallet.jurisdiction}` : ''}` } : {})}
 				sub={
-					filter === 'swaps' ? null : today.count > 0 ? (
-						<span className="num" data-testid="activity-today">
-							This page today · in {formatUsd(today.received)} · out {formatUsd(today.sent)} · {today.count}{' '}
-							{today.count === 1 ? 'movement' : 'movements'}
-						</span>
-					) : (
-						`${movements.length} ${movements.length === 1 ? 'movement' : 'movements'} on this page`
-					)
+					posture === 'everyday'
+						? 'Recent payments and automatic protection.'
+						: showSwaps ? null : today.count > 0 ? (
+							<span className="num" data-testid="activity-today">
+								This page today · in {formatUsd(today.received)} · out {formatUsd(today.sent)} · {today.count}{' '}
+								{today.count === 1 ? 'movement' : 'movements'}
+							</span>
+						) : (
+							`${movements.length} ${movements.length === 1 ? 'movement' : 'movements'} on this page`
+						)
 				}
 				actions={
-					filter !== 'swaps' && movements.length > 0 ? (
+					posture === 'pro' && !showSwaps && movements.length > 0 ? (
 						<button type="button" className="btn sm" onClick={() => exportCsv(movements)} data-testid="activity-export" title="Every movement shown here, with frame height and hash, for your books">
 							<Icon name="download" size={14} />
 							Export CSV
@@ -110,25 +120,30 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 					) : null
 				}
 			/>
-			<div className="tabs">
-				{FILTERS.map(entry => (
-					<button
-						key={entry.id}
-						type="button"
-						className={filter === entry.id ? 'active' : ''}
-						aria-pressed={filter === entry.id}
-						onClick={() => {
-							setFilter(entry.id);
-							setCursors([null]);
-						}}
-					>
-						{entry.label}
-					</button>
-				))}
-			</div>
-			<div className="two-col activity">
+			{posture === 'everyday' ? (
+				<EverydayRecoveryNotice disputes={projection.disputes} hasZeroL1Gas={projection.hasZeroL1Gas} />
+			) : null}
+			{activeFilters.length > 1 ? (
+				<div className="tabs">
+					{activeFilters.map(entry => (
+						<button
+							key={entry.id}
+							type="button"
+							className={filter === entry.id ? 'active' : ''}
+							aria-pressed={filter === entry.id}
+							onClick={() => {
+								setFilter(entry.id);
+								setCursors([null]);
+							}}
+						>
+							{entry.label}
+						</button>
+					))}
+				</div>
+			) : null}
+			<div className={posture === 'everyday' ? 'stack' : 'two-col activity'}>
 				<div>
-					{filter !== 'swaps' && (
+					{posture === 'pro' && !showSwaps && (
 						<div className="toolbar">
 							<input
 								className="input boxed"
@@ -151,28 +166,36 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 							</label>
 						</div>
 					)}
-					{filter !== 'swaps' && cursors.length > 1 && (
+					{!showSwaps && cursors.length > 1 && (
 						<button type="button" className="btn quiet sm" onClick={() => setCursors(value => value.slice(0, -1))}>
 							Newer records
 						</button>
 					)}
-					{filter === 'swaps' && entityId ? <SwapHistory key={entityId} entityId={entityId} accountIds={accountIds} names={wallet.names} /> : null}
-					{filter !== 'swaps' && (
-						<div className="dtable">
-							{movements.length > 0 ? <ActivityHead /> : null}
+					{showSwaps && entityId ? <SwapHistory key={entityId} entityId={entityId} accountIds={accountIds} names={wallet.names} /> : null}
+					{!showSwaps && (
+						<div className="dtable" {...(posture === 'everyday' ? { 'data-testid': 'everyday-activity-list' } : {})}>
+							{posture === 'pro' && movements.length > 0 ? <ActivityHead /> : null}
 							{movements.map((movement, index) => (
-								<ActivityRow key={movement.id} movement={movement} names={wallet.names} first={index === 0} selected={movement.id === selected?.id} onClick={() => setSelectedId(movement.id)} />
+								<ActivityRow
+									key={movement.id}
+									movement={movement}
+									names={wallet.names}
+									first={index === 0}
+									selected={movement.id === selected?.id}
+									hideFrameNumber={posture === 'everyday'}
+									{...(posture === 'pro' ? { onClick: () => setSelectedId(movement.id) } : {})}
+								/>
 							))}
 						</div>
 					)}
-					{filter !== 'swaps' && !more && partial && !loading && !error ? (
+					{!showSwaps && !more && partial && !loading && !error ? (
 						<p className="note faint" style={{ padding: '18px 0' }}>Earlier activity is unavailable on this device.</p>
-					) : filter !== 'swaps' && movements.length === 0 && !loading && !error && (
+					) : !showSwaps && movements.length === 0 && !loading && !error && (
 						<p className="note" style={{ padding: '18px 0' }}>
-							{searching ? `Nothing loaded matches "${searching}".` : more ? 'No matching activity on this page.' : 'No matching activity.'}
+							{searching ? `Nothing loaded matches "${searching}".` : more ? 'No matching activity on this page.' : 'No payments yet.'}
 						</p>
 					)}
-					{filter !== 'swaps' && more && (
+					{!showSwaps && more && (
 						<div style={{ padding: '14px 0' }}>
 							<button
 								type="button"
@@ -183,16 +206,11 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 							>
 								{loading ? 'Loading…' : 'Earlier records'}
 							</button>
-							<span className="faint" style={{ fontSize: 12, marginLeft: 12 }}>
-								{searching
-									? `Searching the ${loaded.length.toLocaleString('en-US')} movements on this page.`
-									: `Showing the ${loaded.length.toLocaleString('en-US')} movements on this page.`}
-							</span>
 						</div>
 					)}
 					{error && <p style={{ color: 'var(--dispute)', fontSize: 13 }}>{error}</p>}
 				</div>
-				{filter !== 'swaps' && (
+				{posture === 'pro' && !showSwaps && (
 					<div className="aside desktop-only">
 						<div className="card activity-receipt">
 							{selected ? <MovementDetail movement={selected} names={wallet.names} entityId={entityId!} /> : <p className="note">Select a movement to see its receipt.</p>}
@@ -200,7 +218,7 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 					</div>
 				)}
 			</div>
-			{selected && !desktop && (
+			{posture === 'pro' && selected && !desktop && (
 				<div className="mobile-only">
 					<Sheet title="Receipt" onClose={() => setSelectedId(null)}>
 						<MovementDetail movement={selected} names={wallet.names} entityId={entityId!} />

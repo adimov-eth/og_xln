@@ -39,7 +39,9 @@ import { toasts } from '../ui/toastStore';
 
 import { errorLog } from '../errorLogStore';
 
-import { writeHubJoinPreference, writeSavedCollateralPolicy } from '../../utils/onboarding/onboardingPreferences';
+import { seedDefaultCollateralPolicy, writeHubJoinPreference } from '../../utils/onboarding/onboardingPreferences';
+import { ensureDefaultTowerProtection } from '../../everyday/everyday-recovery';
+import { readWalletPosture } from '../../everyday/wallet-posture';
 
 import { writeOnboardingCompleteForEntities } from '../../utils/onboarding/onboardingState';
 
@@ -88,6 +90,7 @@ import {
   buildRuntimeRecoverySigners,
   buildSignerEntityConfig,
   buildTowerRequestUrl,
+  clearRetiredTestnetRebootstrap,
   deriveAddress,
   derivePrivateKey,
   discoverRuntimeRecoveryCandidates,
@@ -101,6 +104,7 @@ import {
   getReplayMeta,
   getRuntimeP2PHandle,
   getSignerDerivationIndex,
+  hasRetiredTestnetRebootstrap,
   installVaultRuntimeCommandJournalKeys,
   mergeRuntimeRecoveryTowerReceipts,
   normalizeEntityId,
@@ -613,7 +617,9 @@ async function uploadRuntimeRecoverySnapshot(
       // An account that cannot be appointed is reported; the others still upload.
       for (const failure of lastResortAppointments.failures) {
         const errorText = `${failure.entityId}:${failure.counterpartyId}:${failure.error}`;
-        activeTowerErrors.push(`${tower.url}:${errorText}`);
+        if (!failure.error.includes('WATCHTOWER_TRON_SUBMISSION_UNSUPPORTED')) {
+          activeTowerErrors.push(`${tower.url}:${errorText}`);
+        }
         failureSummaries.push(summarizeRuntimeRecoveryTowerFailure(tower, errorText, uploadCheckedAt));
       }
       for (const upload of lastResortAppointments.uploads) {
@@ -961,9 +967,11 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
   }
   await registerRuntimeSignerKeys(runtime, xln);
   const runtimeSeed = runtime.seed;
+  const rebootstrapRequested = hasRetiredTestnetRebootstrap(runtimeIdLower);
   let env: RuntimeReplica | null = null;
   let signerMetadataChanged = false;
   let restoredFromTower = false;
+  let bootstrappedFreshEnv = false;
 
   const persistRuntimeMetadataIfChanged = (): void => {
     if (!signerMetadataChanged) return;
@@ -1030,14 +1038,17 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
     });
   }
 
-  if (!env) {
+  if (!env && !rebootstrapRequested) {
     await restoreFromTower('missing_local_env');
   }
 
   persistRuntimeMetadataIfChanged();
 
   if (!env) {
-    throw new Error(`[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: persisted env missing`);
+    if (!rebootstrapRequested) {
+      throw new Error(`[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: persisted env missing`);
+    }
+    bootstrappedFreshEnv = true;
   }
 
   if (env && (!env.state.jReplicas || env.state.jReplicas.size === 0)) {
@@ -1131,6 +1142,7 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
               ),
               blockTimeMs: primaryBlockTimeMs,
               contracts: primaryConfig.contracts,
+              startAtCurrentBlock: false,
             },
           },
         ],
@@ -1145,6 +1157,46 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
       `importJ(${primaryJurisdictionName}).addresses`,
       45_000,
     );
+    for (const secondary of defaultJurisdictionImports.slice(1)) {
+      const secondaryRpcUrl = resolveRpcUrl(resolveJurisdictionRpc(secondary.config), baseOrigin);
+      const secondaryChainId = resolveJurisdictionChainId(secondary.config, `VaultStore.restore.${secondary.name}`);
+      await enqueueAndAwait(
+        xln,
+        env,
+        {
+          runtimeTxs: [
+            {
+              type: 'importJ',
+              data: {
+                name: secondary.name,
+                chainId: secondaryChainId,
+                ticker: String((secondary.config as { currency?: unknown }).currency || 'USDC'),
+                rpcs: [secondaryRpcUrl],
+                entityProviderDeploymentBlock: requireEntityProviderDeploymentBlock(
+                  secondary.config.entityProviderDeploymentBlock,
+                  `VaultStore.restore.${secondary.name}`,
+                ),
+                blockTimeMs: requireJurisdictionBlockTimeMs(
+                  secondary.config.blockTimeMs,
+                  `VaultStore.restore.${secondary.name}`,
+                ),
+                contracts: secondary.config.contracts,
+                startAtCurrentBlock: false,
+              },
+            },
+          ],
+          entityInputs: [],
+        },
+        () => hasRuntimeJurisdictionAddresses(findJReplicaByName(env!, secondary.name)),
+        `importJ(${secondary.name})`,
+        45_000,
+      );
+      await waitForCondition(
+        () => hasRuntimeJurisdictionAddresses(findJReplicaByName(env!, secondary.name)),
+        `importJ(${secondary.name}).addresses`,
+        45_000,
+      );
+    }
   } else {
     applyRuntimeLogPreference(env);
     env.runtimeSeed = runtimeSeed;
@@ -1242,13 +1294,15 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
       continue;
     }
 
-    if (!anyEntityReplica) {
+    if (!anyEntityReplica && !bootstrappedFreshEnv) {
       throw new Error(
         `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: entity missing after restore ${entityId.slice(0, 12)}`,
       );
     }
 
-    const entityConfig = buildSignerEntityConfig(signerAddress, jReplica, preferredJurisdictionName, chainId);
+    const targetChainId = Number(jReplica.chainId ?? chainId);
+    const resolvedChainId = Number.isFinite(targetChainId) && targetChainId > 0 ? targetChainId : chainId;
+    const entityConfig = buildSignerEntityConfig(signerAddress, jReplica, preferredJurisdictionName, resolvedChainId);
     await enqueueAndAwait(
       xln,
       env,
@@ -1261,7 +1315,7 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
             data: {
               isProposer: true,
               config: entityConfig,
-              profileName: runtime.label,
+              profileName: signer.index === 0 ? runtime.label : `${runtime.label} ${preferredJurisdictionName}`,
             },
           }),
         ],
@@ -1281,6 +1335,10 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
       relayUrls: resolveRelayUrls(),
       gossipPollMs: BROWSER_GOSSIP_POLL_MS,
     });
+  }
+
+  if (rebootstrapRequested) {
+    clearRetiredTestnetRebootstrap(runtimeIdLower);
   }
 
   return env;
@@ -2091,12 +2149,7 @@ export const vaultOperations = {
           });
         }
         if (!requiresOnboarding) {
-          writeSavedCollateralPolicy({
-            mode: 'autopilot',
-            softLimitUsd: 500,
-            hardLimitUsd: 10_000,
-            maxFeeUsd: 15,
-          });
+          seedDefaultCollateralPolicy();
           writeHubJoinPreference(loginType === 'demo' ? '1' : 'manual');
           // Runtime creation imports every local signer/entity lane up front
           // (primary Testnet plus cross-j siblings such as Tron). Onboarding is
@@ -2723,6 +2776,74 @@ export const vaultOperations = {
   getActiveEntityId(): string | null {
     const signer = get(activeSigner);
     return signer?.entityId || null;
+  },
+
+  ensureEverydayTowerDefaults(runtimeId?: string | null): void {
+    const normalizedRuntimeId = normalizeRuntimeId(runtimeId || get(activeRuntimeId));
+    if (!normalizedRuntimeId) return;
+    const state = get(runtimesState);
+    const runtime = state.runtimes[normalizedRuntimeId];
+    if (!runtime) return;
+    ensureDefaultTowerProtection({
+      posture: readWalletPosture(),
+      vaultId: normalizedRuntimeId,
+      readExplicitConfig: () => {
+        if (runtime.recovery?.towers && runtime.recovery.towers.length > 0) {
+          return { mode: 'tower', towers: runtime.recovery.towers.map(t => t.url) };
+        }
+        return runtime.recovery?.useDefaultTowers === false ? { mode: 'local', towers: [] } : null;
+      },
+      saveConfig: (_vaultId, cfg) => {
+        if (cfg.mode !== 'tower' || cfg.towers.length === 0) return;
+        const nextConfig: RuntimeRecoveryConfig = {
+          ...(runtime.recovery ?? {}),
+          useDefaultTowers: false,
+          towers: cfg.towers.map((url, idx) => ({ id: `official-${idx + 1}`, url, towerMode: 'delayed_last_resort', enabled: true })),
+        };
+        void this.updateRuntimeRecovery(normalizedRuntimeId, nextConfig).catch(error => {
+          errorLog.log(
+            `Failed to persist default Everyday recovery towers for ${normalizedRuntimeId.slice(0, 12)}`,
+            'Runtime Recovery',
+            { runtimeId: normalizedRuntimeId, error },
+          );
+        });
+      },
+      resolveUrls: () => buildDefaultRuntimeRecoveryConfig().towers?.map(t => t.url) ?? [],
+    });
+  },
+
+  async exportRecoveryBundle(runtimeId?: string | null): Promise<{ filename: string; json: string }> {
+    const normalizedRuntimeId = normalizeRuntimeId(runtimeId || get(activeRuntimeId));
+    if (!normalizedRuntimeId) throw new Error('No active wallet selected.');
+    const runtime = get(runtimesState).runtimes[normalizedRuntimeId];
+    if (!runtime) throw new Error('Active wallet metadata is unavailable.');
+    assertRuntimeAuthorityLease(runtime);
+    const entry = get(runtimes).get(normalizedRuntimeId);
+    const env = entry?.env ? (unwrapLiveRuntimeEnv(entry.env) ?? entry.env) : null;
+    if (!env) throw new Error('Unlock an in-browser wallet before saving an encrypted backup.');
+    const xln = await getXLN();
+    if (typeof xln.buildRuntimeRecoveryBundle !== 'function' || typeof xln.encryptRuntimeRecoveryBundle !== 'function') {
+      throw new Error('Recovery bundle exporter is unavailable.');
+    }
+    const bundle = await withRuntimeCommittedRead(env, async () => {
+      const height = Math.max(0, Math.floor(Number(env.state.height || 0)));
+      if (height <= 0 || env.state.eReplicas.size === 0) {
+        throw new Error('There is no committed wallet state to back up yet.');
+      }
+      const frame = await xln.readPersistedFrameJournal(env, height);
+      if (!frame) throw new Error(`RECOVERY_EXPORT_TIP_JOURNAL_MISSING:${height}`);
+      return xln.buildRuntimeRecoveryBundle(env, {
+        signers: buildRuntimeRecoverySigners(runtime),
+        meta: buildRuntimeRecoveryMeta(runtime),
+        kind: 'snapshot',
+        frames: [frame],
+      });
+    });
+    const encrypted = await xln.encryptRuntimeRecoveryBundle(bundle, runtime.seed);
+    return {
+      filename: `xln-recovery-${normalizedRuntimeId.slice(2, 10)}.json`,
+      json: JSON.stringify({ bundle: encrypted }),
+    };
   },
 };
 

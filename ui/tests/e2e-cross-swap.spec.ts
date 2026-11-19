@@ -506,7 +506,7 @@ for (const scenario of [
     await page.getByTestId('swap-want').fill('1');
     await expect(feeDisclosure.getByRole('link')).toHaveAttribute('href', `${new URL(page.url()).pathname.startsWith('/ui/') ? '/ui' : ''}/accounts/${targetHubId}`);
     await feeDisclosure.getByRole('link').click();
-    await expect(page).toHaveURL(new RegExp(`/accounts/${targetHubId}$`));
+    await expect(page).toHaveURL(new RegExp(`/accounts/${targetHubId}(?:\\?[^#]*)?$`));
     await expect(page.getByTestId('account-manage')).toBeEnabled();
     await page.getByTestId('account-manage').click();
     const collateralSettings = page.getByRole('dialog', { name: `Manage · ${sourceHubLabel}`, exact: true });

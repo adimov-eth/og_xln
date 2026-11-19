@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { gotoProWallet } from './wallet-ui';
 
 const APP = process.env['SVELTE_E2E_BASE_URL'] ?? 'http://localhost:8081/app';
 const target = `0x${'22'.repeat(32)}`;
@@ -10,7 +11,7 @@ test(
   async ({ page }, info) => {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto(APP);
+    await gotoProWallet(page, APP);
     await page.locator('#name').fill(`invoice-${crypto.randomUUID()}`);
     await page.getByLabel('Secret passphrase', { exact: true }).fill('Disposable invoice regression October 2026!');
     await page.getByRole('button', { name: 'Derive wallet', exact: true }).click();

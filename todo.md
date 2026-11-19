@@ -76,10 +76,9 @@ Testnet evidence never authorizes real-funds activation.
 - MML v0 formula in `docs/intro.md`: unaffiliated obligations only; a hub-routed payment
   counts once, on the commercial edge.
 - Owner: 10 conversations with OTC/MM/payout firms → at least 2 written intents.
-- React wallet: the keys-preserving reset of retired testnet state that the Svelte wallet has.
 - Custom transformer clause on one Account with explicit counterparty acceptance, TS and Rust
   in parity, no Solidity change; then the hub mirror rule and route-wide install.
-- One capacity bar and a Pro toggle (on by default) in both wallets.
+- Everyday wallet by default (zero capacity bars; Pro toggle off by default) in both wallets.
 - Mission wording in `docs/intro.md`, `readme.md` and the glossary: 51% of world value.
 
 ## Release evidence contract

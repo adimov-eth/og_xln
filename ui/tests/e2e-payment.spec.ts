@@ -158,7 +158,7 @@ test.describe('wallet UI payment', () => {
 
       // In-app navigation: a full page load would drop the embedded runtime.
       await page.getByRole('link', { name: 'Activity' }).first().click();
-      await expect(page).toHaveURL(/\/activity$/);
+      await expect(page).toHaveURL(/\/activity(?:\?[^#]*)?$/);
       await expect(page.getByTestId('activity-row').filter({ hasText: 'H2' }).first()).toBeVisible({
         timeout: CONSENSUS_TIMEOUT,
       });

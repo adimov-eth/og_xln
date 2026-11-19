@@ -8,7 +8,7 @@ import type { RuntimeAdapterViewFrame, XLNModule } from '../../core/api/public/r
 import type { RuntimeAdapter } from '../../core/api/runtime-adapter/types';
 import { safeStringify } from '../../core/protocol/serialization';
 import { readCommittedPayment } from './payment-evidence';
-import { LOCAL_PASSWORD, enterStack, readWalletCheckpoint, reopenStack } from './stack';
+import { LOCAL_PASSWORD, enterStack, gotoProWallet, readWalletCheckpoint, reopenStack } from './stack';
 
 type DebugWindow = Window & { __xln?: { adapter(): RuntimeAdapter | null; xln(): Promise<XLNModule> } };
 
@@ -71,7 +71,7 @@ test(
       // Clean device: only the phrase and the tower URL.
       const restored = await target.newPage();
       restored.on('pageerror', error => errors.push(error.message));
-      await restored.goto('/');
+      await gotoProWallet(restored, '/');
       await expect(restored.getByTestId('gate-stack')).toHaveAttribute('data-state', 'online', { timeout: 20_000 });
       await restored.getByRole('button', { name: /Restore a wallet/ }).click();
       await restored.locator('textarea').fill(wallet.phrase);
@@ -128,7 +128,7 @@ test(
       mark('TAB_CLOSED');
       const reopened = await target.newPage();
       reopened.on('pageerror', error => errors.push(error.message));
-      await reopened.goto('/');
+      await gotoProWallet(reopened, '/');
       await reopenStack(reopened, wallet);
       mark('UNLOCKED');
       const afterUnlock = await readWalletCheckpoint(reopened, paid.frame.height);

@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 import type { AggregatedHealth } from '../../core/orchestrator/orchestrator-types';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assertSelectedNativeHub, readWalletCheckpoint } from './stack';
+import { assertSelectedNativeHub, gotoProWallet, readWalletCheckpoint } from './stack';
 import { readCommittedPayment } from './payment-evidence';
 import { decodeRuntimeManifestEntries } from '../../core/scripts/operations/hlt/boundary/worker-boundary';
 import { RemoteRuntimeAdapter } from '../../core/api/runtime-adapter/remote';
@@ -155,7 +155,7 @@ for (const fundingMode of ['direct', 'instant'] as const) {
             await expect(page.getByLabel('Runtime endpoint', { exact: true })).toHaveValue(entry.wsUrl);
             await expect(page.getByRole('button', { name: 'Unlock', exact: true })).toHaveCount(0);
           } else {
-            await page.goto('/');
+            await gotoProWallet(page, '/');
             await page.getByText('Advanced connection', { exact: true }).click();
             await page.getByRole('button', { name: 'Connect a remote runtime', exact: true }).click();
             await page.getByLabel('Runtime endpoint', { exact: true }).fill(entry.wsUrl);

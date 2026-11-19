@@ -6,11 +6,16 @@ for (const wallet of ['svelte', 'react'] as const) {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
     const path = wallet === 'svelte' ? '/app' : '/ui/';
-    await page.goto(new URL(path, process.env['SVELTE_E2E_BASE_URL'] ?? 'http://localhost:8081').href);
+    const base =
+      wallet === 'svelte'
+        ? process.env['SVELTE_E2E_BASE_URL'] || process.env['UI_E2E_BASE_URL'] || 'http://localhost:8081'
+        : process.env['UI_E2E_BASE_URL'] || process.env['SVELTE_E2E_BASE_URL'] || 'http://localhost:8081';
+    await page.goto(new URL(path, base).href);
     await expect(page).toHaveURL(new RegExp(`${path}$`));
     await page.getByRole('button', { name: wallet === 'svelte' ? 'Open test wallet' : 'Open a test wallet', exact: true }).click();
-    const identity = page.getByTestId(wallet === 'svelte' ? 'context-current' : 'nav-home').locator('visible=true').first();
+    const identity = page.getByTestId(wallet === 'svelte' ? 'context-current' : 'nav-cash').locator('visible=true').first();
     await expect(identity).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('nav-cash').locator('visible=true').first()).toBeVisible({ timeout: 60_000 });
     await expect(page).toHaveURL(wallet === 'svelte' ? /\/app(?:#.*)?$/ : /\/ui\/$/);
     const readIdentity = async () => wallet === 'react'
       ? await readWalletIdentity(page)
@@ -19,8 +24,13 @@ for (const wallet of ['svelte', 'react'] as const) {
     expect(before.runtimeId).toMatch(/^0x[0-9a-f]{40}$/i);
     expect(before.entityId).toMatch(/^0x[0-9a-f]{64}$/i);
     await page.reload();
-    if (wallet === 'react') await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    if (wallet === 'react') {
+      const continueBtn = page.getByRole('button', { name: 'Continue', exact: true });
+      await continueBtn.or(identity).first().waitFor({ state: 'visible', timeout: 60_000 });
+      if (await continueBtn.isVisible().catch(() => false)) await continueBtn.click();
+    }
     await expect(identity).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('nav-cash').locator('visible=true').first()).toBeVisible({ timeout: 60_000 });
     expect(await readIdentity()).toEqual(before);
     expect(errors).toEqual([]);
     await page.screenshot({ path: info.outputPath(`${wallet}-wallet.png`), fullPage: true });

@@ -4,6 +4,7 @@ import type { RuntimeReplica } from '../../core/runtime/types';
 import { safeStringify } from '../../core/protocol/serialization';
 import { Depository__factory } from '../../jurisdictions/typechain-types/factories/Depository.sol/Depository__factory';
 import { privateChain, chainMoney, externalUsdc } from './dispute-chain';
+import { gotoProWallet } from './wallet-ui';
 
 const WAIT = { timeout: 15_000, intervals: [100, 250, 500] };
 const AMOUNT = 100_000_000n;
@@ -33,7 +34,7 @@ test('Svelte dispute returns collateral to reserve and permanently removes dispu
   page.on('pageerror', error => errors.push(error.message));
   try {
     await page.clock.install();
-    await page.goto('/app');
+    await gotoProWallet(page, '/app');
     await page.locator('#name').fill(`dispute-${crypto.randomUUID()}`);
     await page.getByLabel('Secret passphrase', { exact: true }).fill('Disposable local dispute E2E 2026!');
     // Exercise finalization with an explicitly persistent local authority lease.

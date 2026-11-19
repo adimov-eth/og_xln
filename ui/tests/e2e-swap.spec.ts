@@ -5,7 +5,7 @@ import { deriveSwapFillPolicyFee } from '../../core/account/swap/swap-net-author
 import { safeParse, safeStringify } from '../../core/protocol/serialization';
 import type { RuntimeAdapterSwapHistoryPage } from '../../core/api/runtime-adapter/types';
 import { expectDollarScale } from './balance-scale';
-import { enterStack, reopenStack, type StackWallet } from './stack';
+import { enterStack, gotoProWallet, reopenStack, type StackWallet } from './stack';
 
 import { readAccount, readOrders, type DebugWindow } from './swap-evidence';
 
@@ -234,7 +234,7 @@ test(
     });
     const started = Date.now();
     try {
-      await page.goto('/');
+      await gotoProWallet(page, '/');
       await reopenStack(page, wallet);
       await expect(page.getByTestId('home-swap')).toBeEnabled();
       const restored = await readAccount(page, evidence.hubId);

@@ -1,5 +1,12 @@
+import { isUnknownRecord, parseJsonUnknown } from '../boundary/index';
 import { broadcastHardResetRequest } from './activeTabLock';
-import { clearBrowserRuntimeData, clearRetiredTestnetState, RESET_CONFIRMATION, RESET_WARNING } from './resetBrowserData';
+import {
+  clearBrowserRuntimeData,
+  RESET_CONFIRMATION,
+  RESET_WARNING,
+  RETIRED_TESTNET_REBOOTSTRAP_KEY,
+  runRetiredTestnetReset,
+} from './resetBrowserData';
 let activeResetPromise: Promise<void> | null = null;
 
 const RESET_TAB_SETTLE_MS = 300;
@@ -16,6 +23,25 @@ async function stopCurrentRuntimeActivity(): Promise<void> {
 
 function requestOtherTabsShutdown(): void {
   broadcastHardResetRequest();
+}
+
+export function markRetiredTestnetRebootstrapRuntimes(): void {
+  if (typeof localStorage === 'undefined') return;
+  if (typeof localStorage.getItem !== 'function' || typeof localStorage.setItem !== 'function') return;
+  const rawVaults = localStorage.getItem('xln-vaults');
+  if (!rawVaults) return;
+  try {
+    const parsed = parseJsonUnknown(rawVaults, 'VAULTS_SNAPSHOT_JSON_INVALID');
+    if (!isUnknownRecord(parsed) || !isUnknownRecord(parsed['runtimes'])) return;
+    const ids = Object.keys(parsed['runtimes'])
+      .map(id => id.trim().toLowerCase())
+      .filter(Boolean);
+    if (ids.length > 0) {
+      localStorage.setItem(RETIRED_TESTNET_REBOOTSTRAP_KEY, JSON.stringify(ids));
+    }
+  } catch {
+    // Corrupted vault storage continues fail-closed without bootstrapping over it.
+  }
 }
 
 export async function resetEverything(request: ResetEverythingRequest): Promise<void> {
@@ -47,13 +73,17 @@ let retiredTestnetReset: Promise<void> | null = null;
  * deployment that declares itself an ephemeral testnet reaches this path;
  * real-funds deployments keep the fail-closed recovery screen.
  */
-export function resetRetiredTestnetState(): Promise<void> {
-  retiredTestnetReset ??= (async () => {
-    await stopCurrentRuntimeActivity();
-    requestOtherTabsShutdown();
-    await sleep(RESET_TAB_SETTLE_MS);
-    await clearRetiredTestnetState();
-    window.location.replace('/app');
-  })();
+export function resetRetiredTestnetState(
+  redirectPath = '/app',
+  deps?: { stopRuntime?: () => Promise<void>; broadcastReset?: () => void },
+): Promise<void> {
+  retiredTestnetReset ??= runRetiredTestnetReset({
+    redirectPath,
+    stopRuntime: deps?.stopRuntime ?? stopCurrentRuntimeActivity,
+    broadcastReset: deps?.broadcastReset ?? requestOtherTabsShutdown,
+    afterClear: markRetiredTestnetRebootstrapRuntimes,
+  }).finally(() => {
+    retiredTestnetReset = null;
+  });
   return retiredTestnetReset;
 }

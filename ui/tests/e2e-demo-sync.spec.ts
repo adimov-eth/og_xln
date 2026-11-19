@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { RuntimeReplica } from '../../core/api/public/runtime-module';
-import { readWalletCheckpoint } from './stack';
+import { gotoProWallet, readWalletCheckpoint } from './stack';
 
 // Capture compact scan evidence without recording every historical RPC payload.
 test.use({ trace: 'off', video: 'off' });
@@ -14,7 +14,7 @@ test(
       if (message.type() === 'error') console.error('DEMO_BROWSER_ERROR', message.text());
     });
     console.log('DEMO_STAGE navigate');
-    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 10_000 });
+    await gotoProWallet(page, '/', { waitUntil: 'domcontentloaded', timeout: 10_000 });
     console.log('DEMO_STAGE start');
     const startedAt = Date.now();
     await page.getByTestId('gate-learn').click({ timeout: 10_000 });
@@ -26,7 +26,7 @@ test(
       await page.getByTestId('home-faucet').click();
       await expect(page.getByTestId('test-money-status')).toHaveText('100 USDC received');
       await expect(page.getByTestId('token-net-USDC')).toContainText('100');
-      await expect(page).toHaveURL(/\/$/);
+      await expect(page).toHaveURL(/\/(?:\?[^#]*)?$/);
       console.log('DEMO_FUNDED_ELAPSED_MS', Date.now() - startedAt);
       await expect
         .poll(async () => {

@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import type { RuntimeAdapterViewFrame, XLNModule } from '../../core/api/public/runtime-module';
 import type { RuntimeAdapter, RuntimeAdapterFrameReceiptResponse } from '../../core/api/runtime-adapter/types';
 import { safeStringify } from '../../core/protocol/serialization';
-import { enterStack, readWalletCheckpoint, reopenStack, type StackWallet } from './stack';
+import { enterStack, gotoProWallet, readWalletCheckpoint, reopenStack, type StackWallet } from './stack';
 import { readCommittedPayment } from './payment-evidence';
 
 // Separate bounded processes may prepare and reopen these real browser databases.
@@ -68,7 +68,7 @@ test(
     for (const page of [a, b]) page.on('pageerror', error => errors.push(error.message));
     const started = Date.now();
     try {
-      await Promise.all([a.goto('/'), b.goto('/')]);
+      await Promise.all([gotoProWallet(a, '/'), gotoProWallet(b, '/')]);
       await Promise.all([reopenStack(a, alice.wallet), reopenStack(b, bob.wallet)]);
       console.log('TWO_WALLETS_OPEN_MS', Date.now() - started);
       for (const [page, wallet] of [

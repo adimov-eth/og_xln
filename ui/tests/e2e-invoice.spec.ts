@@ -99,22 +99,27 @@ async function requestByLink(bob: Party): Promise<string> {
   await expect(page.getByText('Payment link copied', { exact: true })).toBeVisible();
   const link = await page.evaluate(() => navigator.clipboard.readText());
   const invoice = `${bob.wallet.entityId}?${new URLSearchParams({ token: String(USDC), amount: INVOICE_AMOUNT, desc: MEMO })}`;
-  expect(link).toBe(`${CANONICAL_WALLET_ORIGIN}/app#pay/${encodeURIComponent(invoice)}`);
+  const current = new URL(page.url());
+  const expectedBase = current.origin === CANONICAL_WALLET_ORIGIN
+    ? `${CANONICAL_WALLET_ORIGIN}/app`
+    : `${current.origin}${current.pathname}`;
+  expect(link).toBe(`${expectedBase}#pay/${encodeURIComponent(invoice)}`);
   return link;
 }
 
-/** Same path and `#pay/...` payload as the canonical link, on the local wallet origin. */
+/** Same path and `#pay/...` payload as the copied link, on the local wallet origin. */
 function onLocalWallet(link: string, page: Page, keepPath: boolean): string {
-  const canonical = new URL(link);
-  expect(canonical.origin).toBe(CANONICAL_WALLET_ORIGIN);
-  expect(canonical.hash.startsWith('#pay/')).toBe(true);
+  const copied = new URL(link);
   const local = new URL(page.url());
-  return `${local.origin}${keepPath ? canonical.pathname : local.pathname}${canonical.hash}`;
+  expect([CANONICAL_WALLET_ORIGIN, local.origin]).toContain(copied.origin);
+  expect(copied.hash.startsWith('#pay/')).toBe(true);
+  const search = local.search || '?mode=pro';
+  return `${local.origin}${keepPath ? copied.pathname : local.pathname}${search}${copied.hash}`;
 }
 
 async function expectPrefilledPay(alice: Party, bob: Party): Promise<void> {
   const page = alice.page;
-  await expect(page).toHaveURL(/\/pay$/, { timeout: CONSENSUS_TIMEOUT });
+  await expect(page).toHaveURL(/\/pay(?:\?[^#]*)?$/, { timeout: CONSENSUS_TIMEOUT });
   // The deep link moves to /pay before the unlock finishes; unlocking includes chain catch-up.
   await expect(page.getByTestId('pay-to')).toBeVisible({ timeout: BOOT_TIMEOUT });
   await expect(page.getByTestId('pay-to')).toHaveValue(bob.wallet.entityId);
@@ -137,6 +142,8 @@ async function payPrefilled(alice: Party, bob: Party): Promise<void> {
   const fromHeight = (await readWalletCheckpoint(a)).frame.height + 1;
 
   await submit.click();
+  await expect(a.getByTestId('receipt-open')).toBeVisible({ timeout: CONSENSUS_TIMEOUT });
+  await a.getByTestId('receipt-open').click();
   const receipt = a.getByTestId('payment-receipt');
   await expect(receipt.getByTestId('receipt-kicker')).toHaveText('Paid', { timeout: CONSENSUS_TIMEOUT });
   await expect(receipt.getByTestId('receipt-amount')).toHaveText('7.00 USDC');
@@ -149,6 +156,8 @@ async function payPrefilled(alice: Party, bob: Party): Promise<void> {
   await settled(a, alice.wallet.entityId, FAUCET_UNITS - BigInt(payment.senderAmount));
 
   const b = bob.page;
+  await expect(b.getByTestId('receipt-open')).toBeVisible({ timeout: CONSENSUS_TIMEOUT });
+  await b.getByTestId('receipt-open').click();
   const received = b.getByTestId('payment-receipt');
   await expect(received.getByTestId('receipt-kicker')).toHaveText('Received', { timeout: CONSENSUS_TIMEOUT });
   await expect(received.getByTestId('receipt-amount')).toHaveText('7.00 USDC');
@@ -170,7 +179,7 @@ test.describe('request and pay by link', () => {
       try {
         const [link] = await Promise.all([requestByLink(bob), fundWithFaucet(alice)]);
         console.log('INVOICE_READY_MS', Date.now() - started);
-        await expect(alice.page).toHaveURL(/\/$/);
+        await expect(alice.page).toHaveURL(/\/(?:\?[^#]*)?$/);
         // A same-document hash navigation: the unlocked runtime keeps running.
         await alice.page.goto(onLocalWallet(link, alice.page, false));
         await expectPrefilledPay(alice, bob);

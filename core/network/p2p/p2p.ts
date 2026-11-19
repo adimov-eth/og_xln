@@ -351,13 +351,21 @@ type AnnounceStateTopology = Readonly<{
 
 const profileAccountTopology = (profile: Pick<Profile, 'publicAccounts' | 'accounts'>) => [
   profile.publicAccounts,
-  profile.accounts.map(account => [
-    account.counterpartyId,
-    account.domain,
-    Object.keys(account.tokenCapacities instanceof Map
+  profile.accounts.map(account => {
+    const capacities = account.tokenCapacities instanceof Map
       ? Object.fromEntries(account.tokenCapacities)
-      : account.tokenCapacities).sort(compareStableText),
-  ]),
+      : account.tokenCapacities;
+    return [
+      account.counterpartyId,
+      account.domain,
+      Object.keys(capacities)
+        .sort(compareStableText)
+        .map(tokenId => {
+          const cap = capacities[tokenId];
+          return [tokenId, Boolean(cap && cap.inCapacity > 0n), Boolean(cap && cap.outCapacity > 0n)] as const;
+        }),
+    ];
+  }),
 ];
 
 const profileTopologyKey = (profile: Profile): string => safeStringify([
@@ -1038,13 +1046,14 @@ export class RuntimeP2P {
     if (this.closing || this.closed) return false;
     const normalizedSource = normalizeId(source);
     const normalizedTarget = normalizeId(target);
-    if (!normalizedSource || !normalizedTarget || normalizedSource === normalizedTarget) return false;
+    if (!normalizedSource || !normalizedTarget) return false;
+    const isRemoteSource = normalizedSource !== normalizedTarget && !getEntityReplicaById(this.env, normalizedSource);
     const hasRoute = async (): Promise<boolean> => {
       const routes = await this.env.gossip.getNetworkGraph().findPaths(normalizedSource, normalizedTarget, amount, tokenId);
       return routes.length > 0;
     };
     if (await hasRoute()) return true;
-    const key = `route:${normalizedSource}>${normalizedTarget}:${tokenId}`;
+    const key = `route:${normalizedSource}>${normalizedTarget}:${tokenId}:${amount.toString()}`;
     const inFlight = this.profileFetches.get(key);
     if (inFlight) return inFlight;
     const fetch = (async () => {
@@ -1058,7 +1067,10 @@ export class RuntimeP2P {
       for (const waitMs of GOSSIP_ROUTE_FETCH_RETRY_DELAYS_MS) {
         const client = this.getActiveClient();
         if (!client) return false;
-        client.sendGossipRequest(this.runtimeId, { routeTo: encodeRouteToRequest(routeTo) });
+        client.sendGossipRequest(this.runtimeId, {
+          routeTo: encodeRouteToRequest(routeTo),
+          ...(isRemoteSource ? { ids: [normalizedSource] } : {}),
+        });
         if (!(await this.waitForActiveDelay(waitMs))) return false;
         if (await hasRoute()) return true;
       }
