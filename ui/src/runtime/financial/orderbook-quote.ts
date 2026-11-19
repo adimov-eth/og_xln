@@ -13,6 +13,8 @@ export function pickBookLevel(input: {
   quoteDecimals: number;
   capacity: bigint;
   crossSourceIsBase?: boolean;
+  /** An amount already entered in the pay field. A pick sets its price and never raises it. */
+  typedGive?: bigint;
 }): { give: bigint; want: bigint } | null {
   if (
     input.crossSourceIsBase !== undefined &&
@@ -25,7 +27,8 @@ export function pickBookLevel(input: {
   if (quote <= 0n) return null;
   const available = input.side === 'ask' ? quote : size;
   const desired = input.side === 'ask' ? size : quote;
-  const give = input.capacity > 0n && available > input.capacity ? input.capacity : available;
+  const bounded = input.capacity > 0n && available > input.capacity ? input.capacity : available;
+  const give = input.typedGive !== undefined && input.typedGive > 0n && input.typedGive < bounded ? input.typedGive : bounded;
   return { give, want: give === available ? desired : (desired * give) / available };
 }
 

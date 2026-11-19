@@ -51,3 +51,28 @@ test('Cross takeable ask bounds the source quote capacity without inverting pric
     want: 20_000_000_000_000_000n,
   });
 });
+
+test('a pick prices an amount already typed and never raises it', () => {
+  // 10.2 WETH offered at 2,500.5000 USDC; 44.895502 USDC spendable.
+  const input = {
+    side: 'ask' as const,
+    level: { priceTicks: 25_005_000n, size: 10_200_000_000_000_000_000n },
+    baseDecimals: 18,
+    quoteDecimals: 6,
+    capacity: 44_895_502n,
+    crossSourceIsBase: false,
+  };
+  // No amount typed: the ticket fills to everything spendable, as before.
+  expect(pickBookLevel(input)?.give).toBe(44_895_502n);
+  // 20 USDC typed: it stays 20 USDC and the level only supplies the price.
+  expect(pickBookLevel({ ...input, typedGive: 20_000_000n })).toEqual({
+    give: 20_000_000n,
+    want: 7_998_400_319_936_012n,
+  });
+  // A typed amount above capacity or above the level is still bounded.
+  expect(pickBookLevel({ ...input, typedGive: 50_000_000n })?.give).toBe(44_895_502n);
+  // Same-network pick (no Cross direction, capacity unknown): bounded by the level's own cost.
+  const { crossSourceIsBase: _cross, ...sameNetwork } = input;
+  expect(pickBookLevel({ ...sameNetwork, capacity: 0n, typedGive: 30_000_000_000n })?.give).toBe(25_505_100_000n);
+  expect(pickBookLevel({ ...input, typedGive: 0n })?.give).toBe(44_895_502n);
+});

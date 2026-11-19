@@ -163,7 +163,8 @@ export function Orderbook({
         </>
       )}
       <p className="note" style={{ marginTop: 10 }}>
-        Tap a level to fill the ticket at that price. 1 tick = 1/{ORDERBOOK_PRICE_SCALE.toLocaleString('en-US')}{' '}
+        Tap a level to use its price for the amount you entered. With no amount, the ticket fills to the most you can
+        take at that level. 1 tick = 1/{ORDERBOOK_PRICE_SCALE.toLocaleString('en-US')}{' '}
         {quoteMeta.symbol}.
       </p>
     </div>
