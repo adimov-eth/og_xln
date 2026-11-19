@@ -27,7 +27,6 @@ export function EverydayCashOutPanel({
 }) {
   const commandReady = useApp(state => state.commandReady);
   const externalWallet = useApp(state => state.externalWallet);
-  const toast = useApp(state => state.toast);
   const meta = getTokenMeta(tokenId);
   const [address, setAddress] = useState(wallet.signerId || '');
   const [amountText, setAmountText] = useState('');
@@ -91,7 +90,6 @@ export function EverydayCashOutPanel({
       const message = EVERYDAY_COPY.flows.cashOut.done;
       setDone(message);
       setAmountText('');
-      toast(message);
     } catch (failure) {
       setError(
         failure instanceof Error

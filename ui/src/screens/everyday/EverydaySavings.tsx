@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
+import { EVERYDAY_COPY, splitMoneyDisplay } from '@xln/frontend/lib/everyday/wallet-posture';
 import { executeEverydaySavingsDeposit } from '../../components/everyday/everyday-actions';
 import { pickActiveSavingsOffer, type LendingState } from '../../runtime/financial/lending';
 import { fetchLendingState } from '../../runtime/financial/lending-http';
@@ -14,7 +14,6 @@ export function EverydaySavings() {
   const selectedTokenId = useApp(state => state.selectedTokenId);
   const externalWallet = useApp(state => state.externalWallet);
   const commandReady = useApp(state => state.commandReady);
-  const toast = useApp(state => state.toast);
   const { wallet, projection } = useEverydayWallet(entityId, selectedTokenId);
 
   const tokenId = projection.primaryTokenId;
@@ -97,7 +96,6 @@ export function EverydaySavings() {
       setStatus(doneText);
       setAmountText('');
       setAcceptRisk(false);
-      toast(doneText);
       await loadState();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : EVERYDAY_COPY.flows.saveIn.failed);
@@ -117,7 +115,6 @@ export function EverydaySavings() {
       ]);
       const doneText = EVERYDAY_COPY.flows.saveOut.done;
       setStatus(doneText);
-      toast(doneText);
       await loadState();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : EVERYDAY_COPY.flows.saveOut.failed);
@@ -126,12 +123,16 @@ export function EverydaySavings() {
     }
   };
 
+  const savingsParts = splitMoneyDisplay(formatEverydayMoney(projection.primary.savings, tokenId));
+
   return (
     <div className="everyday-screen fade-in">
       <section className="everyday-hero-card" aria-label="Savings balance">
-        <span className="everyday-label">{EVERYDAY_COPY.terms.savings.label}</span>
-        <div className="everyday-cash-value" data-testid="everyday-savings-balance">
-          {formatEverydayMoney(projection.primary.savings, tokenId)}
+        <span className="everyday-label">{EVERYDAY_COPY.terms.savings.label} · separate from Cash</span>
+        <div className="everyday-cash-value is-savings" data-testid="everyday-savings-balance">
+          <span>{savingsParts.major}</span>
+          {savingsParts.minor ? <span className="everyday-cents">{savingsParts.minor}</span> : null}
+          {savingsParts.suffix ? <span className="everyday-unit-suffix">{savingsParts.suffix}</span> : null}
         </div>
         <p className="everyday-note">{EVERYDAY_COPY.terms.savings.note}</p>
         <span className="everyday-row-sub">

@@ -1,4 +1,17 @@
-/* Everyday Wallet styles: scoped under [data-posture='everyday'] and .everyday-* */
+/* Everyday Wallet styles: scoped under [data-posture='everyday'] and .everyday-*
+ * Semantic tokens only: monochrome ink for controls; colour carries meaning
+ * (amber = arriving/owed/savings risk, red = dispute/error, green = settled delta). */
+
+.app[data-posture='everyday'] {
+	--ev-radius: 8px;
+	--ink-settled: var(--display);
+	--ink-arriving: var(--debt);
+	--ink-owed: var(--credit);
+	--ink-dispute: var(--dispute);
+	--ink-delta-in: var(--coll);
+	--ink-action: var(--display);
+	--ink-action-fg: var(--bg);
+}
 
 .app[data-posture='everyday'] .rail,
 .app[data-posture='everyday'] .tabbar {
@@ -9,13 +22,20 @@
 	min-height: 48px;
 	height: auto;
 	padding: 10px 12px;
-	border-radius: 10px;
+	border-radius: var(--ev-radius);
+}
+
+.app[data-posture='everyday'] .rail-item.active,
+.app[data-posture='everyday'] .tabbar-item.active {
+	color: var(--display);
+	background: var(--surface-2);
 }
 
 .app[data-posture='everyday'] .tabbar-item,
 .app[data-posture='everyday'] .icon-btn {
 	min-height: 48px;
 	min-width: 48px;
+	border-radius: var(--ev-radius);
 }
 
 .app[data-posture='everyday'] .btn,
@@ -25,72 +45,160 @@
 .app[data-posture='everyday'] .row.tappable,
 .app[data-posture='everyday'] .input {
 	min-height: 48px;
+	border-radius: var(--ev-radius);
+}
+
+/* Monochrome high-contrast primary actions: colour stays reserved for money states. */
+.app[data-posture='everyday'] .btn.primary {
+	background: var(--ink-action);
+	border-color: var(--ink-action);
+	color: var(--ink-action-fg);
+	box-shadow: none;
+}
+
+.app[data-posture='everyday'] .btn.primary:hover:not(:disabled) {
+	opacity: 0.9;
 }
 
 .app[data-posture='everyday'] .tabs,
 .app[data-posture='everyday'] .chips,
 .app[data-posture='everyday'] .segc,
 .app[data-posture='everyday'] .actions {
-	gap: 10px;
+	gap: 8px;
 }
 
+/* Unclipped inline header row, aligned to the Cash column. */
 .everyday-topbar {
+	width: 100%;
+	max-width: 680px;
+	padding: calc(env(safe-area-inset-top, 0px) + 20px) 28px 0;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
-	margin-bottom: 20px;
-	flex-wrap: wrap;
+	min-width: 0;
 }
 
 .everyday-context-pill {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
-	min-height: 48px;
-	padding: 8px 14px;
-	border-radius: var(--radius-pill);
-	background: var(--surface);
-	box-shadow: var(--shadow-card);
-	color: var(--ink);
-	font-size: 14px;
+	min-height: 36px;
+	max-width: 100%;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--ink-2);
+	font-size: 13.5px;
 	font-weight: 600;
+	letter-spacing: 0.01em;
 }
 
 .everyday-screen {
+	position: relative;
 	width: 100%;
 	max-width: 680px;
-	padding: 24px 28px 88px;
+	padding: 20px 28px 88px;
 	display: flex;
 	flex-direction: column;
 	gap: 24px;
 }
 
+/* Borderless hero: space and type carry the hierarchy instead of card chrome. */
 .everyday-hero-card {
-	background: var(--surface);
-	border-radius: 16px;
-	box-shadow: var(--shadow-card);
-	padding: 24px;
+	position: relative;
+	z-index: 1;
+	padding: 8px 0 4px;
 	display: flex;
 	flex-direction: column;
-	gap: 16px;
+	gap: 12px;
 }
 
 .everyday-label {
 	font-size: 13px;
 	font-weight: 600;
-	letter-spacing: 0.02em;
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
 	color: var(--ink-2);
+}
+
+.everyday-balance-trigger {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	padding: 0;
+	margin: 0;
+	text-align: left;
+	cursor: pointer;
+	width: fit-content;
+	min-height: 48px;
+	display: inline-flex;
+	align-items: baseline;
+	border-radius: var(--ev-radius);
+}
+
+.everyday-balance-trigger:focus-visible {
+	outline: 2px solid var(--display);
+	outline-offset: 4px;
 }
 
 .everyday-cash-value {
 	font-family: var(--font-num);
-	font-size: clamp(42px, 7vw, 60px);
+	font-size: clamp(44px, 8vw, 64px);
 	font-weight: 650;
-	line-height: 1.1;
+	line-height: 1.05;
 	letter-spacing: -0.035em;
-	color: var(--display);
+	color: var(--ink-settled);
 	font-variant-numeric: tabular-nums;
+	transition: opacity 200ms ease-out;
+}
+
+.everyday-cash-value.is-syncing {
+	opacity: 0.62;
+}
+
+.everyday-cash-value.is-savings {
+	color: var(--ink-owed);
+}
+
+.everyday-cents {
+	font-size: 0.56em;
+	font-weight: 600;
+	vertical-align: 0.34em;
+	opacity: 0.72;
+	letter-spacing: -0.01em;
+}
+
+.everyday-unit-suffix {
+	font-size: 0.42em;
+	font-weight: 600;
+	margin-left: 0.22em;
+	opacity: 0.72;
+	letter-spacing: 0;
+}
+
+.everyday-cash-delta {
+	margin: 0;
+	font-family: var(--font-num);
+	font-size: 14px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	color: var(--ink-delta-in);
+}
+
+.everyday-cash-delta.is-out {
+	color: var(--ink-2);
+}
+
+.everyday-balance-truth {
+	margin: 0;
+	padding: 10px 14px;
+	border-left: 2px solid var(--line-2);
+	font-size: 13.5px;
+	line-height: 1.5;
+	color: var(--ink);
+	max-width: 54ch;
 }
 
 .everyday-note {
@@ -98,26 +206,32 @@
 	font-size: 14px;
 	line-height: 1.5;
 	color: var(--ink-2);
-	max-width: 55ch;
+	max-width: 54ch;
 }
 
+/* Arriving money: distinct dashed boundary + explicit word (never colour or outline alone). */
 .everyday-arriving-pill {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
-	padding: 8px 14px;
-	border-radius: var(--radius-pill);
-	background: var(--hold-dim);
-	color: var(--hold);
-	font-size: 13.5px;
+	padding: 6px 12px;
+	border-radius: var(--ev-radius);
+	border: 1px dashed var(--ink-arriving);
+	background: transparent;
+	color: var(--ink-arriving);
+	font-family: var(--font-num);
+	font-size: 14px;
 	font-weight: 600;
+	font-variant-numeric: tabular-nums;
 	width: fit-content;
 }
 
 .everyday-actions {
+	position: relative;
+	z-index: 1;
 	display: flex;
 	flex-wrap: wrap;
-	gap: 10px;
+	gap: 8px;
 }
 
 .everyday-actions > .btn {
@@ -127,9 +241,11 @@
 }
 
 .everyday-panel {
+	position: relative;
+	z-index: 1;
 	background: var(--surface);
-	border-radius: 14px;
-	box-shadow: var(--shadow-card);
+	border: 1px solid var(--line);
+	border-radius: var(--ev-radius);
 	padding: 20px;
 	display: flex;
 	flex-direction: column;
@@ -144,10 +260,10 @@
 }
 
 .everyday-list-card {
-	background: var(--surface);
-	border-radius: 14px;
-	box-shadow: var(--shadow-card);
-	overflow: hidden;
+	position: relative;
+	z-index: 1;
+	border-top: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
 }
 
 .everyday-list-row {
@@ -155,7 +271,7 @@
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
-	padding: 16px;
+	padding: 16px 0;
 	border-top: 1px solid var(--line);
 }
 
@@ -182,10 +298,10 @@
 }
 
 .everyday-shield-notice {
-	padding: 14px 16px;
-	border-radius: 12px;
+	padding: 12px 14px;
+	border-radius: var(--ev-radius);
+	border-left: 2px solid var(--line-2);
 	background: var(--surface-2);
-	border: 1px solid var(--line-2);
 	font-size: 14px;
 	line-height: 1.45;
 	color: var(--ink);
@@ -194,7 +310,7 @@
 .everyday-shield-notice[data-category='unilateral-exit-needs-gas'],
 .everyday-shield-notice[data-category='tower-issue'] {
 	background: var(--debt-dim);
-	border-color: var(--debt);
+	border-left-color: var(--ink-owed);
 }
 
 .everyday-consent-row {
@@ -213,7 +329,7 @@
 	width: 22px;
 	height: 22px;
 	flex: none;
-	accent-color: var(--accent);
+	accent-color: var(--display);
 }
 
 .everyday-switch {
@@ -242,15 +358,15 @@
 }
 
 .everyday-switch[aria-checked='true'] .everyday-switch-track {
-	background: var(--accent-fill);
-	border-color: var(--accent-fill);
+	background: var(--ink-action);
+	border-color: var(--ink-action);
 }
 
 .everyday-switch-thumb {
 	width: 20px;
 	height: 20px;
 	border-radius: 50%;
-	background: #ffffff;
+	background: var(--bg);
 	transform: translateX(0);
 	transition: transform 180ms ease-out;
 }
@@ -269,7 +385,7 @@
 .everyday-qr-img {
 	width: 180px;
 	height: 180px;
-	border-radius: 12px;
+	border-radius: var(--ev-radius);
 	background: #ffffff;
 	padding: 8px;
 }
@@ -277,20 +393,28 @@
 .everyday-fee-line {
 	font-size: 13.5px;
 	color: var(--ink-2);
+	font-variant-numeric: tabular-nums;
 }
 
 .everyday-alert {
 	padding: 12px 14px;
-	border-radius: 10px;
+	border-radius: var(--ev-radius);
 	background: var(--dispute-dim);
-	color: var(--dispute);
+	color: var(--ink-dispute);
 	font-size: 13.5px;
 	line-height: 1.45;
+	margin: 0;
 }
 
 @media (max-width: 840px) {
+	.everyday-topbar { padding: calc(env(safe-area-inset-top, 0px) + 12px) 20px 0; }
 	.everyday-screen { padding: 10px 20px calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 36px); }
 }
+
 @media (prefers-reduced-motion: reduce) {
-	.everyday-switch-track, .everyday-switch-thumb { transition: none; }
+	.everyday-switch-track,
+	.everyday-switch-thumb,
+	.everyday-cash-value {
+		transition: none;
+	}
 }

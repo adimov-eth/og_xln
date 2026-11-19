@@ -41,7 +41,8 @@
 	--accent: #7a73ff;
 	--accent-2: #a6a1ff;
 	--accent-dim: rgba(122, 115, 255, 0.16);
-	--credit: #7a73ff;
+	/* Semantic credit/owed colour stays distinct from brand/interactive accent. */
+	--credit: #e8b04b;
 	/* Position palette: what is yours is green, darker the deeper it sits with a
 	   counterparty; exposure is violet; obligations amber; room is a ghost. */
 	--onchain: #bbf7d0;
@@ -81,7 +82,7 @@
 	--accent: #635bff;
 	--accent-2: #5047e5;
 	--accent-dim: rgba(99, 91, 255, 0.1);
-	--credit: #635bff;
+	--credit: #b45309;
 	--onchain: #86efac;
 	--reserve: #22c55e;
 	--coll: #15803d;
@@ -154,7 +155,6 @@
 	--accent: #3ddc84;
 	--accent-2: #7cf0ad;
 	--accent-dim: rgba(61, 220, 132, 0.16);
-	--credit: #3ddc84;
 	--btn-ink: #06110b;
 	--fade: var(--bg);
 }
@@ -172,7 +172,6 @@
 	--accent: #148a4a;
 	--accent-2: #0f6e3b;
 	--accent-dim: rgba(20, 138, 74, 0.14);
-	--credit: #148a4a;
 	--btn-ink: #ffffff;
 	--fade: var(--bg);
 }
@@ -188,21 +187,18 @@
 	--accent: var(--ink);
 	--accent-2: var(--ink-2);
 	--accent-dim: rgba(128, 128, 128, 0.16);
-	--credit: var(--ink-2);
 	--btn-ink: var(--bg);
 }
 :root[data-accent='brass']:not([data-material='terminal']) {
 	--accent: #c9a962;
 	--accent-2: #e2c98a;
 	--accent-dim: rgba(201, 169, 98, 0.16);
-	--credit: #c9a962;
 	--btn-ink: #1a1508;
 }
 :root[data-accent='brass'][data-theme='light']:not([data-material='terminal']) {
 	--accent: #9a7a2e;
 	--accent-2: #7d6222;
 	--accent-dim: rgba(154, 122, 46, 0.14);
-	--credit: #9a7a2e;
 	--btn-ink: #ffffff;
 }
 

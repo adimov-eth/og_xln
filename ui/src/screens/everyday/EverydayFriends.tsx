@@ -20,7 +20,6 @@ export function EverydayFriends() {
   const selectedTokenId = useApp(state => state.selectedTokenId);
   const externalWallet = useApp(state => state.externalWallet);
   const commandReady = useApp(state => state.commandReady);
-  const toast = useApp(state => state.toast);
   const { wallet, projection } = useEverydayWallet(entityId, selectedTokenId);
 
   const tokenId = projection.primaryTokenId;
@@ -91,7 +90,6 @@ export function EverydayFriends() {
       const doneText = EVERYDAY_COPY.flows.splitTab.done;
       setStatus(doneText);
       setAmountText('');
-      toast(doneText);
     } catch (failure) {
       setError(
         failure instanceof Error
@@ -129,7 +127,6 @@ export function EverydayFriends() {
       });
       const doneText = EVERYDAY_COPY.flows.settleTab.done;
       setStatus(doneText);
-      toast(doneText);
     } catch (failure) {
       setError(
         failure instanceof Error

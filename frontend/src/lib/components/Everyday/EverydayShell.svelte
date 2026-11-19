@@ -166,28 +166,65 @@
 </div>
 
 <style>
-  .everyday-shell { background: #121212; color: #f5f5f7; min-height: 100vh; padding: 16px; display: flex; flex-direction: column; gap: 16px; max-width: 680px; margin: 0 auto; width: 100%; box-sizing: border-box; }
-  .ev-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .everyday-shell {
+    --ev-radius: 8px;
+    --ink-settled: #f5f5f7;
+    --ink-arriving: #e8b04b;
+    --ink-owed: #e8b04b;
+    --ink-dispute: #f26d6d;
+    --ink-delta-in: #4ade80;
+    --ink-action: #f5f5f7;
+    --ink-action-fg: #0b0e14;
+    background: #121212;
+    color: #e6e9f0;
+    min-height: 100vh;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-width: 680px;
+    margin: 0 auto;
+    width: 100%;
+    box-sizing: border-box;
+    position: relative;
+  }
+  .ev-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: relative; z-index: 1; }
   .ev-topbar > :global(.context-switcher) { min-width: 0; flex: 1 1 auto; }
-  .ev-icon-btn { flex-shrink: 0; min-width: 48px; min-height: 48px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: #f5f5f7; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: background 180ms ease-out; }
-  .ev-icon-btn.active, .ev-icon-btn:hover { background: rgba(255,255,255,0.12); }
-  .ev-nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .ev-nav-btn { min-height: 48px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.05); color: #b4b4c0; font: inherit; font-weight: 600; cursor: pointer; transition: background 180ms ease-out, color 180ms ease-out; }
-  .ev-nav-btn.active { background: rgba(255,255,255,0.14); color: #f5f5f7; border-color: rgba(255,255,255,0.22); }
-  .ev-main { display: flex; flex-direction: column; gap: 16px; }
-  .everyday-shell :global(.ev-card) { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-  .everyday-shell :global(.ev-hero) { font-size: clamp(2.1rem, 5vw, 2.8rem); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; margin: 0; line-height: 1.15; }
-  .everyday-shell :global(.ev-muted) { color: #b0b0ba; font-size: 0.94rem; line-height: 1.5; margin: 0; }
-  .everyday-shell :global(.ev-btn) { min-height: 48px; padding: 0 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.08); color: #f5f5f7; font: inherit; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: background 180ms ease-out; }
-  .everyday-shell :global(.ev-btn.primary) { background: #10b981; border-color: #10b981; color: #052e1f; }
-  .everyday-shell :global(.ev-btn.danger) { background: rgba(251,113,133,0.16); border-color: rgba(251,113,133,0.4); color: #fecdd3; }
+  .ev-icon-btn { flex-shrink: 0; min-width: 48px; min-height: 48px; border-radius: var(--ev-radius); border: 1px solid rgba(255,255,255,0.12); background: transparent; color: #e6e9f0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: background 180ms ease-out; }
+  .ev-icon-btn.active, .ev-icon-btn:hover { background: rgba(255,255,255,0.10); }
+  .ev-nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; position: relative; z-index: 1; }
+  .ev-nav-btn { min-height: 48px; border-radius: var(--ev-radius); border: 1px solid transparent; background: transparent; color: #959eae; font: inherit; font-weight: 600; cursor: pointer; transition: background 180ms ease-out, color 180ms ease-out; }
+  .ev-nav-btn.active { background: rgba(255,255,255,0.09); color: #f5f5f7; border-color: rgba(255,255,255,0.14); }
+  .ev-main { display: flex; flex-direction: column; gap: 20px; position: relative; z-index: 1; }
+  .everyday-shell :global(.ev-hero-region) { padding: 8px 0 4px; display: flex; flex-direction: column; gap: 12px; }
+  .everyday-shell :global(.ev-label) { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: #959eae; margin: 0; }
+  .everyday-shell :global(.ev-balance-trigger) { appearance: none; border: 0; background: transparent; padding: 0; margin: 0; text-align: left; cursor: pointer; width: fit-content; min-height: 48px; display: inline-flex; align-items: baseline; border-radius: var(--ev-radius); }
+  .everyday-shell :global(.ev-balance-trigger:focus-visible) { outline: 2px solid #f5f5f7; outline-offset: 4px; }
+  .everyday-shell :global(.ev-card) { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.10); border-radius: var(--ev-radius); padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .everyday-shell :global(.ev-hero) { font-size: clamp(2.6rem, 7.5vw, 3.8rem); font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.035em; margin: 0; line-height: 1.05; color: var(--ink-settled); transition: opacity 200ms ease-out; }
+  .everyday-shell :global(.ev-hero.is-syncing) { opacity: 0.62; }
+  .everyday-shell :global(.ev-hero.is-savings) { color: var(--ink-owed); }
+  .everyday-shell :global(.ev-cents) { font-size: 0.56em; font-weight: 600; vertical-align: 0.34em; opacity: 0.72; letter-spacing: -0.01em; }
+  .everyday-shell :global(.ev-suffix) { font-size: 0.42em; font-weight: 600; margin-left: 0.22em; opacity: 0.72; letter-spacing: 0; }
+  .everyday-shell :global(.ev-delta) { margin: 0; font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-delta-in); }
+  .everyday-shell :global(.ev-delta.is-out) { color: #959eae; }
+  .everyday-shell :global(.ev-truth) { margin: 0; padding: 10px 14px; border-left: 2px solid rgba(255,255,255,0.22); font-size: 0.875rem; line-height: 1.5; color: #e6e9f0; max-width: 54ch; }
+  .everyday-shell :global(.ev-muted) { color: #959eae; font-size: 0.9rem; line-height: 1.5; margin: 0; max-width: 54ch; }
+  .everyday-shell :global(.ev-btn) { min-height: 48px; padding: 0 16px; border-radius: var(--ev-radius); border: 1px solid rgba(255,255,255,0.16); background: transparent; color: #f5f5f7; font: inherit; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: background 180ms ease-out, opacity 180ms ease-out; }
+  .everyday-shell :global(.ev-btn:hover:not(:disabled)) { background: rgba(255,255,255,0.08); }
+  .everyday-shell :global(.ev-btn.primary) { background: var(--ink-action); border-color: var(--ink-action); color: var(--ink-action-fg); }
+  .everyday-shell :global(.ev-btn.primary:hover:not(:disabled)) { opacity: 0.9; background: var(--ink-action); }
+  .everyday-shell :global(.ev-btn.danger) { background: rgba(242,109,109,0.14); border-color: rgba(242,109,109,0.4); color: #fecdd3; }
   .everyday-shell :global(.ev-btn:disabled) { opacity: 0.48; cursor: not-allowed; }
-  .everyday-shell :global(.ev-input) { min-height: 48px; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.16); background: #1c1c20; color: #f5f5f7; font: inherit; width: 100%; box-sizing: border-box; }
-  .everyday-shell :global(.ev-row) { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-  .everyday-shell :global(.ev-field) { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; color: #d0d0da; }
-  .everyday-shell :global(.ev-pill) { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; font-size: 0.9rem; font-variant-numeric: tabular-nums; background: rgba(251,191,36,0.14); border: 1px solid rgba(251,191,36,0.35); color: #fde68a; }
-  .everyday-shell :global(.ev-alert) { padding: 12px 14px; border-radius: 12px; font-size: 0.92rem; line-height: 1.45; margin: 0; }
-  .everyday-shell :global(.ev-alert.error) { background: rgba(251,113,133,0.14); border: 1px solid rgba(251,113,133,0.38); color: #fecdd3; }
-  .everyday-shell :global(.ev-alert.ok) { background: rgba(52,211,153,0.14); border: 1px solid rgba(52,211,153,0.38); color: #a7f3d0; }
+  .everyday-shell :global(.ev-input) { min-height: 48px; padding: 10px 14px; border-radius: var(--ev-radius); border: 1px solid rgba(255,255,255,0.16); background: #181c24; color: #f5f5f7; font: inherit; width: 100%; box-sizing: border-box; }
+  .everyday-shell :global(.ev-row) { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .everyday-shell :global(.ev-field) { display: flex; flex-direction: column; gap: 6px; font-size: 0.875rem; color: #d0d0da; }
+  .everyday-shell :global(.ev-pill) { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: var(--ev-radius); font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; background: transparent; border: 1px dashed var(--ink-arriving); color: var(--ink-arriving); width: fit-content; }
+  .everyday-shell :global(.ev-alert) { padding: 12px 14px; border-radius: var(--ev-radius); font-size: 0.9rem; line-height: 1.45; margin: 0; }
+  .everyday-shell :global(.ev-alert.error) { background: rgba(242,109,109,0.14); border: 1px solid rgba(242,109,109,0.38); color: #fecdd3; }
+  .everyday-shell :global(.ev-alert.ok) { background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.32); color: #bbf7d0; }
   .everyday-shell :global(.ev-num) { font-variant-numeric: tabular-nums; }
+  @media (prefers-reduced-motion: reduce) {
+    .everyday-shell :global(.ev-hero), .ev-icon-btn, .ev-nav-btn, .everyday-shell :global(.ev-btn) { transition: none; }
+  }
 </style>

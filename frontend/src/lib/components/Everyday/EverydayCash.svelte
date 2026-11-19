@@ -7,7 +7,7 @@
   import { runtimeQueryClient } from '#lib/stores/runtimeQueryClient.ts';
   import { getOpenAccountRebalancePolicyData } from '#lib/utils/onboarding/onboardingPreferences.ts';
   import { buildWalletPayHref } from '#lib/utils/xlnInvoice.ts';
-  import { EVERYDAY_COPY } from '#lib/everyday/wallet-posture.ts';
+  import { EVERYDAY_COPY, splitMoneyDisplay } from '#lib/everyday/wallet-posture.ts';
   import type { EverydayWalletProjection } from '#lib/everyday/everyday-projection.ts';
   import { formatEverydayArrivingNote, inspectHubRebalanceStatus } from '#lib/everyday/everyday-policy.ts';
   import {
@@ -34,6 +34,9 @@
   let reqAmount = $state(''); let reqNote = $state(''); let qrUrl = $state(''); let copied = $state(false);
   let outAddress = $state(''); let outAmount = $state('');
   let busy = $state(false); let statusMsg = $state(''); let errorMsg = $state(''); let faucetBusy = $state(false);
+  let showTruth = $state(false);
+  let deltaNotice = $state<{ positive: boolean; text: string } | null>(null);
+  let lastCashKey = ''; let lastCashValue = 0n; let faucetPending = false;
 
   const terms = EVERYDAY_COPY.terms;
   const flows = EVERYDAY_COPY.flows;
@@ -41,7 +44,49 @@
   const resolvedPayTo = $derived(resolveContactTarget(payTo, knownContacts));
   const requestLink = $derived(projection.entityId ? buildWalletPayHref({ targetEntityId: projection.entityId, tokenId: projection.primaryTokenId, amount: reqAmount.trim(), description: reqNote.trim() }) : '');
   const chainId = $derived(frame?.activeEntity?.core.config.jurisdiction?.chainId);
-  const showTestFaucet = $derived(chainId !== undefined && VALUELESS_CHAIN_IDS.has(Number(chainId)) && projection.primary.cash === 0n && projection.primary.arriving === 0n && Boolean(projection.primaryHubId));
+  const isDemoChain = $derived(chainId !== undefined && VALUELESS_CHAIN_IDS.has(Number(chainId)));
+  const showTestFaucet = $derived(isDemoChain && projection.primary.cash === 0n && projection.primary.arriving === 0n && Boolean(projection.primaryHubId));
+  const cashParts = $derived(splitMoneyDisplay(formatUsd(projection.primary.cash, decimals)));
+  const activeHubId = $derived(projection.primaryHubId ?? projection.hubAccounts[0] ?? null);
+  const activeHubLabel = $derived.by(() => {
+    if (!activeHubId) return null;
+    const match = (frame?.entities ?? []).find(e => e.entityId.toLowerCase() === activeHubId);
+    return match?.label?.trim() || `${activeHubId.slice(0, 10)}…`;
+  });
+  const balanceTruthLine = $derived(
+    activeHubLabel
+      ? projection.disputes.some(d => d.counterpartyId === activeHubId)
+        ? `Connected via ${activeHubLabel}. Protection is active on this hub.`
+        : `Connected via ${activeHubLabel}.`
+      : 'No hub connected yet.',
+  );
+
+  $effect(() => {
+    const key = projection.entityId;
+    const cash = projection.primary.cash;
+    if (key !== lastCashKey) {
+      lastCashKey = key;
+      lastCashValue = cash;
+      deltaNotice = null;
+      return;
+    }
+    const diff = cash - lastCashValue;
+    if (diff === 0n) return;
+    lastCashValue = cash;
+    if (diff > 0n && faucetPending) {
+      faucetPending = false;
+      const expectedGross = 100n * (10n ** BigInt(decimals));
+      const minExpected = 95n * (10n ** BigInt(decimals));
+      if (diff < expectedGross && diff > minExpected) {
+        deltaNotice = { positive: true, text: `+$100.00, −${formatUsd(expectedGross - diff, decimals)} settle fee` };
+        return;
+      }
+    }
+    deltaNotice = {
+      positive: diff > 0n,
+      text: diff > 0n ? `+${formatUsd(diff, decimals)} settled` : `−${formatUsd(-diff, decimals)} sent`,
+    };
+  });
 
   const arrivingNote = $derived.by(() => {
     const hubId = projection.primaryHubId;
@@ -49,7 +94,7 @@
     const policy = getOpenAccountRebalancePolicyData(asTokenId(projection.primaryTokenId), 'everyday');
     if (!hubDoc || !policy || !xln) return terms.arriving.note;
     const status = inspectHubRebalanceStatus({ doc: hubDoc, isLeft: hubDoc.state.leftEntity.toLowerCase() === projection.entityId, tokenId: projection.primaryTokenId, policy, deriveDeltaFn: xln.deriveDelta });
-    return formatEverydayArrivingNote(status, terms.arriving.note);
+    return formatEverydayArrivingNote(status, terms.arriving.note, amount => formatUsd(amount, decimals));
   });
 
   const payPlan = $derived.by(() => {
@@ -111,11 +156,11 @@
 
   async function handleFaucet(): Promise<void> {
     if (faucetBusy || !commandReady) return;
-    faucetBusy = true; errorMsg = ''; statusMsg = '';
+    faucetBusy = true; errorMsg = ''; statusMsg = ''; faucetPending = true;
     try {
-      statusMsg = await requestEverydayTestCash({ entityId: projection.entityId, runtimeId, primaryHubId: projection.primaryHubId, tokenId: projection.primaryTokenId, symbol });
+      await requestEverydayTestCash({ entityId: projection.entityId, runtimeId, primaryHubId: projection.primaryHubId, tokenId: projection.primaryTokenId, symbol });
       void onRefresh();
-    } catch (err) { errorMsg = err instanceof Error ? err.message : String(err); }
+    } catch (err) { faucetPending = false; errorMsg = err instanceof Error ? err.message : String(err); }
     finally { faucetBusy = false; }
   }
 
@@ -170,23 +215,39 @@
   }
 </script>
 
-<section class="ev-card">
-  <p class="ev-muted">{terms.cash.label}</p>
-  <h1 class="ev-hero" data-testid="everyday-cash">{formatUsd(projection.primary.cash, decimals)}</h1>
-  <p class="ev-muted">{terms.cash.note}</p>
+<section class="ev-hero-region" aria-label="Cash balance">
+  <p class="ev-label">{terms.cash.label}</p>
+  <button type="button" class="ev-balance-trigger" aria-expanded={showTruth} onclick={() => showTruth = !showTruth}>
+    <h1 class="ev-hero" class:is-syncing={!commandReady} data-testid="everyday-cash">
+      <span>{cashParts.major}</span>{#if cashParts.minor}<span class="ev-cents">{cashParts.minor}</span>{/if}{#if cashParts.suffix}<span class="ev-suffix">{cashParts.suffix}</span>{/if}
+    </h1>
+  </button>
+  {#if !commandReady}
+    <p class="ev-muted" role="status">Syncing latest balance. Sending resumes in a moment.</p>
+  {:else if deltaNotice}
+    <p class="ev-delta" class:is-out={!deltaNotice.positive} data-testid="everyday-cash-delta" role="status">{deltaNotice.text}</p>
+  {:else}
+    <p class="ev-muted">{terms.cash.note}</p>
+  {/if}
+  {#if showTruth}
+    <p class="ev-truth" data-testid="everyday-balance-truth">{balanceTruthLine}</p>
+  {/if}
   {#if projection.primary.arriving > 0n}
-    <div class="ev-pill" data-testid="everyday-arriving">+{formatUsd(projection.primary.arriving, decimals)} {terms.arriving.label.toLowerCase()} · finishing...</div>
+    <div class="ev-pill" data-testid="everyday-arriving">+{formatUsd(projection.primary.arriving, decimals)} {terms.arriving.label.toLowerCase()}</div>
     <p class="ev-muted">{arrivingNote}</p>
   {/if}
   {#if showTestFaucet}
-    <button type="button" class="ev-btn" data-testid="home-faucet" disabled={faucetBusy || !commandReady} onclick={() => void handleFaucet()}>
-      {faucetBusy ? 'Getting test USD...' : 'Get $100 test USD'}
-    </button>
+    <div style="display:flex;flex-direction:column;gap:6px;">
+      <button type="button" class="ev-btn primary" data-testid="home-faucet" disabled={faucetBusy || !commandReady} onclick={() => void handleFaucet()}>
+        {faucetBusy ? 'Adding test cash...' : 'Add $100 test cash'}
+      </button>
+      <p class="ev-muted ev-num">$100.00 sent · about $99.89 after ~$0.11 settle fee</p>
+    </div>
   {/if}
   <div class="ev-row">
-    <button type="button" class="ev-btn primary" data-testid="everyday-pay-btn" onclick={() => openPanel('pay')}>{flows.pay.before}</button>
-    <button type="button" class="ev-btn" data-testid="everyday-request-btn" onclick={() => openPanel('request')}>{flows.requestLink.before}</button>
-    <button type="button" class="ev-btn" data-testid="everyday-cashout-btn" onclick={() => openPanel('cashout')}>{flows.cashOut.before}</button>
+    <button type="button" class="ev-btn" class:primary={(!showTestFaucet && panel === 'none') || panel === 'pay'} data-testid="everyday-pay-btn" onclick={() => openPanel('pay')}>{flows.pay.before}</button>
+    <button type="button" class="ev-btn" class:primary={panel === 'request'} data-testid="everyday-request-btn" onclick={() => openPanel('request')}>{flows.requestLink.before}</button>
+    <button type="button" class="ev-btn" class:primary={panel === 'cashout'} data-testid="everyday-cashout-btn" onclick={() => openPanel('cashout')}>{flows.cashOut.before}</button>
   </div>
 </section>
 

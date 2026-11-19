@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { EVERYDAY_COPY } from '../../../frontend/src/lib/everyday/wallet-posture';
+import { EVERYDAY_COPY, splitMoneyDisplay } from '../../../frontend/src/lib/everyday/wallet-posture';
 
 const REPO_ROOT = join(import.meta.dir, '../../..');
 
@@ -81,5 +81,24 @@ describe('Everyday wallet production boundary (one-way study -> wallet)', () => 
     };
     for (const root of prodRoots) walk(join(REPO_ROOT, root));
     expect(violations).toEqual([]);
+  });
+
+  test('splitMoneyDisplay splits dollars, cents, and unit suffixes without altering text', () => {
+    expect(splitMoneyDisplay('$99.89')).toEqual({ major: '$99', minor: '.89', suffix: '' });
+    expect(splitMoneyDisplay('$1,234.50')).toEqual({ major: '$1,234', minor: '.50', suffix: '' });
+    expect(splitMoneyDisplay('1.25 ETH')).toEqual({ major: '1', minor: '.25', suffix: ' ETH' });
+    expect(splitMoneyDisplay('$0')).toEqual({ major: '$0', minor: '', suffix: '' });
+    for (const sample of ['$99.89', '$1,234.50', '1.25 ETH', '$0']) {
+      const parts = splitMoneyDisplay(sample);
+      expect(`${parts.major}${parts.minor}${parts.suffix}`).toBe(sample);
+    }
+  });
+
+  test('semantic --credit token stays decoupled from interactive --accent', () => {
+    const tokensCss = readFileSync(join(REPO_ROOT, 'ui/src/styles/tokens.css'), 'utf8');
+    const designTs = readFileSync(join(REPO_ROOT, 'ui/src/runtime/design.ts'), 'utf8');
+    expect(designTs).not.toContain("setProperty('--credit'");
+    expect(tokensCss).not.toContain('--credit: #7a73ff');
+    expect(tokensCss).not.toContain('--credit: #635bff');
   });
 });

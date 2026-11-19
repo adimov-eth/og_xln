@@ -104,6 +104,23 @@ export function writeWalletPosture(posture: WalletPosture): void {
   }
 }
 
+export type SplitMoneyDisplay = {
+  readonly major: string;
+  readonly minor: string;
+  readonly suffix: string;
+};
+
+/**
+ * Splits a formatted money string (`$99.89`, `1.25 ETH`) into whole, fractional,
+ * and trailing-unit spans so UI surfaces can render raised tabular cents while
+ * keeping `innerText` identical to the original formatted string.
+ */
+export function splitMoneyDisplay(formatted: string): SplitMoneyDisplay {
+  const match = formatted.match(/^([^\d.]*[\d,]+)(\.\d+)(.*)$/);
+  if (!match) return { major: formatted, minor: '', suffix: '' };
+  return { major: match[1] ?? formatted, minor: match[2] ?? '', suffix: match[3] ?? '' };
+}
+
 export function subscribeWalletPosture(listener: (posture: WalletPosture) => void): () => void {
   listeners.add(listener);
   if (typeof window === 'undefined') {

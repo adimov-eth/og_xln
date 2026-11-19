@@ -34,7 +34,6 @@ export function EverydayPayPanel({
 }) {
   const commandReady = useApp(state => state.commandReady);
   const externalWallet = useApp(state => state.externalWallet);
-  const toast = useApp(state => state.toast);
   const meta = getTokenMeta(tokenId);
 
   const [toText, setToText] = useState('');
@@ -197,7 +196,6 @@ export function EverydayPayPanel({
       setDone(`${label} ${formatEverydayMoney(parsedAmount, tokenId)}`);
       setAmountText('');
       setNote('');
-      toast(`${label} ${formatEverydayMoney(parsedAmount, tokenId)}`);
     } catch (failure) {
       setError(
         failure instanceof Error ? failure.message : EVERYDAY_COPY.flows.pay.failed,

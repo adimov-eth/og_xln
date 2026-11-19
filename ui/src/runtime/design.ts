@@ -110,12 +110,11 @@ export function applyDesign(prefs: DesignPrefs): void {
 		root.style.setProperty('--accent', hex);
 		root.style.setProperty('--accent-2', mix(hex, 255, 0.25));
 		root.style.setProperty('--accent-dim', rgba(hex, 0.16));
-		root.style.setProperty('--credit', hex);
 		// Dark accents want white button ink, light ones black.
 		const luma = 0.299 * parseInt(hex.slice(1, 3), 16) + 0.587 * parseInt(hex.slice(3, 5), 16) + 0.114 * parseInt(hex.slice(5, 7), 16);
 		root.style.setProperty('--btn-ink', luma > 160 ? '#0b0d12' : '#ffffff');
 	} else {
-		for (const name of ['--accent', '--accent-2', '--accent-dim', '--credit', '--btn-ink']) root.style.removeProperty(name);
+		for (const name of ['--accent', '--accent-2', '--accent-dim', '--btn-ink']) root.style.removeProperty(name);
 	}
 }
 

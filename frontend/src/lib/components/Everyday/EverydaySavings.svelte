@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import type { EntityTx, RuntimeAdapterViewFrame, RuntimeReplica, XLNModule } from '@xln/core/api/public/runtime-module';
   import { submitEntityInputs } from '#lib/stores/xlnStore.ts';
-  import { EVERYDAY_COPY } from '#lib/everyday/wallet-posture.ts';
+  import { EVERYDAY_COPY, splitMoneyDisplay } from '#lib/everyday/wallet-posture.ts';
   import type { EverydayWalletProjection } from '#lib/everyday/everyday-projection.ts';
   import type { EverydayExternalRow } from '#lib/everyday/everyday-autopilot.ts';
   import { pickActiveSavingsOffer, type LendingState } from '../../../../../ui/src/runtime/financial/lending';
@@ -79,11 +79,14 @@
     } catch (err) { errorMsg = err instanceof Error ? err.message : flows.saveOut.failed; statusMsg = ''; }
     finally { busy = false; }
   }
+  const savingsParts = $derived(splitMoneyDisplay(formatUsd(projection.primary.savings, decimals)));
 </script>
 
-<section class="ev-card">
-  <p class="ev-muted">{termsCopy.label}</p>
-  <h2 class="ev-hero" data-testid="everyday-savings-balance">{formatUsd(projection.primary.savings, decimals)}</h2>
+<section class="ev-hero-region" aria-label="Savings balance">
+  <p class="ev-label">{termsCopy.label} · separate from Cash</p>
+  <h2 class="ev-hero is-savings" data-testid="everyday-savings-balance">
+    <span>{savingsParts.major}</span>{#if savingsParts.minor}<span class="ev-cents">{savingsParts.minor}</span>{/if}{#if savingsParts.suffix}<span class="ev-suffix">{savingsParts.suffix}</span>{/if}
+  </h2>
   <p class="ev-muted">{termsCopy.note}</p>
   {#if bankTerms}
     <p class="ev-muted ev-num">Current rate: {(bankTerms.savingsInterestBps / 100).toFixed(2)}% APY</p>
@@ -95,7 +98,7 @@
 <form class="ev-card" onsubmit={e => void addToSavings(e)}>
   <label class="ev-field"><span>Amount ({symbol})</span><input class="ev-input" inputmode="decimal" placeholder="50.00" data-testid="everyday-savings-amount" bind:value={amount} disabled={busy} /></label>
   <label class="ev-row" style="min-height:48px;cursor:pointer;align-items:center;">
-    <input type="checkbox" data-testid="everyday-savings-consent" bind:checked={consentChecked} style="width:24px;height:24px;accent-color:#10b981;" />
+    <input type="checkbox" data-testid="everyday-savings-consent" bind:checked={consentChecked} style="width:24px;height:24px;accent-color:#f5f5f7;" />
     <span style="flex:1;font-size:0.92rem;color:#d0d0da;">I understand Savings is lent out to earn interest and is not protected like Cash.</span>
   </label>
   <button type="submit" class="ev-btn primary" data-testid="everyday-savings-add" disabled={!canAdd}>
