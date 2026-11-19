@@ -1,40 +1,47 @@
 # AGENTS.md
 
-On the first message, explain in 3–4 lines how to work with you: execute autonomously at
->=95% confidence, ask the owner below 95% or for a real protocol choice, and report terse
-results with metrics.
-
 Mission: fintech-grade deterministic xln. J/E/A correctness before features. Pure
 transitions, one canonical production path, no silent fallback.
 
-## RELEASE SCOPE (owner decision 2026-10-18; prevails over every older plan in `docs/`)
+## LOCAL OPERATOR CONFIGURATION
 
-- Engine: TypeScript is canonical. The Rust freeze is lifted (2026-10-14): `rscore/` may be
-  edited and committed; tag `rscore-freeze-f1464e84e` is history, not a lock. Rust gates return
-  to `check` only after `bun run rscore:check` is green on that commit. Never stash Rust work.
-- Wallets (owner 2026-11-09): Svelte `frontend/` at `/app` and React `ui/` at `/ui/`
-  are equally important, actively maintained wallets. Neither is frozen. Required financial
-  flows must have functional parity and owning tests in both, using the canonical runtime.
-  Never redirect one wallet to the other or delete either wallet as obsolete.
+- Shared repository rules, scope and protocol invariants live in this file and apply to every
+  contributor and AI harness.
+- Personal or machine-specific workflow settings (language, response format, reporting timers,
+  host topology, external-model routing and spend ledgers) belong in an untracked
+  `AGENTS.local.md` (or harness-native `CLAUDE.local.md` / `AGENTS.override.md` /
+  `.agents/rules/*.md`; see [`docs/agents-local-studio-example.md`](docs/agents-local-studio-example.md)).
+  Read and apply `AGENTS.local.md` when present; local preferences never weaken repository
+  protocol, scope or safety invariants.
+
+## RELEASE SCOPE (prevails over older plans in `docs/`)
+
+- Engine: TypeScript is canonical. `rscore/` may be edited and committed (`rscore-freeze-f1464e84e`
+  is history, not a lock). Rust gates return to `check` only after `bun run rscore:check` is
+  green on that commit. Never stash Rust work.
+- Wallets: Svelte `frontend/` at `/app` and React `ui/` at `/ui/` are equally important,
+  actively maintained wallets. Neither is frozen. Required financial flows must have functional
+  parity and owning tests in both, using the canonical runtime. Never redirect one wallet to
+  the other or delete either wallet as obsolete.
 - Required launch flows: Pay, same-J Swap, Cross-swap and Lending on EVM and native TRON, as
   fast browserless financial scenarios plus all owning browser E2E. Two EVM simulators do not
   establish TVM support. Testnet evidence is not real-funds activation authority.
 - Lending reopens the existing signed bank/facility/term-loan/savings product through canonical
-  production admission and both wallets, preserving exact money, authority, deadlines and recovery.
-  Do not invent oracle liquidation, insurance or cross-J fungible collateral.
-- The agent may create a dedicated Sepolia signer, obtain test ETH and deploy current contracts
+  production admission and both wallets, preserving exact money, authority, deadlines and
+  recovery. Do not invent oracle liquidation, insurance or cross-J fungible collateral.
+- Agents may create a dedicated Sepolia signer, obtain test ETH and deploy current contracts
   without another signing question. Mainnet is open to all participants using their own funds:
   no invite gates, no arbitrary protocol monetary caps; financial and recovery gates stay mandatory.
 - Arrakis remains cancelled. Companies/IPO, XLNC, Base, iOS/Electron/extension and custody are
-  outside this launch unless the owner explicitly changes their scope.
+  outside this launch unless project scope is explicitly changed.
 - MML counts only obligations between unaffiliated Entities. A hub-routed payment counts once,
   on the commercial edge; hub hops and affiliated transfers never count.
-- XLN-1000 ([docs/xln1000.md](docs/xln1000.md), `bun run xln1000`) and
-  [docs/owner-profile.md](docs/owner-profile.md) steer task selection. Release authority is the
-  binary evidence-coverage gate in [docs/improvement-loop.md](docs/improvement-loop.md) and
-  [docs/mainnet-acceptance-gate.md](docs/mainnet-acceptance-gate.md).
+- XLN-1000 ([`docs/xln1000.md`](docs/xln1000.md), `bun run xln1000`) and
+  [`docs/owner-profile.md`](docs/owner-profile.md) steer task selection. Release authority is
+  the binary evidence-coverage gate in [`docs/improvement-loop.md`](docs/improvement-loop.md)
+  and [`docs/mainnet-acceptance-gate.md`](docs/mainnet-acceptance-gate.md).
 
-## CANONICAL TESTNET POLICY (owner decision 2026-10-17)
+## CANONICAL TESTNET POLICY
 
 - XLN is testnet. Obsolete profiles, frames and persisted data are disposable: reject
   unsupported formats loudly and regenerate from current canonical code. Delete retired code,
@@ -47,7 +54,7 @@ transitions, one canonical production path, no silent fallback.
 
 ## EXECUTION PRIORITY (overrides attractive side work)
 
-1. Follow the current user goal literally and preserve every requested deliverable.
+1. Follow the current goal literally and preserve every requested deliverable.
 2. Reach the earliest production artifact or failing production boundary as soon as possible.
 3. Fix only the first observable divergence/root cause, then add its smallest regression test.
 4. Re-run that artifact before expanding coverage, auditing, refactoring or profiling.
@@ -55,9 +62,12 @@ transitions, one canonical production path, no silent fallback.
 
 - Never invent a catalog, taxonomy, abstraction, audit campaign or intermediate gate that
   blocks an explicit production artifact, replay or TPS deliverable.
+- Core (`core/`, `rscore/`, `jurisdictions/`) is deductive; wallet surfaces (`ui/`, `frontend/`)
+  are empirical (product-verified only when an unbriefed person completes the target task;
+  otherwise state plainly that no person has).
 - One implementer owns an area; a reviewer starts only after a stable diff.
-- `todo.md` is the single live queue. The single handoff,
-  [docs/night-work-plan.md](docs/night-work-plan.md), holds only: current SHA, last green
+- [`todo.md`](todo.md) is the single live queue. The single handoff,
+  [`docs/night-work-plan.md`](docs/night-work-plan.md), holds only: current SHA, last green
   command, first red command/error, artifact path, next single command, remaining final gates.
 
 ## ALWAYS
@@ -71,12 +81,12 @@ transitions, one canonical production path, no silent fallback.
 - Browser/F12 verification is required only for frontend or browser-runtime changes.
 - Docs belong in `/docs`, never `/core` or `/frontend`; Russian publications in `/docs/ru/`.
   Everything else follows the English-only source policy.
-- Never redeem a usage reset unless the owner explicitly says so; complaints about tokens or
+- Never redeem a usage reset without explicit human authorization; complaints about tokens or
   requests for compensation/refunds are not authorization.
 - The normative TypeScript/state-machine safety standard is [`docs/fints.md`](docs/fints.md).
   Do not duplicate or weaken it.
 
-## RUNTIME → ENTITY → ACCOUNT CASCADE
+## RUNTIME -> ENTITY -> ACCOUNT CASCADE
 
 | Layer | Live replica | Committed state | Input | Transaction | Frame |
 |---|---|---|---|---|---|
@@ -91,7 +101,7 @@ transitions, one canonical production path, no silent fallback.
   `applyAccountInput`; local admission never enters routing/P2P.
 - `*State` holds only frame-committed deterministic data. Mempools, candidates, ACK/resend,
   transport, watchdogs, worker positions and retry state belong to the live replica envelope.
-  `*Replica` is live data; `*Machine` is transition logic, never a data interface.
+- `*Replica` is live data; `*Machine` is transition logic, never a data interface.
 - No shared base reducers across Runtime, Entity and Account: their trust boundaries differ.
 - Resolve ambiguous ownership/naming from production code and
   [`docs/core/rjea-architecture.md`](docs/core/rjea-architecture.md); ask only for a real fork.
@@ -126,7 +136,7 @@ transitions, one canonical production path, no silent fallback.
   Transaction-kind completeness is a final audit per concrete `AccountTx`/`EntityTx`, never
   A/B/C groups. Compilation or replay alone never establishes live financial parity.
 
-## REJECT POLICY (owner canon 2026-09-05, quorum-confirmed 2026-09-07)
+## REJECT POLICY
 
 - A user or peer can never take a Runtime down. A sender-caused failure is a typed reject
   disposition decided inside the RJEA transition without reading process env; the Runtime loop
@@ -140,14 +150,15 @@ transitions, one canonical production path, no silent fallback.
 ## ONE CANONICAL PRODUCTION PATH
 
 - Authenticated relay is the canonical user-to-user financial transport when users have no
-  direct hub endpoint (owner 2026-10-18), not a fallback. Keep sender/destination signatures,
-  session authentication, replay protection and committed WAL/outbox ordering.
+  direct hub endpoint, not a fallback. Keep sender/destination signatures, session
+  authentication, replay protection and committed WAL/outbox ordering.
 - No legacy behavior, compatibility aliases, fallback readers/writers, duplicate financial
   formulas, `v2`/`v3` branches or parallel implementations. Replace the canonical path
   atomically and delete the retired one; obsolete persisted data is rejected loudly.
 - Never add a stub, test-mode fake, conditional skip, temporary workaround or hidden compromise.
-  Below 90% confidence in the canonical fix, stop and present the exact fork.
-- Do not create mocks/stubs unless the owner asks. Debug consensus using complete state evidence.
+  When the canonical fix has a real architectural fork, stop and present the exact fork.
+- Do not create mocks/stubs in core paths unless explicitly requested. Debug consensus using
+  complete state evidence.
 - Keep destructive reset/clearDB/dev actions strongly gated.
 
 ## STORAGE AND RECOVERY
@@ -164,64 +175,31 @@ transitions, one canonical production path, no silent fallback.
   ordered digests; detailed Account dumps are lazy after the first mismatch.
 - Details: [`docs/wal.md`](docs/wal.md), [`docs/runtime/storage.md`](docs/runtime/storage.md).
 
-## FROZEN CORE
+## FROZEN CORE AND GOVERNANCE BOUNDARIES
 
-- Never run `bun run frozen-core:approve`; only the owner approves interactively.
+- Never run `bun run frozen-core:approve` from an agent; interactive human maintainer approval only.
 - `FROZEN_CORE_VIOLATION` is a hard stop: report old/new hashes and wait.
 - Never edit `frozen-core.json` manually or bypass `frozen-core:check`.
 - Solidity changes require synchronized artifacts/typechain and explicit bytecode/hash review.
+- Existing invariants decide routine implementation; new protocol/wire choices, launch-scope
+  changes, manifest/lockfile upgrades (preserving pre-update locks, patches and ABI/bytecode
+  before/after hashes) and any real-funds signing or transfers require explicit maintainer
+  authorization.
 
-## CONFIDENCE AND AUTHORITY
+## COLLABORATION, GIT AND LANDING
 
-- >=95% confidence with a clear existing invariant: execute autonomously. <95% or materially
-  different protocol choices: stop and ask the owner.
-- Consensus/crypto/contract changes need owner confirmation only when they create a new choice;
-  do not re-ask a decision already in the goal, this file or canonical code. Read-only
-  diagnostics and in-scope implementation steps need no approval.
-- Wallet and deployment preparation (signer, unsigned packet, cost) is delegated; unspecified
-  real-funds signing or transfers still require the owner.
-
-## GIT AND SHARED WORKSPACE
-
-- Always work on `main` (owner 2026-10-17). No task branches or worktrees; never force-push.
-- Preserve unrelated user changes on both Macs, including owner files held by the
-  synchronization controller; synchronization never discards or overwrites them.
-- No `wip:` commits. Commit only owned paths with `git commit -- <paths>`. Before a shared-tree
-  commit, stop concurrent writers, run formatting and `git diff --check`. Failed verification is
-  not a release-ready commit. Never push without relevant L1/L2 evidence and `bun run check`.
-- Release evidence names a committed SHA checked on a clean tree; durable evidence lives under
-  `docs/evidence/`, never only in `/tmp`. Auditors may use a read-only checkout at an immutable SHA.
-
-## STUDIO EXECUTION AND DEPENDENCIES (owner decision 2026-10-18)
-
-- All implementation, builds, tests and agents run on Mac Studio. MacBook is control, transfer
-  and exact-SHA proof retrieval only; no project verification there.
-- The sole integrator owns manifests, lockfiles and used JS CLI updates to current official
-  stable releases, including necessary major API changes. Preserve exact pre-update source/locks;
-  reconcile patches/overrides with upstream; regenerate ABI/bytecode/TypeChain with recorded
-  before/after hashes. Unsupported TVM/compiler combinations are named constraints, never hidden
-  old pins. Re-run financial/recovery scenarios and browser gates on the new candidate;
-  pre-update evidence cannot certify it.
-- The coordinator owns OpenCode maintenance; do not run a competing update or replace
-  credentials/settings. Preserve native CLI provenance and authentication routes.
-
-## REVIEW AND EXTERNAL MODELS
-
-- External auditors/models run only when the owner explicitly requests them. Owner 2026-11-14:
-  a change lands after a green full Studio verify; the three-AI quorum of 2026-10-26 is no
-  longer required. When the owner does request a review, each leg is smoke-tested on a known
-  answer first. Subscriptions first:
-  Codex, Claude (bounded `claude -p --model claude-opus-5-5` on Studio), Z.ai via pi
-  `zai-coding-cn`. All paid external-model calls share USD 10 per rolling hour across
-  providers, agents, harnesses and retries, administered by the sole integrator as the single
-  Quorum reservation owner; preserve historical unresolved holds and costs. Reserve before
-  dispatch; unresolved calls retain their full reserved maximum; a new hour, agent or restart
-  never renews an unresolved reservation. Never substitute models or accounts.
-- Reviews are read-only, one bounded question on an immutable SHA/diff, after a stable diff;
-  they never block the first financial artifact or replace execution. Verify each finding
-  independently; record actual model, result and cost (unknown is not zero).
-- Never launch Codex Security scans unless the owner names them; "audit", "review" or "check
-  Solidity" means ordinary manual review.
+- Contributors and AI harnesses run development and targeted verification locally on their own
+  machines. Landing changes to shared `origin/main` requires a green full Mac Studio verify
+  (`VERIFY_PASS`) on the candidate SHA; durable release evidence lives under `docs/evidence/`,
+  never only in `/tmp`.
+- Always work on `main`. No task branches or worktrees; never force-push.
+- Assume concurrent writers may exist. Preserve unrelated edits, commit only owned paths with
+  `git commit -- <paths>` (no `wip:` commits), and run formatting plus `git diff --check`
+  before committing. Never push without relevant L1/L2 evidence and `bun run check`.
+- External model reviews run only when explicitly requested: read-only, one bounded question on
+  an immutable SHA/diff after a stable diff, smoke-tested on a known answer first; verify each
+  finding independently and record model, result and cost. Never launch Codex Security scans
+  unless explicitly named; "audit", "review" or "check Solidity" means ordinary manual review.
 
 ## STAND, VERIFICATION AND PERFORMANCE
 
@@ -250,7 +228,7 @@ transitions, one canonical production path, no silent fallback.
   encode/hash/materialization/scan or batching before adding state. Worker trials run
   sequentially on independent DB copies ([`docs/parallel.md`](docs/parallel.md)).
 
-## TYPESCRIPT AND CODE STYLE
+## TYPESCRIPT, CODE STYLE AND DEBUGGING
 
 - Validate at source, fail fast, trust at use. Avoid defensive `?.` after validation.
 - Functional/declarative code, immutable updates. Size target: functions <30 lines, files
@@ -260,28 +238,10 @@ transitions, one canonical production path, no silent fallback.
 - `safeStringify` for BigInt, `buffersEqual` for buffers, `getAvailableJurisdictions()` for
   contract addresses. `ui`/`frontend` are UI only; runtime owns logic. `localhost:8080` is the
   single local entry point. `xln` and markdown filenames are lowercase.
-
-## COMMUNICATION
-
-- Respond in Russian with masculine self-reference; code, comments and docs stay English. MAX
-  ADHD readability: result first (reasoning only when asked), compact ASCII sections, 3–5 bullets
-  each, numbers first, end with `NEXT: A) B) C)`. No filler, repeated context or invented certainty.
-- Proactively recommend the better next step. Prioritize MML, never submitted traffic or hype.
-- Label subjective estimates and criteria; separate measurements from hypotheses. Model rankings
-  need task kind, exact identity, sample count and evidence. Peer praise is not verified
-  intelligence or release readiness.
-- During autonomous long work, report user-visible progress at least every ten minutes, with a
-  percentage tied to explicit completed/total checks for the current stage (owner, 2026-09-06).
-- Every 30 minutes of sustained work (owner 2026-10-18) also post a
-  concise owner-visible Russian report: task names, measured completed/total/percent per stage,
-  closures, exact main SHA and check result, first remaining failure, next single command and a
-  method reflection. Report even when stalled; never imply unmeasured mainnet readiness; repeated
-  failure without new evidence requires a changed hypothesis. No separate progress log.
-  Scheduling runs only on Studio via a verified native heartbeat; never claim a paused scheduler
-  is active or replace it with handwritten automation/cron.
-- Track delivered product outcomes and one final immutable SHA. A saved report, PID, review or
-  commit is not owner delivery or release approval.
-- Cross-harness collaboration: [`docs/agent-workflow.md`](docs/agent-workflow.md); personas never
-  override this file. Consensus debugging: dump and diff both sides at the first divergent frame
-  (`core/qa/runtime-ascii.ts`, `/tmp/*-frames.json` + `jq`); see [`docs/debug.md`](docs/debug.md)
-  and [`docs/debugging/consensus-debugging-guide.md`](docs/debugging/consensus-debugging-guide.md).
+- Prioritize MML, never submitted traffic or hype. Label subjective estimates and criteria;
+  separate measurements from hypotheses. Peer praise or multi-model agreement is not
+  verification or release readiness; a saved report, PID, review or commit is not delivery.
+- Cross-harness collaboration: [`docs/agent-workflow.md`](docs/agent-workflow.md). Consensus
+  debugging: dump and diff both sides at the first divergent frame (`core/qa/runtime-ascii.ts`,
+  `/tmp/*-frames.json` + `jq`); see [`docs/debug.md`](docs/debug.md) and
+  [`docs/debugging/consensus-debugging-guide.md`](docs/debugging/consensus-debugging-guide.md).
