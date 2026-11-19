@@ -241,7 +241,6 @@
     --ev-wash-dispute: rgba(242, 109, 109, 0.11);
     --ev-surface: rgba(226, 232, 240, 0.05);
     --ev-surface-active: rgba(226, 232, 240, 0.1);
-    --ev-input-bg: #101318;
     --ev-line: rgba(226, 232, 240, 0.1);
     --ev-line-2: rgba(226, 232, 240, 0.16);
     --ev-ink: #e8ecf2;
@@ -267,9 +266,12 @@
     --ev-ring-mid: #8a9099;
     --ev-ring-lo: #2b2e33;
     --ev-ring-opacity: 0.38;
+    --ev-press: rgba(0, 0, 0, 0.9);
+    --ev-soft-pressed: #040405;
+    --ev-input-edge: #5f656e;
     --ev-primary-streak: rgba(255, 255, 255, 0.62);
-    --ev-brush-hi: rgba(255, 255, 255, 0.05);
-    --ev-brush-lo: rgba(0, 0, 0, 0.035);
+    /* Brushed metal: long irregular streaks (anisotropic noise), never a regular line pattern. */
+    --ev-brush: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='64'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.006 0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.1 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23b%29'/%3E%3C/svg%3E");
     --ev-light-x: 54%;
     --ev-light-y: -12%;
     --ev-bevel-angle: 128deg;
@@ -314,10 +316,9 @@
     --ev-wash-dispute: rgba(223, 27, 65, 0.08);
     --ev-surface: rgba(255, 255, 255, 0.74);
     --ev-surface-active: rgba(15, 23, 42, 0.06);
-    --ev-input-bg: #ffffff;
     --ev-line: rgba(15, 23, 42, 0.09);
     --ev-line-2: rgba(15, 23, 42, 0.15);
-    --ev-ink: #1a1f36;
+    --ev-ink: #161a22;
     --ev-muted: #59636e;
     --ink-settled: #0f1216;
     --ink-arriving: #0369a1;
@@ -333,13 +334,17 @@
     --ev-soft-drop: rgba(15, 23, 42, 0.1);
     --ev-glint: rgba(60, 71, 89, 0.5);
     --ev-glint-base: rgba(15, 23, 42, 0.08);
+    /* Light rings stay pale: a dark arc on porcelain reads as a smudge, not a polished edge. */
     --ev-ring-hi: #ffffff;
-    --ev-ring-mid: #aeb6c2;
-    --ev-ring-lo: #6b7482;
-    --ev-ring-opacity: 0.5;
+    --ev-ring-mid: #c9cfd8;
+    --ev-ring-lo: #9aa3b0;
+    --ev-ring-opacity: 0.7;
+    /* Pressed keys sink: the inset needs more weight on a pale face to read. */
+    --ev-press: rgba(15, 23, 42, 0.22);
+    --ev-soft-pressed: #dce0e7;
+    --ev-input-edge: #7b8390;
     --ev-primary-streak: rgba(255, 255, 255, 0.14);
-    --ev-brush-hi: rgba(255, 255, 255, 0.035);
-    --ev-brush-lo: rgba(0, 0, 0, 0.08);
+    --ev-brush: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='64'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.006 0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.055 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23b%29'/%3E%3C/svg%3E");
   }
   .everyday-backdrop::after {
     content: '';
@@ -363,11 +368,11 @@
   .everyday-shell {
     position: relative;
     z-index: 1;
-    padding: 16px 20px 28px;
+    padding: 16px var(--content-pad) 28px;
     display: flex;
     flex-direction: column;
     gap: 20px;
-    max-width: 680px;
+    max-width: var(--content-max);
     margin: 0 auto;
     width: 100%;
     box-sizing: border-box;
@@ -376,6 +381,8 @@
   .ev-topbar > :global(.context-switcher) { min-width: 0; flex: 0 1 auto; }
   .ev-topbar :global(.context-switcher .dropdown-trigger) { width: auto; min-width: 0; background: transparent !important; border-color: transparent !important; box-shadow: none !important; padding: 2px 8px 2px 2px !important; color: var(--ink-settled) !important; }
   .ev-topbar :global(.context-switcher .dropdown-trigger:hover) { background: var(--ev-surface-active) !important; }
+  /* Everyday owns its inks: the chevron follows the Everyday theme, not the app theme. */
+  .ev-topbar :global(.pill-arrow) { color: var(--ev-muted) !important; }
   .ev-topbar :global(.pill-trigger.brand-trigger) { display: inline-flex; align-items: center; gap: 10px; padding: 2px; background: transparent; border: 0; }
   .ev-topbar :global(.ev-brand-mark) { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: linear-gradient(calc(var(--ev-bevel-angle) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%); color: var(--ev-btn-primary-fg); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 1px 3px rgba(0, 0, 0, 0.35); flex: none; }
   .ev-topbar :global(.ev-brand-wordmark) { color: var(--ink-settled); font-size: 1.0625rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
@@ -387,7 +394,8 @@
   .ev-icon-btn.active, .ev-icon-btn:hover { background: var(--ev-surface-active); }
   .ev-nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
   .ev-nav-btn { min-height: 48px; border-radius: var(--ev-radius); border: 1px solid transparent; background: transparent; color: var(--ev-muted); font: inherit; font-weight: 600; cursor: pointer; transition: background 180ms ease-out, color 180ms ease-out; }
-  .ev-nav-btn.active { background: linear-gradient(to bottom var(--in-oklab), var(--ev-btn-secondary-top), var(--ev-btn-secondary-bot)); color: var(--ink-settled); border-color: var(--ev-line-2); box-shadow: inset 0 1px 0 var(--ev-btn-inset); }
+  /* Selected means sunk, the same as a pressed key: never a lighter tile. */
+  .ev-nav-btn.active { background: var(--ev-soft-pressed); color: var(--ink-settled); border-color: transparent; box-shadow: inset 0 1px 3px var(--ev-press), inset 0 0 0 1px var(--ev-soft-drop); }
   .ev-main { display: flex; flex-direction: column; gap: 20px; }
   .everyday-shell :global(.ev-hero-region) { position: relative; padding: 8px 0 4px; display: flex; flex-direction: column; gap: 12px; }
   .everyday-shell :global(.ev-hero-region.is-sheen::after) { content: ''; position: absolute; inset: -8px -12px; pointer-events: none; border-radius: var(--ev-radius); background: linear-gradient(112deg var(--in-oklab), transparent 22%, var(--ev-sheen) 48%, transparent 74%); animation: ev-settle-sheen 520ms ease-out forwards; }
@@ -396,12 +404,12 @@
   .everyday-shell :global(.ev-balance-trigger) { appearance: none; border: 0; background: transparent; padding: 0; margin: 0; text-align: left; cursor: pointer; width: fit-content; min-height: 48px; display: inline-flex; align-items: baseline; border-radius: var(--ev-radius); }
   .everyday-shell :global(.ev-balance-trigger:focus-visible) { outline: 2px solid var(--ink-settled); outline-offset: 4px; }
   .everyday-shell :global(.ev-card) { background: var(--ev-surface); border: 1px solid var(--ev-line-2); box-shadow: inset 0 1px 0 var(--ev-silver-rim); border-radius: var(--ev-radius); padding: 20px; display: flex; flex-direction: column; gap: 14px; }
-  .everyday-shell :global(.ev-hero) { font-size: clamp(2.8rem, 7.5vw, 4rem); font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.035em; margin: 0; line-height: 1.04; background: linear-gradient(calc(var(--ev-bevel-angle) + 38deg) var(--in-oklab), var(--ev-num-top) 0%, var(--ev-num-mid) 54%, var(--ev-num-bot) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; transition: opacity 200ms ease-out; }
+  .everyday-shell :global(.ev-hero) { font-size: var(--money-hero); font-weight: var(--money-hero-weight); font-variant-numeric: tabular-nums; letter-spacing: -0.035em; margin: 0; line-height: 1.04; background: linear-gradient(calc(var(--ev-bevel-angle) + 38deg) var(--in-oklab), var(--ev-num-top) 0%, var(--ev-num-mid) 54%, var(--ev-num-bot) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; transition: opacity 200ms ease-out; }
   .everyday-shell :global(.ev-hero.is-syncing) { opacity: 0.62; }
   .everyday-shell :global(.ev-hero.is-savings) { background: none; -webkit-background-clip: border-box; background-clip: border-box; color: var(--ink-owed); }
   .everyday-shell :global(.ev-cents) { font-size: 0.52em; font-weight: 600; vertical-align: 0.24em; margin-left: 0.02em; opacity: 0.72; letter-spacing: -0.01em; }
   .everyday-shell :global(.ev-suffix) { font-size: 0.42em; font-weight: 600; opacity: 0.68; letter-spacing: 0; }
-  .everyday-shell :global(.ev-delta) { margin: 0; font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-delta-in); }
+  .everyday-shell :global(.ev-delta) { margin: 0; font-size: var(--money-sm); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-delta-in); }
   .everyday-shell :global(.ev-delta.is-out) { color: var(--ev-muted); }
   .everyday-shell :global(.ev-truth) { margin: 0; padding: 10px 14px; border-left: 2px solid var(--ev-line-2); font-size: 0.875rem; line-height: 1.5; color: var(--ev-ink); max-width: 54ch; }
   .everyday-shell :global(.ev-muted) { color: var(--ev-muted); font-size: 0.9rem; line-height: 1.5; margin: 0; max-width: 54ch; }
@@ -417,11 +425,13 @@
   .everyday-shell :global(.ev-test-row:first-child) { border-top: 0; padding-top: 2px; }
   .everyday-shell :global(.ev-test-row:last-child) { padding-bottom: 2px; }
   .everyday-shell :global(.ev-test-row > .ev-btn) { flex: 0 0 auto; min-width: 128px; }
-  .everyday-shell :global(.ev-switch-input) { appearance: none; -webkit-appearance: none; flex: none; width: 48px; height: 28px; border-radius: 999px; border: 1px solid var(--ev-line-2); background: var(--ev-surface); position: relative; cursor: pointer; transition: background 180ms ease-out, border-color 180ms ease-out; }
-  .everyday-shell :global(.ev-switch-input::after) { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--ev-muted); transition: transform 180ms ease-out, background 180ms ease-out; }
-  .everyday-shell :global(.ev-switch-input:checked) { background: var(--ink-action); border-color: var(--ink-action); }
+  /* A 48px hit area around a 28px track: the input is the touch target, the track and thumb are drawn inside it. */
+  .everyday-shell :global(.ev-switch-input) { appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 52px; height: 48px; margin: 0; border: 0; background: none; cursor: pointer; }
+  .everyday-shell :global(.ev-switch-input::before) { content: ''; position: absolute; left: 2px; top: 10px; width: 48px; height: 28px; box-sizing: border-box; border-radius: 999px; border: 1px solid var(--ev-line-2); background: var(--ev-surface); transition: background 180ms ease-out, border-color 180ms ease-out; }
+  .everyday-shell :global(.ev-switch-input::after) { content: ''; position: absolute; top: 14px; left: 6px; width: 20px; height: 20px; border-radius: 50%; background: var(--ev-muted); transition: transform 180ms ease-out, background 180ms ease-out; }
+  .everyday-shell :global(.ev-switch-input:checked::before) { background: var(--ink-action); border-color: var(--ink-action); }
   .everyday-shell :global(.ev-switch-input:checked::after) { transform: translateX(20px); background: var(--ink-action-fg); }
-  .everyday-shell :global(.ev-input) { min-height: 48px; padding: 10px 14px; border-radius: var(--ev-radius); border: 1px solid var(--ev-line-2); background: var(--ev-input-bg); color: var(--ink-settled); font: inherit; width: 100%; box-sizing: border-box; }
+  .everyday-shell :global(.ev-input) { min-height: 48px; padding: 10px 14px; border-radius: var(--ev-radius); border: 1px solid var(--ev-input-edge); background: transparent; box-shadow: inset 0 1px 2px var(--ev-soft-drop); color: var(--ink-settled); font: inherit; width: 100%; box-sizing: border-box; }
   .everyday-shell :global(.ev-row) { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .everyday-shell :global(.ev-field) { display: flex; flex-direction: column; gap: 6px; font-size: 0.875rem; color: var(--ev-ink); }
   .everyday-shell :global(.ev-pill) { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: var(--ev-radius); font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; background: transparent; border: 1px dashed var(--ink-arriving); color: var(--ink-arriving); width: fit-content; }
@@ -447,16 +457,26 @@
   /* ---------- Materials (mirrors ui/src/styles/everyday.css) ----------
    * The ground light is the only light; edges, rings and the primary streak catch it at --ev-glare-pos / --ev-bevel-angle. */
   .everyday-backdrop::before { content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none; background-image: var(--ev-grain); background-size: 180px; mix-blend-mode: overlay; opacity: var(--ev-grain-opacity); }
-  .everyday-shell :global(.ev-btn:not(.primary):not(.danger)), .everyday-shell :global(.ev-preview-pill), .everyday-shell :global(.ev-card), .ev-test-trigger, .ev-icon-btn { position: relative; isolation: isolate; background: radial-gradient(120% 90% at 50% 0% var(--in-oklab), var(--ev-soft-sheen), transparent 70%), var(--ev-soft-face); border-color: transparent; box-shadow: inset 0 1px 1.5px var(--ev-soft-rim), 0 1px 2px var(--ev-soft-drop); }
-  .everyday-shell :global(.ev-btn:not(.primary):not(.danger))::after, .everyday-shell :global(.ev-preview-pill)::after, .everyday-shell :global(.ev-card)::after, .ev-test-trigger::after, .ev-icon-btn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background-image: var(--ev-velvet); background-size: 120px; mix-blend-mode: soft-light; opacity: 0.35; }
-  .everyday-shell :global(.ev-btn:not(.primary):not(.danger))::before, .everyday-shell :global(.ev-preview-pill)::before, .ev-test-trigger::before, .ev-icon-btn::before { content: ''; position: absolute; inset: 0; z-index: 1; border-radius: inherit; padding: 1px; pointer-events: none; background: conic-gradient(from calc(var(--ev-bevel-angle) + 82deg), var(--ev-ring-lo), var(--ev-ring-hi) 7%, var(--ev-ring-mid) 16%, var(--ev-ring-lo) 38%, var(--ev-ring-mid) 58%, var(--ev-ring-hi) 70%, var(--ev-ring-mid) 78%, var(--ev-ring-lo)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude; opacity: var(--ev-ring-opacity); transition: opacity 140ms ease-out; }
-  .everyday-shell :global(.ev-btn:not(.primary):not(.danger):hover:not(:disabled))::before, .everyday-shell :global(.ev-preview-pill:hover)::before, .ev-test-trigger:hover::before, .ev-icon-btn:hover::before { opacity: 0.65; }
-  .everyday-shell :global(.ev-btn:not(.primary):not(.danger):active:not(:disabled)), .everyday-shell :global(.ev-preview-pill[aria-pressed='true']), .ev-test-trigger.active, .ev-icon-btn.active { background: var(--ev-soft-face); color: var(--ink-settled); box-shadow: inset 0 1px 3px var(--ev-soft-drop); }
-  .everyday-shell :global(.ev-preview-pill[aria-pressed='true'])::before, .ev-test-trigger.active::before, .ev-icon-btn.active::before { opacity: 1; }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger):not(.quiet)), .everyday-shell :global(.ev-preview-pill), .everyday-shell :global(.ev-card), .ev-test-trigger, .ev-icon-btn { position: relative; isolation: isolate; background: radial-gradient(120% 90% at 50% 0% var(--in-oklab), var(--ev-soft-sheen), transparent 70%), var(--ev-soft-face); border-color: transparent; box-shadow: inset 0 1px 1.5px var(--ev-soft-rim), 0 1px 2px var(--ev-soft-drop); }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger):not(.quiet))::after, .everyday-shell :global(.ev-preview-pill)::after, .everyday-shell :global(.ev-card)::after, .ev-test-trigger::after, .ev-icon-btn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1; background-image: var(--ev-velvet); background-size: 120px; mix-blend-mode: soft-light; opacity: 0.35; }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger):not(.quiet))::before, .everyday-shell :global(.ev-preview-pill)::before, .ev-test-trigger::before, .ev-icon-btn::before { content: ''; position: absolute; inset: 0; z-index: 1; border-radius: inherit; padding: 1px; pointer-events: none; background: conic-gradient(from calc(var(--ev-bevel-angle) + 82deg), var(--ev-ring-lo), var(--ev-ring-hi) 7%, var(--ev-ring-mid) 16%, var(--ev-ring-lo) 38%, var(--ev-ring-mid) 58%, var(--ev-ring-hi) 70%, var(--ev-ring-mid) 78%, var(--ev-ring-lo)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude; opacity: var(--ev-ring-opacity); transition: opacity 140ms ease-out; }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger):not(.quiet):hover:not(:disabled))::before, .everyday-shell :global(.ev-preview-pill:hover)::before, .ev-test-trigger:hover::before, .ev-icon-btn:hover::before { opacity: 0.65; }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger):not(.quiet):active:not(:disabled)), .everyday-shell :global(.ev-btn:not(.primary):not(.danger):not(.quiet)[aria-pressed='true']), .everyday-shell :global(.ev-preview-pill[aria-pressed='true']), .ev-test-trigger.active, .ev-icon-btn.active { background: var(--ev-soft-pressed); color: var(--ink-settled); box-shadow: inset 0 1px 3px var(--ev-press), inset 0 0 0 1px var(--ev-soft-drop); }
+  .everyday-shell :global(.ev-btn:not(.primary):not(.danger):not(.quiet)[aria-pressed='true'])::before, .everyday-shell :global(.ev-preview-pill[aria-pressed='true'])::before, .ev-test-trigger.active::before, .ev-icon-btn.active::before { opacity: 1; }
+  /* Amount fields carry the money step below the hero (mirrors React .input.boxed.num). */
+  .everyday-shell :global(.ev-input[inputmode='decimal']) { min-height: 60px; font-size: var(--money-lg); font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .everyday-shell :global(.ev-input:focus) { outline: none; border-color: var(--ink-settled); box-shadow: inset 0 1px 2px var(--ev-soft-drop), 0 0 0 3px color-mix(in oklab, var(--ink-settled) 22%, transparent); }
+  .everyday-shell :global(.ev-btn:focus-visible), .everyday-shell :global(.ev-preview-pill:focus-visible), .ev-test-trigger:focus-visible, .ev-icon-btn:focus-visible { outline: 2px solid var(--ink-settled); outline-offset: 2px; }
+  .everyday-shell :global(.ev-notice) { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: start; max-width: 54ch; margin: 0; font-size: 0.85rem; line-height: 1.5; color: var(--ev-muted); }
+  .everyday-shell :global(.ev-notice)::before { content: ''; width: 18px; height: 18px; margin-top: 1px; background: var(--ev-muted); opacity: 0.8; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z'/%3E%3C/svg%3E") center / contain no-repeat; }
+  .everyday-shell :global(.ev-notice[data-category='unilateral-exit-needs-gas']), .everyday-shell :global(.ev-notice[data-category='tower-issue']) { color: var(--ev-ink); }
+  .everyday-shell :global(.ev-notice[data-category='unilateral-exit-needs-gas'])::before, .everyday-shell :global(.ev-notice[data-category='tower-issue'])::before { background: var(--ink-owed); opacity: 1; }
   .ev-test-trigger:hover, .ev-icon-btn:hover { background: radial-gradient(120% 90% at 50% 0% var(--in-oklab), var(--ev-soft-sheen), transparent 70%), var(--ev-soft-face); color: var(--ink-settled); }
   .everyday-shell :global(.ev-card)::before { content: ''; position: absolute; left: 12px; right: 12px; top: 0; height: 1px; pointer-events: none; background: linear-gradient(90deg, transparent, var(--ev-glint-base) 14%, var(--ev-glint) var(--ev-glare-pos), var(--ev-glint-base) 86%, transparent); opacity: 0.7; }
+  .everyday-shell :global(.ev-card ~ .ev-card)::before { background: linear-gradient(90deg, transparent, var(--ev-glint-base) 14%, var(--ev-glint-base) 86%, transparent); }
   .ev-topbar { padding-bottom: 14px; background: linear-gradient(90deg, transparent, var(--ev-glint-base) 14%, var(--ev-glint) var(--ev-glare-pos), var(--ev-glint-base) 86%, transparent) bottom / 100% 1px no-repeat; }
-  .everyday-shell :global(.ev-btn.primary) { background: linear-gradient(calc(var(--ev-bevel-angle) - 16deg), transparent calc(var(--ev-glare-pos) - 14%), var(--ev-primary-streak) var(--ev-glare-pos), transparent calc(var(--ev-glare-pos) + 12%)), repeating-linear-gradient(0deg, var(--ev-brush-hi) 0 1px, var(--ev-brush-lo) 1px 2px), linear-gradient(calc(var(--ev-bevel-angle) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%); }
+  .everyday-shell :global(.ev-btn.primary:disabled) { background: color-mix(in oklab, var(--ev-ink) 8%, transparent); border-color: transparent; color: var(--ev-muted); box-shadow: none; opacity: 1; }
+  .everyday-shell :global(.ev-btn.primary:not(:disabled)) { background: linear-gradient(calc(var(--ev-bevel-angle) - 16deg), transparent calc(var(--ev-glare-pos) - 14%), var(--ev-primary-streak) var(--ev-glare-pos), transparent calc(var(--ev-glare-pos) + 12%)), var(--ev-brush), linear-gradient(calc(var(--ev-bevel-angle) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%); }
   @media (forced-colors: active) {
     .everyday-backdrop::before, .everyday-shell :global(.ev-btn)::before, .everyday-shell :global(.ev-btn)::after, .everyday-shell :global(.ev-preview-pill)::before, .everyday-shell :global(.ev-preview-pill)::after, .everyday-shell :global(.ev-card)::before, .everyday-shell :global(.ev-card)::after, .ev-test-trigger::before, .ev-test-trigger::after, .ev-icon-btn::before, .ev-icon-btn::after { display: none; }
   }

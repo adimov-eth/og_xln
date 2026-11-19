@@ -391,7 +391,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .account-search:focus {
-    border-color: color-mix(in srgb, var(--theme-accent, #facc15) 72%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 72%, transparent);
   }
 
   .page-label {

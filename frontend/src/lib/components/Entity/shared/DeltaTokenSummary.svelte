@@ -259,7 +259,7 @@
 
   .token-icon.other {
     background: #4b5563;
-    color: #f3f4f6;
+    color: #ffffff;
   }
 
   .token-text {
@@ -270,7 +270,7 @@
   }
 
   .token-symbol {
-    color: #f3f4f6;
+    color: var(--theme-text-primary, #f3f4f6);
     font-size: 26px;
     line-height: 1;
     font-weight: 700;
@@ -278,7 +278,7 @@
   }
 
   .token-name {
-    color: #9ca3af;
+    color: var(--theme-text-secondary, #9ca3af);
     font-size: 12px;
     line-height: 1.1;
     white-space: nowrap;
@@ -303,12 +303,12 @@
   }
 
   .cap.out {
-    color: #f3f4f6;
+    color: var(--theme-text-primary, #f3f4f6);
     align-items: flex-start;
   }
 
   .cap.in {
-    color: #d1d5db;
+    color: var(--theme-text-primary, #d1d5db);
     align-items: flex-end;
   }
 
@@ -316,7 +316,7 @@
     font-size: 10px;
     text-transform: none;
     letter-spacing: 0.02em;
-    color: #9ca3af;
+    color: var(--theme-text-secondary, #9ca3af);
     font-weight: 700;
     line-height: 1;
   }
@@ -340,7 +340,7 @@
   }
 
   .hold-hint {
-    color: color-mix(in srgb, var(--theme-accent, #fbbf24) 88%, white 12%);
+    color: color-mix(in srgb, var(--theme-accent, #c5cfde) 88%, white 12%);
     font-size: 0.48em;
     font-weight: 700;
     letter-spacing: -0.01em;
@@ -361,7 +361,7 @@
     border-radius: 3px;
     border: 1px solid #3f3f46;
     background: transparent;
-    color: #52525b;
+    color: var(--theme-text-muted, #52525b);
     cursor: pointer;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -380,7 +380,7 @@
 
   .summary-action:hover:not(:disabled) {
     border-color: rgba(134, 239, 172, 0.72);
-    color: #f0fdf4;
+    color: #050608;
     background: rgba(134, 239, 172, 0.26);
   }
 
@@ -388,7 +388,7 @@
     opacity: 0.45;
     cursor: not-allowed;
     border-color: #3f3f46;
-    color: #71717a;
+    color: var(--theme-text-muted, #71717a);
     background: transparent;
   }
 
@@ -401,15 +401,15 @@
     border-radius: 3px;
     border: 1px solid #3f3f46;
     background: transparent;
-    color: #52525b;
+    color: var(--theme-text-muted, #52525b);
     cursor: pointer;
     margin-left: 5px;
     transition: all 0.15s ease;
     line-height: 1.2;
   }
   .summary-action-inline:hover:not(:disabled) {
-    border-color: #fbbf24;
-    color: #fbbf24;
+    border-color: var(--theme-accent, #c5cfde);
+    color: var(--theme-accent, #c5cfde);
     background: rgba(251, 191, 36, 0.08);
   }
   .summary-action-inline:disabled {
@@ -459,7 +459,7 @@
 
   .delta-summary.compact .token-name {
     font-size: 11px;
-    color: #9ca3af;
+    color: var(--theme-text-secondary, #9ca3af);
     line-height: 1.05;
   }
 
@@ -473,7 +473,7 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    color: #d1d5db;
+    color: var(--theme-text-primary, #d1d5db);
     white-space: nowrap;
     min-width: 0;
     font-family: 'JetBrains Mono', 'IBM Plex Mono', monospace;
@@ -493,7 +493,7 @@
     letter-spacing: 0.02em;
     line-height: 1;
     text-transform: none;
-    color: #9ca3af;
+    color: var(--theme-text-secondary, #9ca3af);
     font-weight: 700;
     flex: 0 0 auto;
   }
@@ -503,7 +503,7 @@
     line-height: 1;
     font-weight: 650;
     letter-spacing: -0.02em;
-    color: #f3f4f6;
+    color: var(--theme-text-primary, #f3f4f6);
     font-variant-numeric: tabular-nums;
     font-feature-settings: 'tnum' 1;
     display: inline-flex;
@@ -536,7 +536,7 @@
     line-height: 1;
     font-weight: 650;
     letter-spacing: -0.02em;
-    color: #e5e7eb;
+    color: var(--theme-text-primary, #e5e7eb);
     font-variant-numeric: tabular-nums;
     font-feature-settings: 'tnum' 1;
     display: inline-flex;
@@ -545,7 +545,7 @@
   }
 
   .inbound-label {
-    color: #52525b;
+    color: var(--theme-text-muted, #52525b);
     font-size: 10px;
     font-weight: 500;
     text-transform: none;

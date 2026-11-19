@@ -331,7 +331,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
 
 <style>
   .action-card {
-    background: #18181b;
+    background: var(--theme-surface, #121418);
     border: 1px solid #27272a;
     border-radius: 10px;
     padding: 12px;
@@ -340,7 +340,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
 
   .action-card h4 {
     margin: 0 0 8px 0;
-    color: #e4e4e7;
+    color: var(--theme-text-primary, #e4e4e7);
     font-size: 0.8em;
     font-weight: 600;
   }
@@ -354,16 +354,16 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
 
   .form-select {
     padding: 9px 10px;
-    background: #09090b;
+    background: var(--theme-background, #07080b);
     border: 1px solid #27272a;
     border-radius: 8px;
-    color: #e4e4e7;
+    color: var(--theme-text-primary, #e4e4e7);
     font-size: 0.88em;
     min-width: 100px;
   }
 
   .form-select:focus {
-    border-color: #fbbf24;
+    border-color: var(--theme-accent, #c5cfde);
     outline: none;
     box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.1);
   }
@@ -379,14 +379,14 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
   }
 
   .action-button.max {
-    background: #111216;
+    background: var(--theme-surface, #121418);
     border: 1px solid #2f3138;
-    color: #d1d5db;
+    color: var(--theme-text-primary, #d1d5db);
   }
 
   .action-button.max:hover {
     border-color: #4b5563;
-    color: #f3f4f6;
+    color: var(--theme-text-primary, #f3f4f6);
   }
 
   .action-button.collateral {
@@ -406,7 +406,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
 
   .max-hint {
     margin-top: 7px;
-    color: #9ca3af;
+    color: var(--theme-text-secondary, #9ca3af);
     font-size: 11px;
     font-family: 'JetBrains Mono', 'IBM Plex Mono', monospace;
     font-variant-numeric: tabular-nums;
@@ -417,8 +417,8 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
     padding: 8px;
     border: 1px solid #3b3f4c;
     border-radius: 8px;
-    background: #111216;
-    color: #d1d5db;
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-primary, #d1d5db);
     font-size: 11px;
     line-height: 1.35;
     display: grid;
@@ -432,7 +432,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
-    color: #9ca3af;
+    color: var(--theme-text-secondary, #9ca3af);
     width: 100%;
     min-width: 0;
     max-width: 100%;

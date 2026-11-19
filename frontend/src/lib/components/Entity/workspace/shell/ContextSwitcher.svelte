@@ -711,10 +711,10 @@
 <style>
   .context-switcher {
     --dropdown-bg: color-mix(in srgb, var(--theme-card-bg, #151515) 96%, black);
-    --dropdown-bg-hover: color-mix(in srgb, var(--theme-card-bg, #151515) 90%, var(--theme-accent, #fbbf24));
+    --dropdown-bg-hover: color-mix(in srgb, var(--theme-card-bg, #151515) 90%, var(--theme-accent, #c5cfde));
     --dropdown-menu-bg: color-mix(in srgb, var(--theme-card-bg, #111111) 97%, black);
     --dropdown-border: color-mix(in srgb, var(--theme-card-border, #3f3f46) 82%, transparent);
-    --dropdown-border-hover: color-mix(in srgb, var(--theme-accent, #fbbf24) 42%, transparent);
+    --dropdown-border-hover: color-mix(in srgb, var(--theme-accent, #c5cfde) 42%, transparent);
     --dropdown-radius: 10px;
     display: inline-block;
     width: auto;
@@ -821,7 +821,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 14px;
   }
 
@@ -842,7 +842,7 @@
 
   .pill-title {
     font-weight: 750;
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
     font-size: 13px;
     line-height: 1.15;
   }
@@ -850,7 +850,7 @@
   .pill-subtitle,
   .entity-meta {
     font-size: 10.5px;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
   }
 
   .entity-name {
@@ -858,7 +858,7 @@
   }
 
   .pill-arrow {
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -955,15 +955,15 @@
   }
 
   .runtime-menu-group.focused {
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 34%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 8%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 34%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 8%, transparent);
   }
 
   .runtime-status {
     width: 7px;
     height: 7px;
     border-radius: 999px;
-    background: #57534e;
+    background: #5d636c;
   }
 
   .runtime-status.connected {
@@ -972,7 +972,7 @@
   }
 
   .runtime-status.syncing {
-    background: #fbbf24;
+    background: var(--theme-accent, #c5cfde);
   }
 
   .runtime-status.error {
@@ -994,7 +994,7 @@
   }
 
   .runtime-heading-title {
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
     font-size: 12px;
     font-weight: 750;
   }
@@ -1002,7 +1002,7 @@
   .runtime-heading-meta {
     display: flex;
     gap: 4px;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 9.5px;
   }
 
@@ -1013,7 +1013,7 @@
   }
 
   .runtime-chevron {
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
     font-size: 16px;
   }
 
@@ -1130,7 +1130,7 @@
     border: 0;
     border-radius: 0;
     background: transparent;
-    color: #d6d3d1;
+    color: var(--theme-text-secondary, #d6d3d1);
     cursor: pointer;
     text-align: left;
   }
@@ -1145,7 +1145,7 @@
   }
 
   .entity-row.active {
-    box-shadow: inset 2px 0 var(--theme-accent, #fbbf24);
+    box-shadow: inset 2px 0 var(--theme-accent, #c5cfde);
   }
 
   .entity-current,
@@ -1160,7 +1160,7 @@
   }
 
   .entity-select {
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
     opacity: 0;
   }
 
@@ -1194,10 +1194,10 @@
   .add-runtime-btn {
     min-height: 30px;
     padding: 0 9px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 28%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 28%, transparent);
     border-radius: 6px;
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 9%, transparent);
-    color: #fde68a;
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 9%, transparent);
+    color: var(--theme-accent, #c5cfde);
     cursor: pointer;
     font-size: 10px;
     font-weight: 750;
@@ -1206,7 +1206,7 @@
   .add-runtime-btn.secondary-action {
     background: transparent;
     border-color: color-mix(in srgb, var(--theme-card-border, #3f3f46) 82%, transparent);
-    color: #d6d3d1;
+    color: var(--theme-text-secondary, #d6d3d1);
   }
 
   .add-runtime-btn:hover {
@@ -1217,7 +1217,7 @@
     padding: 5px 7px;
     border: 0;
     background: transparent;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 10px;
     cursor: pointer;
     white-space: nowrap;

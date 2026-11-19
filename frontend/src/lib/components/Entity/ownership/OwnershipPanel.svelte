@@ -160,7 +160,7 @@
 <style>
   .ownership { display: grid; gap: 16px; width: min(100%, 760px); margin: 0 auto; }
   header { display: flex; align-items: center; gap: 12px; padding: 16px; border: 1px solid var(--theme-border, #2b2b30); border-radius: 14px; }
-  .mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 11px; color: var(--theme-accent, #fbbf24); background: color-mix(in srgb, var(--theme-accent, #fbbf24) 14%, transparent); }
+  .mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 11px; color: var(--theme-accent, #c5cfde); background: color-mix(in srgb, var(--theme-accent, #c5cfde) 14%, transparent); }
   .title { min-width: 0; flex: 1; }
   .title p, .title h2 { margin: 0; }
   .title p, small { color: var(--theme-text-muted, #8b8b94); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
@@ -175,13 +175,13 @@
   .empty { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 13px; padding: 18px; border: 1px solid var(--theme-border, #2b2b30); border-radius: 14px; }
   .empty :global(svg) { color: var(--theme-text-muted, #8b8b94); }
   .empty p, .hint { margin: 5px 0; color: var(--theme-text-muted, #8b8b94); font-size: 11px; line-height: 1.5; }
-  button { min-height: 36px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 45%, transparent); border-radius: 9px; color: var(--theme-accent, #fbbf24); background: color-mix(in srgb, var(--theme-accent, #fbbf24) 10%, transparent); cursor: pointer; }
+  button { min-height: 36px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 45%, transparent); border-radius: 9px; color: var(--theme-accent, #c5cfde); background: color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent); cursor: pointer; }
   button:disabled { opacity: .4; cursor: not-allowed; }
   .receipt { padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, #22c55e 8%, transparent); }
   .error { padding: 10px 12px; border-radius: 9px; color: #fecaca; background: #7f1d1d44; font-size: 11px; }
   .takeover { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--theme-border, #2b2b30); border-radius: 14px; }
   .takeover-title { display: flex; align-items: flex-start; gap: 10px; }
-  .takeover-title :global(svg) { flex: none; margin-top: 2px; color: var(--theme-accent, #fbbf24); }
+  .takeover-title :global(svg) { flex: none; margin-top: 2px; color: var(--theme-accent, #c5cfde); }
   .takeover-title p { margin: 4px 0 0; color: var(--theme-text-muted, #8b8b94); font-size: 11px; line-height: 1.5; }
   .takeover-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 9px; }
   label { display: grid; gap: 5px; }
@@ -189,7 +189,7 @@
   select { min-height: 38px; width: 100%; padding: 8px 10px; border: 1px solid var(--theme-border, #2b2b30); border-radius: 9px; color: inherit; background: var(--theme-surface, #17171a); }
   button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
   button.secondary { border-color: var(--theme-border, #2b2b30); color: var(--theme-text-muted, #8b8b94); background: transparent; }
-  .takeover-state { display: grid; gap: 5px; padding: 10px 12px; border-radius: 9px; background: color-mix(in srgb, var(--theme-accent, #fbbf24) 6%, transparent); font-size: 11px; }
+  .takeover-state { display: grid; gap: 5px; padding: 10px 12px; border-radius: 9px; background: color-mix(in srgb, var(--theme-accent, #c5cfde) 6%, transparent); font-size: 11px; }
   .takeover-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   @media (max-width: 640px) {
     header { align-items: flex-start; }

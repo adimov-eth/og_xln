@@ -1,5 +1,5 @@
 input[type="range"] {
-  accent-color: var(--theme-accent, #fbbf24);
+  accent-color: var(--theme-accent, #c5cfde);
   width: 100%;
   min-width: 0;
   max-width: 100%;

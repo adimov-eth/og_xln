@@ -102,7 +102,7 @@
 </section>
 
 <style>
-  .audit { height: 100%; overflow: auto; box-sizing: border-box; padding: 16px; color: #e5edf3; background: #080d12; }
+  .audit { height: 100%; overflow: auto; box-sizing: border-box; padding: 16px; color: var(--theme-text-primary, #e5edf3); background: var(--theme-surface, #121418); }
   header, .status, .coverage, .events article { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   header { margin-bottom: 12px; } h2 { margin: 3px 0 0; font-size: 18px; } small { color: #7890a3; }
   button { border: 1px solid #28445a; border-radius: 6px; background: #0e1b26; color: #bcecff; padding: 7px 10px; }

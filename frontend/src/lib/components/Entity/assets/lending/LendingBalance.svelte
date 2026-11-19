@@ -36,9 +36,8 @@
 {/if}
 
 <style>
-  .total { color: var(--theme-text-primary, #f4f4f5); font-size: 28px; line-height: 1.2; font-weight: 800; overflow-wrap: anywhere; }
+  .total { color: var(--theme-text-primary, #f4f4f5); font-size: var(--money-hero); line-height: 1.04; font-weight: var(--money-hero-weight); letter-spacing: var(--money-hero-track); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .note { margin-top: 6px; font-size: 12px; max-width: 440px; overflow-wrap: anywhere; }
   summary { cursor: pointer; }
   p { line-height: 1.5; }
-  @media (max-width: 760px) { .total { font-size: 24px; } }
 </style>

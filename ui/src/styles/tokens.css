@@ -10,6 +10,16 @@
 	--radius-pill: 999px;
 	/* Everyday uniform control/surface radius. */
 	--ev-radius: 8px;
+	/* One layout and one money scale for both wallets: the same role gets the same size everywhere.
+	   Hero = the total balance; lg = amount inputs; md = breakdown figures; sm = row amounts. */
+	--content-max: 680px;
+	--content-pad: clamp(16px, 4vw, 28px);
+	--money-hero: clamp(44px, 8vw, 64px);
+	--money-hero-weight: 650;
+	--money-hero-track: -0.035em;
+	--money-lg: 30px;
+	--money-md: 20px;
+	--money-sm: 14px;
 	/* Fractal grain for matte surfaces; laid over with overlay blend at --ev-grain-opacity. */
 	--ev-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 	/* Finer tooth for soft-touch faces. */
@@ -41,37 +51,38 @@
 	--accent-fill: var(--accent);
 }
 
-/* Default material: cool neutral surfaces, slate ink, one indigo accent. */
+/* Default material: obsidian and silver. Near-black cool-neutral grounds about 5 OKLab L apart,
+   silver hairlines, sterling accent with obsidian ink on it, no pure white text (halation). */
 :root,
 :root[data-theme='dark'] {
 	color-scheme: dark;
-	--bg: #0b0e14;
-	--surface: #12161e;
-	--surface-2: #181d27;
-	--surface-3: #212835;
-	--line: rgba(226, 232, 244, 0.075);
-	--line-2: rgba(226, 232, 244, 0.14);
-	--ink: #e6e9f0;
-	--ink-2: #959eae;
-	--ink-3: #687284;
-	--display: #ffffff;
-	--accent: #7a73ff;
-	--accent-2: #a6a1ff;
-	--accent-dim: rgba(122, 115, 255, 0.16);
+	--bg: #07080b;
+	--surface: #121418;
+	--surface-2: #1b1e24;
+	--surface-3: #262a31;
+	--line: rgba(226, 232, 240, 0.08);
+	--line-2: rgba(226, 232, 240, 0.16);
+	--ink: #e6ebf2;
+	--ink-2: #9aa3b2;
+	--ink-3: #80889a;
+	--display: #f5f7fa;
+	--accent: #c5cfde;
+	--accent-2: #f5f7fa;
+	--accent-dim: rgba(197, 207, 222, 0.14);
 	/* Semantic credit/owed colour stays distinct from brand/interactive accent. */
-	--credit: #e8b04b;
+	--credit: #8cc8ff;
 	/* Position palette: what is yours is green, darker the deeper it sits with a
-	   counterparty; exposure is violet; obligations amber; room is a ghost. */
+	   counterparty; exposure is violet; obligations ice blue; room is a ghost. */
 	--onchain: #bbf7d0;
 	--reserve: #4ade80;
 	--coll: #16a34a;
 	--coll-dim: rgba(21, 163, 90, 0.18);
 	--risk: #a78bfa;
 	--risk-dim: rgba(167, 139, 250, 0.22);
-	--room: rgba(226, 232, 244, 0.14);
+	--room: rgba(226, 232, 240, 0.14);
 	--slate: #6e788a;
-	--debt: #e8b04b;
-	--debt-dim: rgba(232, 176, 75, 0.14);
+	--debt: #8cc8ff;
+	--debt-dim: rgba(140, 200, 255, 0.14);
 	--hold: #c4b5fd;
 	--hold-dim: rgba(196, 181, 253, 0.28);
 	--dispute: #f26d6d;
@@ -126,10 +137,14 @@
 	--ev-ring-mid: #8a9099;
 	--ev-ring-lo: #2b2e33;
 	--ev-ring-opacity: 0.38;
+	--ev-press: rgba(0, 0, 0, 0.9);
+	--ev-soft-pressed: #040405;
+	/* Input edge: the only thing that identifies an empty field, so it holds 3:1 on soft-touch and ground. */
+	--ev-input-edge: #5f656e;
 	--ev-primary-streak: rgba(255, 255, 255, 0.62);
-	--ev-brush-hi: rgba(255, 255, 255, 0.05);
-	--ev-brush-lo: rgba(0, 0, 0, 0.035);
-	--btn-ink: #ffffff;
+	/* Brushed metal: long irregular streaks (anisotropic noise), never a regular line pattern. */
+	--ev-brush: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='64'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.006 0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.1 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23b%29'/%3E%3C/svg%3E");
+	--btn-ink: #050608;
 	--scrim: rgba(4, 6, 10, 0.66);
 	--shadow-card: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, 0.3);
 	--shadow-lift: 0 0 0 1px var(--line-2), 0 8px 24px rgba(0, 0, 0, 0.35);
@@ -145,24 +160,25 @@
 	--surface-3: #ebeef1;
 	--line: #ebeef1;
 	--line-2: #d8dee4;
-	--ink: #1a1f36;
-	--ink-2: #687385;
-	--ink-3: #8792a2;
-	--display: #1a1f36;
-	--accent: #635bff;
-	--accent-2: #5047e5;
-	--accent-dim: rgba(99, 91, 255, 0.1);
-	--credit: #b45309;
+	--ink: #161a22;
+	/* Light text holds 4.5:1 on every porcelain step, including soft-touch and the ground's lowest stop. */
+	--ink-2: #4c5563;
+	--ink-3: #5f6877;
+	--display: #11151d;
+	--accent: #2b313c;
+	--accent-2: #11151d;
+	--accent-dim: rgba(17, 21, 29, 0.08);
+	--credit: #0369a1;
 	--onchain: #86efac;
 	--reserve: #22c55e;
 	--coll: #15803d;
 	--coll-dim: rgba(21, 128, 61, 0.12);
 	--risk: #7c3aed;
 	--risk-dim: rgba(124, 58, 237, 0.14);
-	--room: rgba(26, 31, 54, 0.1);
+	--room: rgba(17, 21, 29, 0.1);
 	--slate: #8b94a5;
-	--debt: #c98a16;
-	--debt-dim: rgba(201, 138, 22, 0.12);
+	--debt: #0369a1;
+	--debt-dim: rgba(3, 105, 161, 0.1);
 	--hold: #8e5cf5;
 	--hold-dim: rgba(142, 92, 245, 0.26);
 	--dispute: #df1b41;
@@ -211,25 +227,25 @@
 	--ev-soft-drop: rgba(15, 23, 42, 0.1);
 	--ev-glint: rgba(60, 71, 89, 0.5);
 	--ev-glint-base: rgba(15, 23, 42, 0.08);
+	/* Light rings stay pale: a dark arc on porcelain reads as a smudge, not a polished edge. */
 	--ev-ring-hi: #ffffff;
-	--ev-ring-mid: #aeb6c2;
-	--ev-ring-lo: #6b7482;
-	--ev-ring-opacity: 0.5;
+	--ev-ring-mid: #c9cfd8;
+	--ev-ring-lo: #9aa3b0;
+	--ev-ring-opacity: 0.7;
+	/* Pressed keys sink: the inset needs more weight on a pale face to read. */
+	--ev-press: rgba(15, 23, 42, 0.22);
+	--ev-soft-pressed: #dce0e7;
+	--ev-input-edge: #7b8390;
 	--ev-primary-streak: rgba(255, 255, 255, 0.14);
-	--ev-brush-hi: rgba(255, 255, 255, 0.035);
-	--ev-brush-lo: rgba(0, 0, 0, 0.08);
-	--btn-ink: #ffffff;
-	--scrim: rgba(26, 31, 54, 0.4);
-	--shadow-card: 0 0 0 1px rgba(26, 31, 54, 0.06), 0 2px 5px rgba(60, 66, 87, 0.08), 0 1px 1px rgba(0, 0, 0, 0.04);
-	--shadow-lift: 0 0 0 1px rgba(26, 31, 54, 0.06), 0 12px 32px rgba(50, 50, 93, 0.12), 0 4px 10px rgba(0, 0, 0, 0.05);
-	--shadow-sheet: 0 -18px 60px rgba(26, 31, 54, 0.18);
+	--ev-brush: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='64'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.006 0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.055 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23b%29'/%3E%3C/svg%3E");
+	--btn-ink: #f8fafc;
+	--scrim: rgba(17, 21, 29, 0.4);
+	--shadow-card: 0 0 0 1px rgba(17, 21, 29, 0.06), 0 2px 5px rgba(17, 21, 29, 0.07), 0 1px 1px rgba(0, 0, 0, 0.04);
+	--shadow-lift: 0 0 0 1px rgba(17, 21, 29, 0.06), 0 12px 32px rgba(17, 21, 29, 0.12), 0 4px 10px rgba(0, 0, 0, 0.05);
+	--shadow-sheet: 0 -18px 60px rgba(17, 21, 29, 0.18);
 	--fade: var(--bg);
 }
 
-/* Dark indigo text is bright for links and tabs; white ink on a button needs the deeper fill (4.7:1). */
-:root[data-theme='dark'][data-accent='indigo']:not([data-material='terminal']) {
-	--accent-fill: #635bff;
-}
 
 /* ---------- design presets: material ---------- */
 
@@ -310,17 +326,20 @@
 	--accent-dim: rgba(128, 128, 128, 0.16);
 	--btn-ink: var(--bg);
 }
-:root[data-accent='brass']:not([data-material='terminal']) {
-	--accent: #c9a962;
-	--accent-2: #e2c98a;
-	--accent-dim: rgba(201, 169, 98, 0.16);
-	--btn-ink: #1a1508;
-}
-:root[data-accent='brass'][data-theme='light']:not([data-material='terminal']) {
-	--accent: #9a7a2e;
-	--accent-2: #7d6222;
-	--accent-dim: rgba(154, 122, 46, 0.14);
+/* Indigo: the previous interactive accent, kept as a choice. Dark indigo text is bright for links;
+   white ink on a button needs the deeper fill (4.7:1). */
+:root[data-accent='indigo']:not([data-material='terminal']) {
+	--accent: #7a73ff;
+	--accent-2: #a6a1ff;
+	--accent-dim: rgba(122, 115, 255, 0.16);
+	--accent-fill: #635bff;
 	--btn-ink: #ffffff;
+}
+:root[data-accent='indigo'][data-theme='light']:not([data-material='terminal']) {
+	--accent: #635bff;
+	--accent-2: #5047e5;
+	--accent-dim: rgba(99, 91, 255, 0.1);
+	--accent-fill: #635bff;
 }
 
 /* ---------- design presets: risk ---------- */

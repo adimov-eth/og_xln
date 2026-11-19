@@ -47,7 +47,7 @@
 <style>
   .muted {
     font-size: 11px;
-    color: #52525b;
+    color: var(--theme-text-muted, #52525b);
     line-height: 1.5;
     margin: 0 0 12px;
   }
@@ -90,14 +90,14 @@
   }
 
   .wallet-meta-copy:hover .wallet-meta-value {
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
   }
 
   .wallet-meta-value {
     margin: 0;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
-    color: #e7e5e4;
+    color: var(--theme-text-primary, #e7e5e4);
     overflow-wrap: anywhere;
     min-width: 0;
   }
@@ -110,7 +110,7 @@
   .wallet-source-line {
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     max-width: none;
   }
 

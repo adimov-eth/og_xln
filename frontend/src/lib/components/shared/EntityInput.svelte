@@ -464,7 +464,7 @@
 
 <style>
   .entity-input {
-    --entity-accent: var(--theme-accent, #fbbf24);
+    --entity-accent: var(--theme-accent, #c5cfde);
     --entity-border: color-mix(in srgb, var(--theme-input-border, var(--theme-border, #27272a)) 84%, transparent);
     --entity-border-hover: color-mix(in srgb, var(--entity-accent) 42%, var(--entity-border));
     --entity-border-active: color-mix(in srgb, var(--entity-accent) 82%, transparent);

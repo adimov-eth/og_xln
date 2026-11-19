@@ -48,8 +48,8 @@ body.xln-user-mode select:focus,
 body.xln-user-mode input:not([type='range']):not([type='checkbox']):focus,
 body.xln-user-mode textarea:focus {
   outline: none;
-  border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 74%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accent, #fbbf24) 12%, transparent);
+  border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 74%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent);
 }
 
 body.xln-user-mode .readable-select,

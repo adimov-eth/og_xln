@@ -371,10 +371,10 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   .search-box input {
     width: 100%;
     padding: 8px 12px;
-    background: #252525;
+    background: var(--theme-surface-hover, #1b1e24);
     border: 1px solid #3a3a3a;
     border-radius: 4px;
-    color: #e1e1e1;
+    color: var(--theme-text-primary, #e1e1e1);
     font-size: 13px;
   }
 
@@ -424,13 +424,13 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .empty-text {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--theme-text-secondary, rgba(255, 255, 255, 0.6));
     font-size: 14px;
     font-weight: 500;
   }
 
   .empty-hint {
-    color: rgba(255, 255, 255, 0.35);
+    color: var(--theme-text-muted, rgba(255, 255, 255, 0.35));
     font-size: 12px;
     max-width: 200px;
     line-height: 1.4;
@@ -548,14 +548,14 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .signer-name {
-    color: #e5e7eb;
+    color: var(--theme-text-primary, #e5e7eb);
     font-weight: 600;
     line-height: 1.25;
     overflow-wrap: anywhere;
   }
 
   .signer-id {
-    color: #7a7f8c;
+    color: var(--theme-text-secondary, #7a7f8c);
     font-family: 'SF Mono', Consolas, monospace;
     font-size: 10px;
     line-height: 1.25;
@@ -576,7 +576,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     padding: 8px 12px;
     background: transparent;
     border: none;
-    color: #e1e1e1;
+    color: var(--theme-text-primary, #e1e1e1);
     font-size: 13px;
     text-align: left;
     cursor: pointer;

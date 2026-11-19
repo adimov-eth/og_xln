@@ -191,7 +191,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     background: transparent;
     border: none;
     border-radius: 4px;
-    color: #e1e1e1;
+    color: var(--theme-text-primary, #e1e1e1);
     font-size: 13px;
     cursor: pointer;
     transition: background 0.1s;
@@ -235,13 +235,13 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .empty-text {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--theme-text-secondary, rgba(255, 255, 255, 0.6));
     font-size: 13px;
     font-weight: 500;
   }
 
   .empty-hint {
-    color: rgba(255, 255, 255, 0.4);
+    color: var(--theme-text-muted, rgba(255, 255, 255, 0.4));
     font-size: 11px;
   }
 
@@ -260,14 +260,14 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .account-name {
-    color: #e1e1e1;
+    color: var(--theme-text-primary, #e1e1e1);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .account-id {
-    color: #8a8f98;
+    color: var(--theme-text-secondary, #8a8f98);
     font-size: 10px;
     font-family: 'JetBrains Mono', monospace;
     white-space: nowrap;
@@ -285,8 +285,8 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .account-status.ready { color: #4ade80; }
-  .account-status.sent { color: #fbbf24; }
-  .account-status.dispute_preparing { color: #fbbf24; }
+  .account-status.sent { color: var(--theme-badge-pending, #8cc8ff); }
+  .account-status.dispute_preparing { color: var(--theme-debit, #f43f5e); }
   .account-status.disputed { color: #fb7185; }
   .account-status.finalized_disputed { color: #fca5a5; }
 

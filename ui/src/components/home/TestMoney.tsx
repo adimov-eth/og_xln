@@ -44,7 +44,7 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
       </div>
       <button
         type="button"
-        className="btn primary sm"
+        className="btn sm"
         disabled={busy || !hub || !commandReady}
         onClick={() => void receive()}
         data-testid="home-faucet"

@@ -198,7 +198,7 @@
     display: grid;
     gap: 16px;
     padding: 18px;
-    color: #f4f4f5;
+    color: var(--theme-text-primary, #f4f4f5);
     border: 1px solid #292d35;
     border-radius: 14px;
     background:
@@ -233,7 +233,7 @@
   .summary {
     max-width: 560px;
     margin-top: 6px;
-    color: #9198a5;
+    color: var(--theme-text-secondary, #9198a5);
     font-size: 12px;
     line-height: 1.45;
   }
@@ -244,10 +244,10 @@
     gap: 7px;
     flex: 0 0 auto;
     padding: 6px 9px;
-    color: #a1a1aa;
+    color: var(--theme-text-secondary, #a1a1aa);
     border: 1px solid #343842;
     border-radius: 999px;
-    background: rgba(20, 22, 27, 0.82);
+    background: var(--theme-surface, #121418);
     font-size: 11px;
     font-weight: 700;
   }
@@ -272,8 +272,8 @@
   }
 
   .duration-control { grid-column: 1 / -1; }
-  .control-title { align-items: baseline; color: #c9ced7; font-size: 12px; font-weight: 650; }
-  .control-title strong { color: #f8fafc; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .control-title { align-items: baseline; color: var(--theme-text-secondary, #c9ced7); font-size: 12px; font-weight: 650; }
+  .control-title strong { color: var(--theme-text-primary, #f8fafc); font-size: 16px; font-variant-numeric: tabular-nums; }
   .control-title small { color: #818997; font-size: 10px; font-weight: 600; }
   .range-meta { color: #707887; font-size: 10px; }
 
@@ -298,7 +298,7 @@
 
   .run-row { align-items: center; }
   .run-copy { display: grid; gap: 2px; color: #8f98a7; font-size: 11px; }
-  .run-copy strong { color: #e8edf5; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .run-copy strong { color: var(--theme-text-primary, #e8edf5); font-size: 14px; font-variant-numeric: tabular-nums; }
 
   button {
     min-height: 38px;
@@ -339,7 +339,7 @@
 
   .metrics article > span { overflow: hidden; color: #848c99; font-size: 10px; text-overflow: ellipsis; }
   .metrics strong { font-size: 16px; font-variant-numeric: tabular-nums; }
-  .metrics .muted-metric strong { color: #fbbf24; }
+  .metrics .muted-metric strong { color: var(--theme-accent, #c5cfde); }
   .metrics .has-failures strong { color: #fb7185; }
   .metrics .stp-metric { border-color: rgba(34, 197, 94, 0.24); }
   .metrics .stp-metric strong { color: #86efac; }

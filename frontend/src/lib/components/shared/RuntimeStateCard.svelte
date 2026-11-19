@@ -107,8 +107,8 @@
     width: 8px;
     height: 8px;
     border-radius: 999px;
-    background: var(--theme-accent, #facc15);
-    box-shadow: 0 0 14px color-mix(in srgb, var(--theme-accent, #facc15) 66%, transparent);
+    background: var(--theme-accent, #c5cfde);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--theme-accent, #c5cfde) 66%, transparent);
     animation: runtime-state-pulse 1.6s ease-in-out infinite;
     flex: 0 0 auto;
   }

@@ -875,7 +875,7 @@ button.more:hover {
 }
 
 .input.big {
-	font-size: 30px;
+	font-size: var(--money-lg);
 	font-weight: 600;
 	letter-spacing: -0.02em;
 	color: var(--display);
@@ -1207,6 +1207,17 @@ textarea.input.boxed {
 .btn.primary:hover:not(:disabled) {
 	background: var(--accent-fill);
 	filter: brightness(1.07);
+}
+
+/* With the silver accent the primary is brushed metal in every posture, not a flat fill:
+   the Everyday gradient, 1px brush lines, and a streak where the ground's glare falls. */
+:root[data-accent='silver']:not([data-material='terminal']) .btn.primary:not(:disabled) {
+	background:
+		linear-gradient(calc(var(--ev-bevel-angle, 128deg) - 16deg), transparent calc(var(--ev-glare-pos, 46%) - 14%), var(--ev-primary-streak) var(--ev-glare-pos, 46%), transparent calc(var(--ev-glare-pos, 46%) + 12%)),
+		var(--ev-brush),
+		linear-gradient(calc(var(--ev-bevel-angle, 128deg) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%);
+	color: var(--ev-btn-primary-fg);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78), 0 1px 3px rgba(0, 0, 0, 0.36);
 }
 
 /* Disabled is grey, never a faded accent that still looks pressable. */
@@ -1615,7 +1626,8 @@ textarea.input.boxed {
 
 .switch.on::after {
 	transform: translateX(16px);
-	background: #fff;
+	/* The ink that reads on the accent: obsidian on silver, white on indigo. */
+	background: var(--btn-ink);
 }
 
 .scale-row {

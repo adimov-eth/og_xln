@@ -61,9 +61,9 @@
   }
 
   .configure-tab.active {
-    color: var(--theme-accent, #fbbf24);
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 65%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 10%, transparent);
+    color: var(--theme-accent, #c5cfde);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 65%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent);
   }
 
   .configure-tab.danger {

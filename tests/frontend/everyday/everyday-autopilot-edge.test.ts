@@ -147,7 +147,7 @@ test('draftReserveDelta and inspectHubRebalanceStatus cover every settlement/bat
 test('the arriving note states the provider fee before it is charged and after it is paid', () => {
   const policy = { r2cRequestSoftLimit: 1_000_000n, hardLimit: 250_000_000n, maxAcceptableFee: 2_000_000n };
   const usd = (amount: bigint): string => `USD ${(Number(amount) / 1e6).toFixed(2)}`;
-  const fallback = 'Finishing automatically before it joins your Cash.';
+  const defaultNote = 'Finishing automatically before it joins your Cash.';
   const doc = (outPeerCredit: bigint, requested: bigint, paid?: { feePaidUpfront: bigint; refundedAmount?: bigint }) => ({
     currentFrame: { timestamp: 100 },
     state: {
@@ -168,27 +168,27 @@ test('the arriving note states the provider fee before it is charged and after i
   // 100 arriving, fee not yet taken: 0.10 base + 1 bps of 100 = 0.11.
   const queued = inspect(doc(100_000_000n, 0n));
   expect(queued).toMatchObject({ status: 'pending-queue', computedFee: 110_000n, paidFee: 0n });
-  expect(formatEverydayArrivingNote(queued, fallback, usd))
+  expect(formatEverydayArrivingNote(queued, defaultNote, usd))
     .toBe('A USD 0.11 provider fee comes out first, so USD 99.89 joins your Cash.');
 
   // Requested: the fee has left the balance, so what is arriving is already the net amount.
   const settling = inspect(doc(99_890_000n, 99_890_000n, { feePaidUpfront: 110_000n }));
   expect(settling).toMatchObject({ status: 'settling', computedFee: 0n, paidFee: 110_000n });
-  expect(formatEverydayArrivingNote(settling, fallback, usd))
+  expect(formatEverydayArrivingNote(settling, defaultNote, usd))
     .toBe('USD 0.11 provider fee paid. USD 99.89 joins your Cash when this finishes.');
 
   // A refunded fee is not reported as paid.
   const refunded = inspect(doc(100_000_000n, 100_000_000n, { feePaidUpfront: 110_000n, refundedAmount: 110_000n }));
   expect(refunded.paidFee).toBe(0n);
-  expect(formatEverydayArrivingNote(refunded, fallback, usd)).toBe(fallback);
+  expect(formatEverydayArrivingNote(refunded, defaultNote, usd)).toBe(defaultNote);
 
   // No fee to state, no formatter, or nothing to inspect: the plain note.
-  expect(formatEverydayArrivingNote(inspect(doc(100_000_000n, 100_000_000n)), fallback, usd)).toBe(fallback);
-  expect(formatEverydayArrivingNote(queued, fallback)).toBe(fallback);
-  expect(formatEverydayArrivingNote(null, fallback, usd)).toBe(fallback);
+  expect(formatEverydayArrivingNote(inspect(doc(100_000_000n, 100_000_000n)), defaultNote, usd)).toBe(defaultNote);
+  expect(formatEverydayArrivingNote(queued, defaultNote)).toBe(defaultNote);
+  expect(formatEverydayArrivingNote(null, defaultNote, usd)).toBe(defaultNote);
 
   // The fee-cap note still wins.
-  expect(formatEverydayArrivingNote({ status: 'fee-above-cap' }, fallback, usd)).toBe(EVERYDAY_ARRIVING_FEE_CAP_NOTE);
+  expect(formatEverydayArrivingNote({ status: 'fee-above-cap' }, defaultNote, usd)).toBe(EVERYDAY_ARRIVING_FEE_CAP_NOTE);
 });
 
 test('projectEverydayWallet drops mismatched activeEntity and negates right-side lendingBalances', () => {

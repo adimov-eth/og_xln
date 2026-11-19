@@ -689,8 +689,8 @@
     justify-content: center;
     min-height: 100dvh;
     background:
-      radial-gradient(circle at top, color-mix(in srgb, var(--theme-accent, #facc15) 12%, transparent), transparent 32%),
-      radial-gradient(circle at bottom, color-mix(in srgb, var(--theme-accent, #facc15) 7%, transparent), transparent 28%),
+      radial-gradient(circle at top, color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent), transparent 32%),
+      radial-gradient(circle at bottom, color-mix(in srgb, var(--theme-accent, #c5cfde) 7%, transparent), transparent 28%),
       var(--theme-bg-gradient, linear-gradient(180deg, #0d0d10 0%, #09090b 100%));
     color: var(--theme-text-primary, #e8e8e8);
   }
@@ -702,7 +702,7 @@
   .remote-login-card {
     width: min(520px, 100%);
     padding: 28px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 24%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 24%, transparent);
     border-radius: 10px;
     background: color-mix(in srgb, var(--theme-card-bg, #141416) 92%, transparent);
     box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
@@ -710,7 +710,7 @@
 
   .remote-kicker {
     margin-bottom: 10px;
-    color: var(--theme-accent, #facc15);
+    color: var(--theme-accent, #c5cfde);
     font-size: 12px;
     font-weight: 800;
     letter-spacing: 0.14em;
@@ -776,7 +776,7 @@
   .remote-token-input input {
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 22%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 22%, transparent);
     border-radius: 8px;
     background: rgba(0, 0, 0, 0.28);
     color: var(--theme-text-primary, #e8e8e8);
@@ -811,8 +811,8 @@
   }
 
   .remote-actions .primary {
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 38%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #facc15) 22%, var(--theme-surface, #18181b));
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 38%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 22%, var(--theme-surface, #18181b));
     color: var(--theme-text-primary, #fff);
   }
 
@@ -853,7 +853,7 @@
     align-items: center;
     gap: 6px;
     padding: 5px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 28%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 28%, transparent);
     border-radius: 7px;
     background: color-mix(in srgb, var(--theme-card-bg, #141416) 94%, transparent);
     color: var(--theme-text-secondary, #d6d3d1);
@@ -888,8 +888,8 @@
     height: 26px;
     padding: 0;
     border-radius: 6px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 30%, transparent);
-    background: color-mix(in srgb, var(--theme-card-bg, #141416) 84%, var(--theme-accent, #facc15));
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 30%, transparent);
+    background: color-mix(in srgb, var(--theme-card-bg, #141416) 84%, var(--theme-accent, #c5cfde));
     color: var(--theme-text-primary, #f5f5f4);
     font: inherit;
     font-size: 18px;
@@ -962,13 +962,13 @@
   .error-screen button {
     padding: 12px 18px;
     border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 24%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 24%, transparent);
     background: linear-gradient(
       180deg,
-      color-mix(in srgb, var(--theme-accent, #facc15) 18%, var(--theme-surface, var(--theme-card-bg, #18181b))),
-      color-mix(in srgb, var(--theme-accent, #facc15) 10%, var(--theme-background, #09090b))
+      color-mix(in srgb, var(--theme-accent, #c5cfde) 18%, var(--theme-surface, var(--theme-card-bg, #18181b))),
+      color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, var(--theme-background, #09090b))
     );
-    color: color-mix(in srgb, var(--theme-accent, #facc15) 58%, white);
+    color: color-mix(in srgb, var(--theme-accent, #c5cfde) 58%, white);
     font-weight: 700;
     cursor: pointer;
   }

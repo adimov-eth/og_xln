@@ -98,7 +98,7 @@
     margin: 0 0 10px;
     font-size: 13px;
     font-weight: 700;
-    color: #d6d3d1;
+    color: var(--theme-text-secondary, #d6d3d1);
   }
 
   .detail-table,
@@ -123,7 +123,7 @@
   .detail-header,
   .detail-label,
   .detail-label-cell {
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 12px;
   }
 
@@ -135,7 +135,7 @@
 
   .detail-value-cell,
   .detail-value {
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
     font-size: 13px;
     font-variant-numeric: tabular-nums;
   }

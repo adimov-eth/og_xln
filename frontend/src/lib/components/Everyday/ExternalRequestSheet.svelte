@@ -159,6 +159,7 @@
 </div>
 
 <style>
-  .ev-sheet-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.65); display: flex; align-items: flex-end; justify-content: center; padding: 16px; z-index: 60; }
-  .ev-sheet { width: 100%; max-width: 520px; background: #1c1c20; }
+  .ev-sheet-backdrop { position: fixed; inset: 0; background: rgba(4, 6, 10, 0.66); display: flex; align-items: flex-end; justify-content: center; padding: 16px; z-index: 60; }
+  /* Floats over the lit ground: frosted glass with a soft top rim, same as the React sheet. */
+  .ev-sheet { width: 100%; max-width: 520px; background: color-mix(in oklab, var(--ev-soft-face, #09090a) 78%, transparent); backdrop-filter: blur(24px) saturate(0.6); -webkit-backdrop-filter: blur(24px) saturate(0.6); }
 </style>

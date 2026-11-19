@@ -127,10 +127,12 @@ export function EverydayHome({
         ) : null}
       </section>
 
+      {/* One primary per view: Pay at rest; once a flow opens its submit is the primary and the tile sinks. */}
       <div className="everyday-actions">
         <button
           type="button"
-          className={`btn ${action === null || action === 'pay' ? 'primary' : ''}`}
+          className={`btn ${action === null ? 'primary' : ''}`}
+          aria-pressed={action === 'pay'}
           onClick={() => setAction(current => (current === 'pay' ? null : 'pay'))}
           data-testid="everyday-pay-btn"
         >
@@ -139,7 +141,8 @@ export function EverydayHome({
         </button>
         <button
           type="button"
-          className={`btn ${action === 'request' ? 'primary' : ''}`}
+          className="btn"
+          aria-pressed={action === 'request'}
           onClick={() => setAction(current => (current === 'request' ? null : 'request'))}
           data-testid="everyday-request-btn"
         >
@@ -148,7 +151,8 @@ export function EverydayHome({
         </button>
         <button
           type="button"
-          className={`btn ${action === 'cashout' ? 'primary' : ''}`}
+          className="btn"
+          aria-pressed={action === 'cashout'}
           onClick={() => setAction(current => (current === 'cashout' ? null : 'cashout'))}
           data-testid="everyday-cashout-btn"
         >

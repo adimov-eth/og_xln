@@ -17,7 +17,7 @@
     justify-content: center;
     padding: 40px 20px;
     text-align: center;
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
     gap: 12px;
   }
 

@@ -137,7 +137,7 @@
 
   .select-trigger:focus {
     outline: none;
-    border-color: #fbbf24;
+    border-color: var(--theme-accent, #c5cfde);
   }
 
   .token-icon {

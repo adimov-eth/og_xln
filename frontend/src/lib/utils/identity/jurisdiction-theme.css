@@ -17,14 +17,16 @@
 }
 .jurisdiction-surface[data-jurisdiction='local'],
 .jurisdiction-surface[data-jurisdiction='sepolia'] {
-  --jurisdiction-color: #e5b969;
+  /* Test networks read as steel: unmistakably not a real chain, and never gold. */
+  --jurisdiction-color: #a9b4c4;
 }
 .jurisdiction-surface[data-jurisdiction='base'] {
   --jurisdiction-color: #75aaff;
 }
 .jurisdiction-banner {
-  border-left: 4px solid var(--jurisdiction-color);
-  background: color-mix(in srgb, var(--jurisdiction-color) 10%, transparent);
+  /* Identity by a ring and a faint wash, not a coloured stripe. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--jurisdiction-color) 32%, transparent);
+  background: color-mix(in srgb, var(--jurisdiction-color) 7%, transparent);
   padding: 10px 14px;
   margin: 12px 20px;
   border-radius: 8px;

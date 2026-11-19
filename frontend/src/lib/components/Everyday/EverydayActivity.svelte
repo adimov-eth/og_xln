@@ -43,14 +43,7 @@
   });
 </script>
 
-<section
-  class="ev-card"
-  data-testid="everyday-recovery-notice"
-  style={shield.category === 'unilateral-exit-needs-gas' ? 'border-color:rgba(251,113,133,0.45);' : shield.category === 'protected' ? 'border-color:rgba(52,211,153,0.35);' : ''}
->
-  <strong style="font-size:1rem;">Recovery protection</strong>
-  <p class="ev-muted">{shield.summary}</p>
-</section>
+<p class="ev-notice" data-testid="everyday-recovery-notice" data-category={shield.category} role="status">{shield.summary}</p>
 
 <section class="ev-card" data-testid="everyday-activity-list">
   <h2 style="margin:0;font-size:1.15rem;">Activity</h2>

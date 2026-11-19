@@ -389,7 +389,7 @@
 
 <style>
   .move-route-builder {
-    --move-accent: var(--theme-accent, #fbbf24);
+    --move-accent: var(--theme-accent, #c5cfde);
     --move-border: color-mix(in srgb, var(--theme-card-border, var(--theme-border, #27272a)) 86%, transparent);
     --move-surface: color-mix(in srgb, var(--theme-card-bg, var(--theme-surface, #18181b)) 98%, transparent);
     --move-surface-hover: color-mix(in srgb, var(--theme-surface-hover, var(--theme-card-bg, #1c1c20)) 96%, transparent);
@@ -843,7 +843,7 @@
   }
 
   .move-summary-status.warning {
-    color: color-mix(in srgb, var(--theme-warning, #f59e0b) 74%, white 26%);
+    color: var(--theme-warning, #f59e0b);
     border-color: color-mix(in srgb, var(--theme-warning, #f59e0b) 22%, transparent);
     background: color-mix(in srgb, var(--theme-warning, #f59e0b) 8%, transparent);
   }
@@ -924,7 +924,7 @@
 
   .btn-table-action.deposit {
     background: linear-gradient(135deg, #16a34a, #15803d);
-    color: #f0fdf4;
+    color: #050608;
   }
 
   .btn-table-action.deposit:hover:not(:disabled) {

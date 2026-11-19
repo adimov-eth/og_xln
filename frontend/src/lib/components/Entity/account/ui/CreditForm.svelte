@@ -145,7 +145,7 @@
 
 <style>
   .action-card {
-    background: #18181b;
+    background: var(--theme-surface, #121418);
     border: 1px solid #27272a;
     border-radius: 10px;
     padding: 12px;
@@ -154,12 +154,12 @@
 
   .action-card h4 {
     margin: 0 0 8px 0;
-    color: #e4e4e7;
+    color: var(--theme-text-primary, #e4e4e7);
     font-size: 0.8em;
     font-weight: 600;
   }
 
-  .credit-explanation { margin: 8px 0; color: #a1a1aa; font-size: 0.8em; line-height: 1.5; }
+  .credit-explanation { margin: 8px 0; color: var(--theme-text-secondary, #a1a1aa); font-size: 0.8em; line-height: 1.5; }
 
   .action-form {
     display: flex;
@@ -170,16 +170,16 @@
 
   .form-select {
     padding: 9px 10px;
-    background: #09090b;
+    background: var(--theme-background, #07080b);
     border: 1px solid #27272a;
     border-radius: 8px;
-    color: #e4e4e7;
+    color: var(--theme-text-primary, #e4e4e7);
     font-size: 0.88em;
     min-width: 100px;
   }
 
   .form-select:focus {
-    border-color: #fbbf24;
+    border-color: var(--theme-accent, #c5cfde);
     outline: none;
     box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.1);
   }

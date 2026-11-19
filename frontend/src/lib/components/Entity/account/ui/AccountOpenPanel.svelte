@@ -121,7 +121,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     border: 1px solid color-mix(in srgb, var(--theme-border, #27272a) 56%, transparent);
     border-radius: 14px;
     background:
-      linear-gradient(180deg, color-mix(in srgb, var(--theme-accent, #fbbf24) 2%, transparent), transparent 24%),
+      linear-gradient(180deg, color-mix(in srgb, var(--theme-accent, #c5cfde) 2%, transparent), transparent 24%),
       linear-gradient(
         180deg,
         color-mix(in srgb, var(--theme-card-bg, var(--theme-surface, #18181b)) 98%, transparent),
@@ -154,7 +154,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     font-weight: 700;
     letter-spacing: 0.01em;
     text-transform: none;
-    color: var(--theme-accent, #fbbf24);
+    color: var(--theme-accent, #c5cfde);
   }
 
   .open-private-form {
@@ -197,7 +197,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .disputed-id {
-    color: #e2e8f0;
+    color: var(--theme-text-primary, #e2e8f0);
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
     word-break: break-all;
@@ -214,7 +214,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     border-radius: 999px;
     border: 1px solid rgba(251, 191, 36, 0.35);
     background: rgba(251, 191, 36, 0.12);
-    color: #fde68a;
+    color: var(--theme-accent, #c5cfde);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -230,7 +230,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
 
   .btn-add {
     padding: 8px 16px;
-    background: var(--theme-accent, #fbbf24);
+    background: var(--theme-accent, #c5cfde);
     color: var(--theme-accent-contrast, #000);
     border: none;
     border-radius: 6px;
@@ -246,14 +246,14 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
 
   .section-head {
     margin: 0 0 12px;
-    color: #f5f5f5;
+    color: var(--theme-text-primary, #f5f5f5);
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.01em;
   }
 
   .muted {
-    color: #52525b;
+    color: var(--theme-text-muted, #52525b);
     line-height: 1.5;
     margin: 0;
   }

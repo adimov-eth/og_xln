@@ -277,8 +277,8 @@
     height: 28px;
     padding: 0 10px;
     border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 40%, transparent);
-    color: var(--theme-accent, #fbbf24);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent);
+    color: var(--theme-accent, #c5cfde);
     font-size: 12px;
     font-weight: 800;
   }
@@ -290,8 +290,8 @@
 
   .command-pill.pending,
   .command-pill.accepted {
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 38%, transparent);
-    color: var(--theme-accent, #fbbf24);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 38%, transparent);
+    color: var(--theme-accent, #c5cfde);
   }
 
   .command-pill.observed {

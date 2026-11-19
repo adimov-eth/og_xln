@@ -50,7 +50,7 @@
   .entity-panel :global(.content input:not([type="range"]):not([type="checkbox"]):not(.swap-ticket-amount):not(.swap-ticket-rate-input):focus),
   .entity-panel :global(.content select:not(.swap-ticket-native):focus) {
     outline: none !important;
-    border-color: var(--theme-input-focus, #fbbf24) !important;
+    border-color: var(--theme-input-focus, #c5cfde) !important;
   }
 
   .entity-panel :global(.content input::placeholder) {

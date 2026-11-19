@@ -1115,7 +1115,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
-    color: #e7e5e4;
+    color: var(--theme-text-primary, #e7e5e4);
   }
 
   .setup-card {
@@ -1130,7 +1130,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .setup-header h2 {
     margin: 0 0 6px;
-    color: rgba(255, 255, 255, 0.94);
+    color: var(--theme-text-primary, rgba(255, 255, 255, 0.94));
     font-size: 24px;
     line-height: 1.15;
     letter-spacing: 0;
@@ -1138,7 +1138,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .setup-header p {
     margin: 0;
-    color: rgba(255, 255, 255, 0.58);
+    color: var(--theme-text-secondary, rgba(255, 255, 255, 0.58));
     font-size: 13px;
     line-height: 1.45;
   }
@@ -1165,13 +1165,13 @@ import { asTokenId } from "@xln/core/protocol/units";
     display: flex;
     flex-direction: column;
     gap: 2px;
-    color: #d6d3d1;
+    color: var(--theme-text-secondary, #d6d3d1);
     font-size: 12px;
     line-height: 1.35;
   }
 
   .recovery-check-copy small {
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 11px;
   }
 
@@ -1187,8 +1187,8 @@ import { asTokenId } from "@xln/core/protocol/units";
     padding: 0 12px;
     border-radius: 9px;
     border: 1px solid #322821;
-    background: #0f0b09;
-    color: #e7e5e4;
+    background: var(--theme-background, #07080b);
+    color: var(--theme-text-primary, #e7e5e4);
     font-size: 12px;
     font-weight: 700;
     text-align: center;
@@ -1219,8 +1219,8 @@ import { asTokenId } from "@xln/core/protocol/units";
     padding: 12px;
     border: 1px solid #322821;
     border-radius: 12px;
-    background: #0f0b09;
-    color: #e7e5e4;
+    background: var(--theme-background, #07080b);
+    color: var(--theme-text-primary, #e7e5e4);
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -1240,13 +1240,13 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   .recovery-mode-title {
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
     font-size: 13px;
     font-weight: 800;
   }
 
   .recovery-mode-copy {
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 12px;
     line-height: 1.35;
   }
@@ -1261,12 +1261,12 @@ import { asTokenId } from "@xln/core/protocol/units";
   .recovery-service-row {
     border: 1px solid #322821;
     border-radius: 12px;
-    background: #0f0b09;
+    background: var(--theme-background, #07080b);
     padding: 12px;
   }
 
   .empty-recovery-card {
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
     font-size: 13px;
   }
 
@@ -1285,7 +1285,7 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   .recovery-service-main strong {
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
     font-size: 13px;
   }
 
@@ -1299,8 +1299,8 @@ import { asTokenId } from "@xln/core/protocol/units";
     min-height: 34px;
     border: 1px solid #322821;
     border-radius: 9px;
-    background: #080605;
-    color: #e7e5e4;
+    background: var(--theme-background, #07080b);
+    color: var(--theme-text-primary, #e7e5e4);
     padding: 0 10px;
     color-scheme: dark;
   }
@@ -1316,7 +1316,7 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   .manual-recovery-details summary {
-    color: #fbbf24;
+    color: var(--theme-accent, #c5cfde);
     cursor: pointer;
     font-size: 13px;
     font-weight: 700;
@@ -1338,7 +1338,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     padding: 10px 14px;
     border: 1px solid rgba(251, 191, 36, 0.2);
     border-radius: 10px;
-    color: #fbbf24;
+    color: var(--theme-accent, #c5cfde);
     background: rgba(251, 191, 36, 0.06);
     font-size: 12px;
   }
@@ -1362,7 +1362,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    background: linear-gradient(135deg, var(--theme-accent-hover, #f5f7fa), var(--theme-accent, #c5cfde));
     color: #09090b;
     font-weight: 700;
   }
@@ -1373,7 +1373,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .section-headline p {
     margin: 0;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 14px;
     line-height: 1.55;
   }
@@ -1384,7 +1384,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     overflow-wrap: anywhere;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
   }
 
   .form-label {
@@ -1392,7 +1392,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     margin-bottom: 6px;
     font-size: 11px;
     font-weight: 600;
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
@@ -1403,23 +1403,23 @@ import { asTokenId } from "@xln/core/protocol/units";
     box-sizing: border-box;
     min-height: 48px;
     padding: 12px 14px;
-    background: #0f0b09;
+    background: var(--theme-background, #07080b);
     border: 1px solid #322821;
     border-radius: 10px;
-    color: #e7e5e4;
+    color: var(--theme-text-primary, #e7e5e4);
     font-size: 15px;
     color-scheme: dark;
   }
 
   .hub-join-select option {
-    background: #0f0b09;
-    color: #e7e5e4;
+    background: var(--theme-background, #07080b);
+    color: var(--theme-text-primary, #e7e5e4);
   }
 
   .form-input:focus,
   .hub-join-select:focus {
     outline: none;
-    border-color: #fbbf24;
+    border-color: var(--theme-accent, #c5cfde);
     box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.08);
   }
 
@@ -1430,7 +1430,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     gap: 14px;
     padding: 14px;
     border-radius: 12px;
-    background: #11100f;
+    background: var(--theme-surface, #121418);
     border: 1px solid #27272a;
   }
 
@@ -1443,7 +1443,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .profile-preview-copy strong {
     font-size: 17px;
-    color: #fafaf9;
+    color: var(--theme-text-primary, #fafaf9);
   }
 
   .jurisdiction-toggle-grid {
@@ -1486,12 +1486,12 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   .jurisdiction-toggle-copy strong {
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--theme-text-primary, rgba(255, 255, 255, 0.9));
     font-size: 13px;
   }
 
   .jurisdiction-toggle-copy code {
-    color: rgba(255, 255, 255, 0.48);
+    color: var(--theme-text-muted, rgba(255, 255, 255, 0.48));
     font-size: 11px;
     overflow-wrap: anywhere;
   }
@@ -1533,11 +1533,11 @@ import { asTokenId } from "@xln/core/protocol/units";
     margin: 10px 0 0;
     font-size: 12px;
     line-height: 1.5;
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
   }
 
   .form-hint strong {
-    color: #fbbf24;
+    color: var(--theme-accent, #c5cfde);
   }
 
   .form-hint.compact {
@@ -1569,7 +1569,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .setup-advanced > summary::-webkit-details-marker { display: none; }
   .setup-advanced > summary span:first-child { display: grid; gap: 3px; }
-  .setup-advanced > summary small { color: #78716c; font-size: 12px; }
+  .setup-advanced > summary small { color: var(--theme-text-muted, #78716c); font-size: 12px; }
   .setup-advanced[open] > summary { border-bottom: 1px solid #27211c; }
   .setup-advanced > .setup-section { margin: 14px; }
 
@@ -1580,7 +1580,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     cursor: pointer;
     font-size: 14px;
     line-height: 1.5;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
   }
 
   .checkbox-row input[type='checkbox'] {
@@ -1611,7 +1611,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .btn-primary {
     padding: 13px 24px;
-    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    background: linear-gradient(135deg, var(--theme-accent-hover, #f5f7fa), var(--theme-accent, #c5cfde));
     border: none;
     border-radius: 10px;
     color: #09090b;

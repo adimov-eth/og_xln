@@ -102,9 +102,9 @@
     border-color: color-mix(in srgb, var(--theme-card-border, var(--theme-border, #27272a)) 50%, transparent);
     border-bottom-color: transparent;
     background:
-      linear-gradient(180deg, color-mix(in srgb, var(--theme-accent, #fbbf24) 8%, transparent), transparent),
+      linear-gradient(180deg, color-mix(in srgb, var(--theme-accent, #c5cfde) 8%, transparent), transparent),
       color-mix(in srgb, var(--theme-card-bg, var(--theme-surface, #18181b)) 94%, transparent);
-    box-shadow: inset 0 2px 0 color-mix(in srgb, var(--theme-accent, #fbbf24) 78%, transparent);
+    box-shadow: inset 0 2px 0 color-mix(in srgb, var(--theme-accent, #c5cfde) 78%, transparent);
   }
 
   @media (max-width: 760px) {

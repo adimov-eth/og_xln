@@ -501,7 +501,7 @@
 
   h2 {
     margin: 0;
-    color: #edf3fb;
+    color: var(--theme-text-primary, #edf3fb);
     font-size: 22px;
     line-height: 1.1;
   }
@@ -553,7 +553,7 @@
     border: 1px solid #1d2937;
     border-radius: 8px;
     overflow: hidden;
-    background: #0a1119;
+    background: var(--theme-surface, #121418);
   }
 
   .summary-strip > div {
@@ -573,7 +573,7 @@
   }
 
   .summary-strip strong {
-    color: #edf3fb;
+    color: var(--theme-text-primary, #edf3fb);
     font-size: 16px;
     font-variant-numeric: tabular-nums;
   }
@@ -621,7 +621,7 @@
     align-items: center;
     gap: 8px;
     border: 1px solid #263442;
-    background: #090f16;
+    background: var(--theme-surface, #121418);
     border-radius: 8px;
     padding: 0 10px;
     color: #7d8da2;
@@ -676,7 +676,7 @@
     grid-template-columns: 18px minmax(0, 1fr) minmax(104px, auto);
     gap: 12px;
     border: 1px solid #1e2a38;
-    background: #0b121b;
+    background: var(--theme-surface, #121418);
     border-radius: 8px;
     padding: 12px;
   }
@@ -726,7 +726,7 @@
   }
 
   .event-title {
-    color: #ecf3fb;
+    color: var(--theme-text-primary, #ecf3fb);
     font-weight: 700;
     font-size: 14px;
   }
@@ -769,7 +769,7 @@
 
   .event-amount strong {
     display: block;
-    color: #f1f6fd;
+    color: var(--theme-text-primary, #f1f6fd);
     font-size: 14px;
     overflow-wrap: anywhere;
   }

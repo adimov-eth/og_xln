@@ -494,15 +494,15 @@
       -45deg,
       #f43f5e 0px,
       #f43f5e 3px,
-      #fbbf24 3px,
-      #fbbf24 6px
+      #8cc8ff 3px,
+      #8cc8ff 6px
     );
     background-size: 8px 8px;
     animation: stripe-scroll var(--bar-stripe-duration) linear infinite;
   }
 
   .seg.debt.settling {
-    background: linear-gradient(180deg, #fbbf24, #f59e0b);
+    background: linear-gradient(180deg, #a9d6ff, #8cc8ff);
     animation: settling-pulse var(--bar-settling-duration) ease-in-out infinite;
   }
 

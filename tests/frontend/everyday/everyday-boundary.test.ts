@@ -224,6 +224,25 @@ describe('Everyday wallet production boundary (one-way study -> wallet)', () => 
       expect(props.get('--ev-light-y')).toMatch(/%$/);
       expect(props.get('--ev-bevel-angle')).toMatch(/deg$/);
       expect(props.get('--ev-glare-pos')).toMatch(/%$/);
+
+      // 4. After input stops, the light settles and the frame loop ends within a second (no creeping tail).
+      let t = 0;
+      let frames = 0;
+      while (rafQueue.length > 0 && frames < 600) {
+        t += 16;
+        frames++;
+        (rafQueue.shift() as unknown as (now: number) => void)(t);
+      }
+      expect(rafQueue.length).toBe(0);
+      expect(t).toBeLessThanOrEqual(1000);
+
+      // 5. A held phone jitters by a fraction of a degree: no frame is queued and nothing is rewritten.
+      const settledPos = props.get('--ev-glare-pos');
+      for (const jitter of [0.1, -0.15, 0.2, -0.05]) {
+        for (const fn of winListeners.get('deviceorientation') ?? []) fn({ gamma: 24 + jitter, beta: 50 - jitter });
+      }
+      expect(rafQueue.length).toBe(0);
+      expect(props.get('--ev-glare-pos')).toBe(settledPos);
       detach();
       expect(props.size).toBe(0);
       expect(winListeners.get('deviceorientation')?.size ?? 0).toBe(0);

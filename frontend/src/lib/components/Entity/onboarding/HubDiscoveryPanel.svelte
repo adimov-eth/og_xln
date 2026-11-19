@@ -293,7 +293,7 @@ import { asTokenId } from '@xln/core/protocol/units';
 
 <style>
   .hub-panel {
-    --hub-accent: var(--theme-accent, #fbbf24);
+    --hub-accent: var(--theme-accent, #c5cfde);
     --hub-border: color-mix(in srgb, var(--theme-border, #27272a) 82%, transparent);
     --hub-surface: color-mix(in srgb, var(--theme-card-bg, var(--theme-surface, #18181b)) 98%, transparent);
     --hub-surface-hover: color-mix(in srgb, var(--theme-surface-hover, var(--theme-card-bg, #1c1c20)) 94%, transparent);

@@ -622,7 +622,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
     --account-preview-text: var(--theme-text-primary, #e4e4e7);
     --account-preview-text-secondary: var(--theme-text-secondary, #a1a1aa);
     --account-preview-text-muted: var(--theme-text-muted, #71717a);
-    --account-preview-accent: var(--theme-accent, #fbbf24);
+    --account-preview-accent: var(--theme-accent, #c5cfde);
     --account-preview-credit: var(--theme-credit, #4ade80);
     --account-preview-debit: var(--theme-debit, #f43f5e);
     background: var(--account-preview-bg);

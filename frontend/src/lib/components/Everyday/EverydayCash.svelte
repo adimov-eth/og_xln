@@ -217,9 +217,9 @@
       <p class="ev-muted">{arrivingNote}</p>
     {/if}
     <div class="ev-actions">
-      <button type="button" class="ev-btn" class:primary={panel === 'none' || panel === 'pay'} data-testid="everyday-pay-btn" onclick={() => openPanel('pay')}>{flows.pay.before}</button>
-      <button type="button" class="ev-btn" class:primary={panel === 'request'} data-testid="everyday-request-btn" onclick={() => openPanel('request')}>{flows.requestLink.before}</button>
-      <button type="button" class="ev-btn" class:primary={panel === 'cashout'} data-testid="everyday-cashout-btn" onclick={() => openPanel('cashout')}>{flows.cashOut.before}</button>
+      <button type="button" class="ev-btn" class:primary={panel === 'none'} aria-pressed={panel === 'pay'} data-testid="everyday-pay-btn" onclick={() => openPanel('pay')}>{flows.pay.before}</button>
+      <button type="button" class="ev-btn" aria-pressed={panel === 'request'} data-testid="everyday-request-btn" onclick={() => openPanel('request')}>{flows.requestLink.before}</button>
+      <button type="button" class="ev-btn" aria-pressed={panel === 'cashout'} data-testid="everyday-cashout-btn" onclick={() => openPanel('cashout')}>{flows.cashOut.before}</button>
     </div>
   </section>
 {/key}

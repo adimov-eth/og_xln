@@ -507,7 +507,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .batch-card {
-    background: #18181b;
+    background: var(--theme-surface, #121418);
     border: 1px solid #292524;
     border-radius: 12px;
     padding: 14px;
@@ -528,30 +528,30 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   .batch-title {
     font-size: 13px;
     font-weight: 700;
-    color: #f3f4f6;
+    color: var(--theme-text-primary, #f3f4f6);
   }
 
   .batch-subtitle {
     font-size: 11px;
-    color: #9ca3af;
+    color: var(--theme-text-secondary, #9ca3af);
   }
 
   .batch-status-meta {
     font-size: 11px;
-    color: #9ca3af;
+    color: var(--theme-text-secondary, #9ca3af);
   }
 
   .draft-batch {
     margin-top: 10px;
     border: 1px solid #292524;
     border-radius: 8px;
-    background: #151310;
+    background: var(--theme-surface, #121418);
     padding: 10px;
   }
 
   .draft-batch.locked {
-    border-color: rgba(251, 191, 36, 0.35);
-    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.14) inset;
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 35%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--theme-accent, #c5cfde) 14%, transparent) inset;
   }
 
   .batch-summary {
@@ -566,8 +566,8 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     padding: 4px 10px;
     font-size: 10px;
     font-weight: 600;
-    color: #e7e5e4;
-    background: #111111;
+    color: var(--theme-text-primary, #e7e5e4);
+    background: var(--theme-surface, #121418);
     border: 1px solid #292524;
     letter-spacing: 0.02em;
   }
@@ -587,7 +587,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .batch-op-title {
-    color: #f3f4f6;
+    color: var(--theme-text-primary, #f3f4f6);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.02em;
@@ -607,7 +607,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     gap: 8px;
     border: 1px solid #2f2f2f;
     border-radius: 8px;
-    background: #0d0d0d;
+    background: var(--theme-background, #07080b);
     padding: 5px 7px;
   }
 
@@ -623,15 +623,15 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: #d6d3d1;
+    color: var(--theme-text-secondary, #d6d3d1);
     font-size: 11px;
     font-weight: 700;
-    background: #1f1f22;
+    background: var(--theme-surface-hover, #1b1e24);
   }
 
   .entity-chip-name {
     min-width: 0;
-    color: #e7e5e4;
+    color: var(--theme-text-primary, #e7e5e4);
     font-size: 11px;
     font-weight: 600;
     overflow: hidden;
@@ -640,7 +640,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .entity-chip-id {
-    color: #9ca3af;
+    color: var(--theme-text-secondary, #9ca3af);
     font-size: 10px;
     font-family: 'JetBrains Mono', monospace;
   }
@@ -660,14 +660,14 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .batch-op-field-label {
-    color: #a1a1aa;
+    color: var(--theme-text-secondary, #a1a1aa);
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
 
   .batch-op-field-value {
-    color: #f5f5f5;
+    color: var(--theme-text-primary, #f5f5f5);
     font-size: 11px;
     font-family: 'JetBrains Mono', monospace;
     word-break: break-word;
@@ -676,7 +676,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   .preview-label {
     font-size: 10px;
     font-weight: 700;
-    color: #9ca3af;
+    color: var(--theme-text-secondary, #9ca3af);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -685,7 +685,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     margin-top: 10px;
     border-radius: 8px;
     border: 1px dashed #3f3f46;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     padding: 10px;
     font-size: 12px;
   }

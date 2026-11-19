@@ -4,6 +4,11 @@
 	box-sizing: border-box;
 }
 
+/* Reserve the scrollbar's gutter so the column never shifts between short and long screens. */
+html {
+	scrollbar-gutter: stable;
+}
+
 html,
 body,
 #root {

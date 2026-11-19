@@ -788,7 +788,7 @@
 
   .eyebrow {
     margin: 0 0 4px;
-    color: var(--theme-accent, #fbbf24);
+    color: var(--theme-accent, #c5cfde);
     font-size: 12px;
     font-weight: 800;
     text-transform: uppercase;
@@ -803,10 +803,10 @@
   .runtime-pill {
     gap: 8px;
     padding: 8px 10px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 34%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 34%, transparent);
     border-radius: 8px;
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 10%, transparent);
-    color: var(--theme-accent, #fbbf24);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent);
+    color: var(--theme-accent, #c5cfde);
     font-size: 12px;
     text-transform: uppercase;
   }
@@ -830,8 +830,8 @@
   }
 
   .settings-tabs button.active {
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 42%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 12%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 42%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent);
     color: var(--theme-text-primary, #f4f4f5);
   }
 
@@ -882,7 +882,7 @@
     width: 18px;
     height: 18px;
     padding: 0;
-    accent-color: var(--theme-accent, #fbbf24);
+    accent-color: var(--theme-accent, #c5cfde);
   }
 
   .panel-title {
@@ -994,7 +994,7 @@
 
   .primary-action {
     border: 0;
-    background: var(--theme-accent, #fbbf24);
+    background: var(--theme-accent, #c5cfde);
     color: #0a0a0a;
     min-height: 44px;
   }
@@ -1002,9 +1002,9 @@
   .secondary-action {
     min-height: 36px;
     padding: 0 12px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 40%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 12%, transparent);
-    color: var(--theme-accent, #fbbf24);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent);
+    color: var(--theme-accent, #c5cfde);
   }
 
   .primary-action:disabled,
@@ -1074,7 +1074,7 @@
   }
 
   .recovery-coverage-card[data-status='configured'] .coverage-status {
-    color: var(--theme-accent, #fbbf24);
+    color: var(--theme-accent, #c5cfde);
   }
 
   .recovery-coverage-card[data-status='missing'] .coverage-status {
@@ -1111,8 +1111,8 @@
   }
 
   .recovery-mode-option.selected {
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 54%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 10%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 54%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent);
   }
 
   .recovery-mode-option:disabled {

@@ -245,7 +245,8 @@ export async function requestEverydayMotionPermission(): Promise<boolean> {
 
 /**
  * Connects the Obsidian & Silver Everyday specular glare to device tilt
- * (`deviceorientation`) with heavy-inertia desktop pointer fallback.
+ * (`deviceorientation`) on phones and to the pointer on desktop: a few percent of
+ * drift that settles within a second.
  * Respects `prefers-reduced-motion` and `forced-colors`, stops RAF at rest
  * (0% idle CPU), and never triggers unsolicited iOS permission dialogs.
  */
@@ -262,28 +263,59 @@ export function attachEverydayGlare(target: HTMLElement | null): () => void {
   let rafId = 0;
   let hasOrientation = false;
   let listeningOrientation = false;
-  let ease = 0.045;
+  // The light follows with a time constant, not a per-frame fraction: it arrives in about 3τ and
+  // then stops dead, at any frame rate. A long tail of sub-pixel creep reads as the ground being alive.
+  let tau = 200;
+  let lastPaint = 0;
 
-  const paint = (): void => {
+  const paint = (now: number = performance.now()): void => {
     rafId = 0;
+    const dt = lastPaint ? Math.min(64, Math.max(0, now - lastPaint)) : 16;
+    lastPaint = now;
+    const k = 1 - Math.exp(-dt / tau);
     const settled =
-      Math.abs(goal.x - cur.x) < 0.05 &&
-      Math.abs(goal.y - cur.y) < 0.05 &&
-      Math.abs(goal.angle - cur.angle) < 0.05 &&
-      Math.abs(goal.pos - cur.pos) < 0.05;
+      Math.abs(goal.x - cur.x) < 0.1 &&
+      Math.abs(goal.y - cur.y) < 0.1 &&
+      Math.abs(goal.angle - cur.angle) < 0.1 &&
+      Math.abs(goal.pos - cur.pos) < 0.1;
     if (settled) {
       Object.assign(cur, goal);
+      lastPaint = 0;
     } else {
-      cur.x += (goal.x - cur.x) * ease;
-      cur.y += (goal.y - cur.y) * ease;
-      cur.angle += (goal.angle - cur.angle) * ease;
-      cur.pos += (goal.pos - cur.pos) * ease;
+      cur.x += (goal.x - cur.x) * k;
+      cur.y += (goal.y - cur.y) * k;
+      cur.angle += (goal.angle - cur.angle) * k;
+      cur.pos += (goal.pos - cur.pos) * k;
       rafId = window.requestAnimationFrame(paint);
     }
-    target.style.setProperty('--ev-light-x', `${cur.x.toFixed(2)}%`);
-    target.style.setProperty('--ev-light-y', `${cur.y.toFixed(2)}%`);
-    target.style.setProperty('--ev-bevel-angle', `${cur.angle.toFixed(1)}deg`);
-    target.style.setProperty('--ev-glare-pos', `${cur.pos.toFixed(2)}%`);
+    write('--ev-light-x', `${cur.x.toFixed(1)}%`);
+    write('--ev-light-y', `${cur.y.toFixed(1)}%`);
+    write('--ev-bevel-angle', `${cur.angle.toFixed(1)}deg`);
+    write('--ev-glare-pos', `${cur.pos.toFixed(1)}%`);
+  };
+
+  // Each write restyles every ring, glint and streak below the target, so only real changes are written.
+  const written = new Map<string, string>();
+  const write = (name: string, value: string): void => {
+    if (written.get(name) === value) return;
+    written.set(name, value);
+    target.style.setProperty(name, value);
+  };
+
+  // A held phone jitters by a fraction of a degree on every sensor tick. Goals that move less than the
+  // deadband are ignored, so the loop rests instead of chasing noise for as long as the phone is held.
+  const DEADBAND = 0.25;
+  const aim = (x: number, y: number, angle: number, pos: number): void => {
+    if (
+      Math.abs(x - goal.x) < DEADBAND &&
+      Math.abs(y - goal.y) < DEADBAND &&
+      Math.abs(angle - goal.angle) < DEADBAND &&
+      Math.abs(pos - goal.pos) < DEADBAND
+    ) {
+      return;
+    }
+    Object.assign(goal, { x, y, angle, pos });
+    schedule();
   };
 
   const schedule = (): void => {
@@ -296,27 +328,19 @@ export function attachEverydayGlare(target: HTMLElement | null): () => void {
     if (event.gamma === null || event.beta === null) return;
     hasOrientation = true;
     // Tilt nudges the light; it never swings it. Amplitudes are about a third of a full sweep.
-    ease = 0.05;
+    tau = 160;
     const nx = clamp(event.gamma / 36, -1, 1);
     const ny = clamp((event.beta - 45) / 32, -1, 1);
-    goal.x = 52 + nx * 6;
-    goal.y = -10 + ny * 4;
-    goal.angle = 128 + nx * 5;
-    goal.pos = 46 + nx * 5 - ny * 1.5;
-    schedule();
+    aim(52 + nx * 6, -10 + ny * 4, 128 + nx * 5, 46 + nx * 5 - ny * 1.5);
   };
 
   const onPointerMove = (event: PointerEvent): void => {
     if (hasOrientation || event.pointerType === 'touch') return;
-    // Pointer movement is barely felt: a few percent of drift, slow to arrive.
-    ease = 0.03;
+    // Pointer movement is barely felt: a few percent of drift, settled within a second.
+    tau = 200;
     const nx = clamp((event.clientX / (window.innerWidth || 1)) * 2 - 1, -1, 1);
     const ny = clamp((event.clientY / (window.innerHeight || 1)) * 2 - 1, -1, 1);
-    goal.x = 54 + nx * 3;
-    goal.y = -12 + ny * 2;
-    goal.angle = 128 + nx * 2;
-    goal.pos = 46 + nx * 3 - ny * 0.75;
-    schedule();
+    aim(54 + nx * 3, -12 + ny * 2, 128 + nx * 2, 46 + nx * 3 - ny * 0.75);
   };
 
   const onPointerLeave = (): void => {
