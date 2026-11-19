@@ -816,6 +816,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
     display: none;
     z-index: 12;
     backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   }
 
   .status-dot-wrap:hover .consensus-popover,

@@ -649,6 +649,7 @@
     max-height: 280px;
     overflow-y: auto;
     backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
   }
 
   .dropdown::-webkit-scrollbar {

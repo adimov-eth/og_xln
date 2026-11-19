@@ -67,6 +67,38 @@
     cursor: pointer !important;
   }
 
+  /* On touch screens a generic Pro button takes taps across at least 48px without changing how it looks, matching React. */
+  @media (pointer: coarse) {
+    .entity-panel :global(.content button:not(.tab):not([role="radio"]):not(.btn-pay):not(.primary-inline):not(.toggle):not(.back-btn):not(.btn-add):not(.btn-live):not(.c-delete):not(.account-workspace-tab):not(.configure-tab):not(.btn-add-token):not(.scope-btn):not(.primary-btn):not(.cancel-btn):not(.summary-action):not(.summary-action-inline):not(.delta-capacity-bar):not(.delta-faucet):not(.delta-expand):not(.step-btn):not(.step-auto-btn):not(.move-node):not(.move-primary-cta):not(.refresh-btn):not(.hub-primary):not(.btn-connect):not(.expand-toggle):not(.closed-trigger):not(.dropdown-toggle):not(.dropdown-item):not(.settings-tab):not(.compact-btn):not(.pill):not(.theme-swatch):not(.icon-btn):not(.danger-icon):not(.close-btn):not(.file-btn):not(.danger-btn):not(.btn-table-action):not(.wallet-meta-copy)) {
+      position: relative !important; /* Pay's buttons reset with all: unset !important, which would leave the overlay unanchored. */
+    }
+
+    .entity-panel :global(.content button:not(.tab):not([role="radio"]):not(.btn-pay):not(.primary-inline):not(.toggle):not(.back-btn):not(.btn-add):not(.btn-live):not(.c-delete):not(.account-workspace-tab):not(.configure-tab):not(.btn-add-token):not(.scope-btn):not(.primary-btn):not(.cancel-btn):not(.summary-action):not(.summary-action-inline):not(.delta-capacity-bar):not(.delta-faucet):not(.delta-expand):not(.step-btn):not(.step-auto-btn):not(.move-node):not(.move-primary-cta):not(.refresh-btn):not(.hub-primary):not(.btn-connect):not(.expand-toggle):not(.closed-trigger):not(.dropdown-toggle):not(.dropdown-item):not(.settings-tab):not(.compact-btn):not(.pill):not(.theme-swatch):not(.icon-btn):not(.danger-icon):not(.close-btn):not(.file-btn):not(.danger-btn):not(.btn-table-action):not(.wallet-meta-copy)::after) {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: max(100%, 48px);
+      transform: translateY(-50%);
+    }
+
+    /* Compact controls that style themselves (faucet pills, capacity bars) take the same 48px band. */
+    .entity-panel :global(.content :is(.summary-action, .summary-action-inline, .delta-capacity-bar, .delta-faucet, .delta-expand)) {
+      position: relative !important;
+    }
+
+    .entity-panel :global(.content :is(.summary-action, .summary-action-inline, .delta-capacity-bar, .delta-faucet, .delta-expand)::after) {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: max(100%, 48px);
+      transform: translateY(-50%);
+    }
+  }
+
   .entity-panel :global(.content h3),
   .entity-panel :global(.content h4),
   .entity-panel :global(.content label) {

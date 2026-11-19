@@ -164,6 +164,22 @@
 		min-height: calc(var(--ui-control-height, 44px) - 6px) !important;
 	}
 
+	/* On touch screens these compact controls are real 48px targets. */
+	@media (pointer: coarse) {
+		:global(body.xln-user-mode .account-workspace-tab),
+		:global(body.xln-user-mode .configure-tab),
+		:global(body.xln-user-mode .settings-tab),
+		:global(body.xln-user-mode .appearance-pill),
+		:global(body.xln-user-mode .scope-btn),
+		:global(body.xln-user-mode .side-tab),
+		:global(body.xln-user-mode .type-tab-text),
+		:global(body.xln-user-mode .compact-btn),
+		:global(body.xln-user-mode .expand-btn),
+		:global(body.xln-user-mode .refresh-btn) {
+			min-height: max(48px, calc(var(--ui-control-height, 44px) - 6px)) !important;
+		}
+	}
+
 	:global(body.xln-user-mode .section-card),
 	:global(body.xln-user-mode .account-preview),
 	:global(body.xln-user-mode .configure-panel),

@@ -1253,16 +1253,20 @@ textarea.input.boxed {
 	padding: 0 14px;
 }
 
-/* On touch screens a small Pro button keeps its 34px look but gets a 48px hit area, so Pro stays dense and still meets touch size. */
+/* On touch screens every Pro button takes taps across at least 48px without changing how it looks, so Pro stays dense. */
 @media (pointer: coarse) {
-	.app:not([data-posture='everyday']) .btn.sm {
+	.app:not([data-posture='everyday']) .btn {
 		position: relative;
 	}
 
-	.app:not([data-posture='everyday']) .btn.sm::after {
+	.app:not([data-posture='everyday']) .btn::after {
 		content: '';
 		position: absolute;
-		inset: -7px 0;
+		left: 0;
+		right: 0;
+		top: 50%;
+		height: max(100%, 48px);
+		transform: translateY(-50%);
 	}
 }
 
@@ -2336,7 +2340,7 @@ textarea.input.boxed {
 .receive-spectrum input[type='range']::-webkit-slider-thumb {
 	appearance: none; width: 28px; height: 28px; border-radius: 50%;
 	background: color-mix(in srgb, var(--surface) 80%, transparent);
-	border: 2px solid var(--ink); backdrop-filter: blur(12px);
+	border: 2px solid var(--ink); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 	box-shadow: 0 2px 10px color-mix(in srgb, var(--ink) 15%, transparent), inset 0 1px 4px var(--line-2);
 }
 .receive-spectrum input[type='range']::-moz-range-thumb {

@@ -1917,6 +1917,7 @@
     position: fixed; inset: 0;
     background: rgba(0,0,0,0.8);
     backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: grid; place-items: center;
     z-index: 3000; padding: 20px;
   }
@@ -1926,6 +1927,7 @@
     padding: 20px; border-radius: 20px;
     background: color-mix(in srgb, var(--theme-surface, #121418) 94%, transparent);
     backdrop-filter: blur(18px) saturate(1.1);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
     border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
     box-shadow: 0 32px 80px rgba(0,0,0,0.6);
   }
