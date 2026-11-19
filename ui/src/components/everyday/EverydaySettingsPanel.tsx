@@ -1,17 +1,17 @@
 import { useState } from 'react';
 import {
-  EVERYDAY_COPY,
   needsEverydayMotionPermission,
   requestEverydayMotionPermission,
 } from '@xln/frontend/lib/everyday/wallet-posture';
 import { lockEmbeddedRuntime } from '../../runtime/adapter';
-import { resetReactRetiredTestnetState } from '../../runtime/deploy-version';
 import { MATERIALS, NUMBER_FONTS } from '../../runtime/design';
 import { useApp } from '../../runtime/store';
 import { sendEntityTxs } from '../../runtime/tx';
 import { useEverydayWallet, useWalletPosture } from '../../runtime/use-everyday-wallet';
 import { Icon } from '../Icons';
 import { Sheet } from '../Sheet';
+import { armedAttribute } from '@xln/frontend/lib/utils/control/armed-press';
+import { useClearTestData } from '../settings/useClearTestData';
 import { EverydayDesignPreview } from './EverydayDesignPreview';
 import { EverydayRecoveryNotice } from './EverydayRecoveryNotice';
 
@@ -32,7 +32,6 @@ export function EverydaySettingsPanel() {
   const [savingName, setSavingName] = useState(false);
   const [revealing, setRevealing] = useState(false);
   const [revealConfirmed, setRevealConfirmed] = useState(false);
-  const [resetting, setResetting] = useState(false);
   const [showMotionPrompt, setShowMotionPrompt] = useState(() => needsEverydayMotionPermission());
 
   const enableTiltGlare = async (): Promise<void> => {
@@ -68,14 +67,7 @@ export function EverydaySettingsPanel() {
     }
   };
 
-  const clearTestData = (): void => {
-    if (resetting) return;
-    setResetting(true);
-    void resetReactRetiredTestnetState().catch(failure => {
-      setResetting(false);
-      toast(failure instanceof Error ? failure.message : EVERYDAY_COPY.flows.resetDemo.failed, 'danger');
-    });
-  };
+  const reset = useClearTestData();
 
   return (
     <>
@@ -219,19 +211,22 @@ export function EverydaySettingsPanel() {
         <div className="everyday-panel-head">
           <div className="everyday-row-meta">
             <span className="everyday-row-title">Reset test network data</span>
-            <span className="everyday-row-sub">Clears local test state while keeping your wallet login.</span>
+            <span className="everyday-row-sub">Your test balance goes to zero and test accounts and activity leave this device. Your login stays.</span>
           </div>
           <button
             type="button"
-            className="btn"
-            disabled={resetting}
-            onClick={clearTestData}
+            className={reset.armed || reset.resetting ? 'btn danger reset-action' : 'btn reset-action'}
+            disabled={reset.resetting}
+            onClick={reset.press}
+            onBlur={reset.disarm}
+            data-armed={armedAttribute(reset.arm)}
             data-testid="settings-clear-test-data"
           >
-            {resetting
-              ? EVERYDAY_COPY.flows.resetDemo.pending
-              : EVERYDAY_COPY.flows.resetDemo.before}
+            {reset.label}
           </button>
+          <span className="sr-only" role="status">
+            {reset.armed ? 'Press again to clear test data. This cannot be undone.' : ''}
+          </span>
         </div>
       </div>
 

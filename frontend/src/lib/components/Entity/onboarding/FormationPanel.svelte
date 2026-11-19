@@ -494,7 +494,7 @@
   .field input[type="text"] {
     padding: 10px 12px;
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 88%, transparent);
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #27272a) 82%, transparent);
+    border: 1px solid var(--theme-input-border, #27272a);
     border-radius: 6px;
     color: var(--theme-text-primary, #e4e4e7);
     font-size: 13px;
@@ -649,7 +649,7 @@
     flex: 1;
     padding: 6px 8px;
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 88%, transparent);
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #27272a) 82%, transparent);
+    border: 1px solid var(--theme-input-border, #27272a);
     border-radius: 4px;
     color: var(--theme-text-primary, #e4e4e7);
     font-size: 12px;
@@ -659,7 +659,7 @@
     width: 60px;
     padding: 6px 8px;
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 88%, transparent);
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #27272a) 82%, transparent);
+    border: 1px solid var(--theme-input-border, #27272a);
     border-radius: 4px;
     color: var(--theme-text-primary, #e4e4e7);
     font-size: 12px;

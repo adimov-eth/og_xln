@@ -508,7 +508,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
 
   .batch-card {
     background: var(--theme-surface, #121418);
-    border: 1px solid #292524;
+    border: 1px solid var(--theme-border, #262a31);
     border-radius: 12px;
     padding: 14px;
   }
@@ -543,7 +543,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
 
   .draft-batch {
     margin-top: 10px;
-    border: 1px solid #292524;
+    border: 1px solid var(--theme-border, #262a31);
     border-radius: 8px;
     background: var(--theme-surface, #121418);
     padding: 10px;
@@ -568,7 +568,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     font-weight: 600;
     color: var(--theme-text-primary, #e7e5e4);
     background: var(--theme-surface, #121418);
-    border: 1px solid #292524;
+    border: 1px solid var(--theme-border, #262a31);
     letter-spacing: 0.02em;
   }
 

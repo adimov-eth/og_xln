@@ -198,21 +198,21 @@ export function OpenAccountSheet({ wallet, onClose }: { wallet: WalletView; onCl
             <div className="fade-in">
               <div className="field-row" style={{ marginTop: 8 }}>
                 <input
-                  className="input"
+                  className="input boxed"
                   placeholder="Soft limit"
                   inputMode="decimal"
                   value={softText}
                   onChange={event => setSoftText(event.target.value)}
                 />
                 <input
-                  className="input"
+                  className="input boxed"
                   placeholder="Hard limit"
                   inputMode="decimal"
                   value={hardText}
                   onChange={event => setHardText(event.target.value)}
                 />
                 <input
-                  className="input"
+                  className="input boxed"
                   placeholder="Max fee"
                   inputMode="decimal"
                   value={feeText}

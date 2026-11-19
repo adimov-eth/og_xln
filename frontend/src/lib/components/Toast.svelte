@@ -66,52 +66,27 @@
     pointer-events: none;
   }
 
+  /* Toasts float, so they are frosted glass over the ground. Status lives in the icon, never a stripe. */
   .toast {
     display: flex;
     align-items: center;
     gap: 12px;
     padding: 14px 16px;
     border-radius: 12px;
-    background: rgba(28, 25, 23, 0.95);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    background: color-mix(in srgb, var(--theme-surface, #121418) 82%, transparent);
+    backdrop-filter: blur(22px) saturate(0.6);
+    -webkit-backdrop-filter: blur(22px) saturate(0.6);
+    border: 1px solid var(--theme-border, #262a31);
+    box-shadow: 0 10px 30px color-mix(in srgb, #000 30%, transparent);
     font-size: 14px;
-    color: #e7e5e4;
+    color: var(--theme-text-primary, #e6ebf2);
     pointer-events: none;
   }
 
-  .toast.success {
-    border-left: 3px solid #22c55e;
-  }
-
-  .toast.success .icon {
-    color: #22c55e;
-  }
-
-  .toast.error {
-    border-left: 3px solid #ef4444;
-  }
-
-  .toast.error .icon {
-    color: #ef4444;
-  }
-
-  .toast.warning {
-    border-left: 3px solid #f59e0b;
-  }
-
-  .toast.warning .icon {
-    color: #f59e0b;
-  }
-
-  .toast.info {
-    border-left: 3px solid #3b82f6;
-  }
-
-  .toast.info .icon {
-    color: #3b82f6;
-  }
+  .toast.success .icon { color: var(--theme-credit, #4ade80); }
+  .toast.error .icon { color: var(--theme-debit, #f43f5e); }
+  .toast.warning .icon { color: var(--theme-warning, #f59e0b); }
+  .toast.info .icon { color: var(--theme-text-secondary, #9aa3b2); }
 
   .icon {
     flex-shrink: 0;
@@ -138,9 +113,8 @@
     padding: 0;
     background: transparent;
     border: none;
-    color: #78716c;
+    color: var(--theme-text-secondary, #9aa3b2);
     cursor: pointer;
-    opacity: 0.7;
     transition: opacity 0.15s;
     pointer-events: auto;
   }

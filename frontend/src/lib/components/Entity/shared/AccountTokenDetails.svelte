@@ -88,8 +88,8 @@
   }
 
   .detail-section {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 2%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
     border-radius: 12px;
     padding: 14px;
   }
@@ -117,7 +117,7 @@
 
   .detail-head {
     padding-bottom: 6px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
   }
 
   .detail-header,
@@ -146,7 +146,7 @@
     gap: 12px;
     align-items: center;
     padding: 8px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .detail-line:last-child {

@@ -1356,7 +1356,7 @@ details[open] > summary::before {
 
 /* S2: an input inside a card keeps a visible box; only the big amount input stays bare. */
 .card .field .input:not(.big):not(select) {
-	border: 1px solid var(--line-2);
+	border: 1px solid var(--ev-input-edge);
 	border-radius: 8px;
 	padding: 9px 12px;
 	background: var(--surface);

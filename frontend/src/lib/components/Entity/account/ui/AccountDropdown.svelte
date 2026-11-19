@@ -199,7 +199,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .menu-item:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 5%, transparent);
   }
 
   .menu-item.selected {

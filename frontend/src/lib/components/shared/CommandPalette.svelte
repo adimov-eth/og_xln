@@ -351,7 +351,7 @@
   }
 
   .palette-result:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .result-icon {

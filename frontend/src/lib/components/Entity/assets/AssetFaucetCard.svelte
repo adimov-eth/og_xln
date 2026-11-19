@@ -61,9 +61,9 @@
     gap: 12px;
     margin-bottom: 12px;
     padding: 10px 14px;
-    border: 1px solid rgba(120, 113, 108, 0.22);
+    border: 1px solid var(--theme-border, #262a31);
     border-radius: 14px;
-    background: rgba(23, 20, 18, 0.58);
+    background: var(--theme-surface, #121418);
   }
 
   .faucet-inline-row {
@@ -79,7 +79,7 @@
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--theme-accent, #c5cfde);
+    color: var(--theme-text-secondary, #9aa3b2);
     white-space: nowrap;
   }
 
@@ -90,7 +90,7 @@
     padding: 6px 28px 6px 10px;
     border-radius: 10px;
     background: var(--theme-surface, #121418);
-    border: 1px solid rgba(120, 113, 108, 0.32);
+    border: 1px solid var(--theme-input-border, #5f656e);
     color: var(--theme-text-primary, #f5f5f4);
   }
 

@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { CopyId } from '../components/CopyId';
 import { EverydaySettingsPanel } from '../components/everyday/EverydaySettingsPanel';
 import { Networks } from '../components/Networks';
@@ -11,7 +10,8 @@ import { Profile } from '../components/settings/Profile';
 import { StackManager } from '../components/settings/StackManager';
 import { Vault } from '../components/settings/Vault';
 import { getAdapter, getEmbeddedEnv } from '../runtime/adapter';
-import { resetReactRetiredTestnetState } from '../runtime/deploy-version';
+import { armedAttribute } from '@xln/frontend/lib/utils/control/armed-press';
+import { useClearTestData } from '../components/settings/useClearTestData';
 import { useApp } from '../runtime/store';
 import { useWalletPosture } from '../runtime/use-everyday-wallet';
 import { peekXLN } from '../runtime/xln-loader';
@@ -21,19 +21,9 @@ export function SettingsScreen() {
   const [section, setSection] = useState<'general' | 'consensus'>('general');
   const height = useApp(s => s.height);
   const usdPerPx = useApp(s => s.usdPerPx);
-  const toast = useApp(s => s.toast);
   const adapter = getAdapter();
   const [diagnostics, setDiagnostics] = useState('');
-  const [resetting, setResetting] = useState(false);
-
-  const clearTestData = (): void => {
-    if (resetting) return;
-    setResetting(true);
-    void resetReactRetiredTestnetState().catch(failure => {
-      setResetting(false);
-      toast(failure instanceof Error ? failure.message : EVERYDAY_COPY.flows.resetDemo.failed, 'danger');
-    });
-  };
+  const reset = useClearTestData();
 
   if (posture === 'everyday') {
     return (
@@ -128,19 +118,22 @@ export function SettingsScreen() {
             <div className="setting">
               <div>
                 <div className="t">Reset test network data</div>
-                <div className="s">Clears retired testnet state while preserving your vault keys.</div>
+                <div className="s">Your test balance goes to zero and test accounts and activity leave this device. Your login stays.</div>
               </div>
               <button
                 type="button"
-                className="btn sm"
-                disabled={resetting}
-                onClick={clearTestData}
+                className={reset.armed || reset.resetting ? 'btn sm danger reset-action' : 'btn sm reset-action'}
+                disabled={reset.resetting}
+                onClick={reset.press}
+                onBlur={reset.disarm}
+                data-armed={armedAttribute(reset.arm)}
                 data-testid="settings-clear-test-data"
               >
-                {resetting
-                  ? EVERYDAY_COPY.flows.resetDemo.pending
-                  : EVERYDAY_COPY.flows.resetDemo.before}
+                {reset.label}
               </button>
+              <span className="sr-only" role="status">
+                {reset.armed ? 'Press again to clear test data. This cannot be undone.' : ''}
+              </span>
             </div>
             <Profile />
             <Appearance />

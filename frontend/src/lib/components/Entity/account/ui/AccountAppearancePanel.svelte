@@ -228,9 +228,9 @@
     align-items: center;
     gap: 0;
     padding: 3px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.03);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 3%, transparent);
     width: fit-content;
   }
 
@@ -258,7 +258,7 @@
 
   .appearance-pill:hover {
     color: var(--theme-text-primary, #d4d4d8);
-    background: rgba(255, 255, 255, 0.04);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .appearance-pill.active {
@@ -333,7 +333,7 @@
     align-items: center;
     gap: 10px;
     padding: 8px 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
     cursor: pointer;
     user-select: none;
   }

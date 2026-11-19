@@ -4,6 +4,7 @@
   import { requireUnknownRecord } from '#lib/utils/boundary/index.ts';
   import { resetRetiredTestnetState } from '#lib/utils/control/resetEverything.ts';
   import { EVERYDAY_COPY } from '#lib/everyday/wallet-posture.ts';
+  import { armedAttribute, createArmedPress, type ArmState } from '#lib/utils/control/armed-press.ts';
   import type { EverydayWalletProjection } from '#lib/everyday/everyday-projection.ts';
   import { requestEverydayTestCash, resolveEverydayApiBase } from '../everyday-runtime';
 
@@ -20,7 +21,9 @@
   let { projection, frame, symbol, jurisdiction, runtimeId, commandReady, onRefresh, onBack }: Props = $props();
 
   let busy = $state<'cash' | 'gas' | 'erc20' | 'reset' | null>(null);
-  let confirmReset = $state(false);
+  // Clearing test data is irreversible, so it takes two deliberate presses (see createArmedPress).
+  let resetArm = $state<ArmState>('idle');
+  const resetPress = createArmedPress(next => { resetArm = next; });
   let statusMsg = $state('');
   let errorMsg = $state('');
 
@@ -69,7 +72,8 @@
   });
 
   const resetDemo = () => runAction('reset', async () => {
-    await resetRetiredTestnetState('/app');
+    try { await resetRetiredTestnetState('/app'); }
+    catch (err) { console.error('[reset] clear test data failed', err); throw new Error(EVERYDAY_COPY.flows.resetDemo.failed); }
     return EVERYDAY_COPY.flows.resetDemo.done;
   });
 </script>
@@ -120,14 +124,10 @@
     <div class="ev-test-row">
       <div style="flex:1;min-width:0;">
         <strong>{EVERYDAY_COPY.flows.resetDemo.before}</strong>
-        <p class="ev-muted">Clears local test wallet data on this device.</p>
+        <p class="ev-muted">Your test balance goes to zero and test accounts and activity leave this device. Your login stays.</p>
       </div>
-      <button type="button" class="ev-btn" data-testid="everyday-test-reset" disabled={busy !== null} onclick={() => {
-        if (!confirmReset) { confirmReset = true; return; }
-        confirmReset = false;
-        void resetDemo();
-      }}>
-        {busy === 'reset' ? EVERYDAY_COPY.flows.resetDemo.pending : confirmReset ? 'Confirm reset' : 'Reset'}
+      <button type="button" class="ev-btn ev-reset-action" class:danger={resetArm !== 'idle' || busy === 'reset'} data-armed={armedAttribute(resetArm)} data-testid="everyday-test-reset" disabled={busy !== null} onclick={() => { if (resetPress.press()) void resetDemo(); }} onblur={resetPress.disarm}>
+        {busy === 'reset' ? EVERYDAY_COPY.flows.resetDemo.pending : resetArm !== 'idle' ? EVERYDAY_COPY.flows.resetDemo.confirm : 'Clear'}
       </button>
     </div>
   </section>

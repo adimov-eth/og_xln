@@ -104,7 +104,7 @@ function WalletApp() {
     return (
       <div className="gate">
         <div className="gate-sheet">
-          <p className="caps">{retiredResetting ? 'Clearing test data...' : 'Updating test network...'}</p>
+          <p className="caps">{retiredResetting ? EVERYDAY_COPY.flows.resetDemo.pending : 'Updating test network...'}</p>
         </div>
       </div>
     );
@@ -118,7 +118,8 @@ function WalletApp() {
       setRecoveryResetError('');
       void resetReactRetiredTestnetState().catch(failure => {
         setRecoveryResetting(false);
-        setRecoveryResetError(failure instanceof Error ? failure.message : clearFailed);
+        console.error('[reset] clear test data failed', failure);
+        setRecoveryResetError(clearFailed);
       });
     };
     return (

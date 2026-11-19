@@ -49,9 +49,10 @@ export const EVERYDAY_COPY = {
     },
     resetDemo: {
       before: 'Clear test data',
-      pending: 'Clearing test data...',
+      confirm: 'Confirm clear',
+      pending: 'Clearing…',
       done: 'Test data cleared; login kept.',
-      failed: 'Nothing changed.',
+      failed: "Couldn't finish clearing. Reload the page to continue.",
     },
   },
   externalRequestSheet: {

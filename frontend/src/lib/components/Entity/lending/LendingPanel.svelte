@@ -178,7 +178,7 @@
   {#if !terms}<p role="status">This bank has no current signed offer for this token and term.</p>{/if}
   {#if terms}<p>Bank savings rate: {terms.savingsInterestBps} basis points {termId === 'demand' ? 'per year, simple interest' : 'per term'}. Offer expires {new Date(terms.expiresAt).toLocaleString()}.</p>{/if}
   <form on:submit|preventDefault={() => action(submit)} data-testid={side === 'lend' ? 'lending-offer-form' : 'lending-borrow-form'}>
-    <label>Amount <input placeholder="Amount" inputmode="decimal" bind:value={amount} disabled={busy} /></label>
+    <label>Amount <input class="money-input" placeholder="0" inputmode="decimal" bind:value={amount} disabled={busy} /></label>
     {#if side === 'borrow'}<label>Maximum rate (basis points) <input type="number" min="0" step="1" bind:value={maxRate} disabled={busy} /></label>{/if}
     {#if quote?.ok}<p data-testid="lending-borrow-preview">Principal: {money(quote.principal)}. Maximum repayment: {money(quote.maximum)}.</p>{:else if quote}<p role="alert">{quote.error}</p>{/if}
     {#if needsRisk && risk?.ok}
@@ -188,7 +188,7 @@
     {#if needsCapacity}<p>Receiving this loan requires capacity. Accepting it as credit exposes you to the bank up to the displayed limit; collateral is the secured option.</p>
       {#if receivePlan?.status === 'credit'}<button type="button" disabled={!ready || busy} on:click={() => action(authorizeCapacity)}>Accept as credit: maximum {money(receivePlan.requiredPeerCreditLimit)}</button>{/if}
     {/if}
-    <button type="submit" data-testid={side === 'lend' ? 'lending-offer-submit' : 'lending-borrow-submit'} disabled={!ready || busy || !quote?.ok || needsRisk || needsCapacity}>{side === 'lend' ? 'Lend' : 'Borrow'}</button>
+    <button type="submit" class="primary-btn" data-testid={side === 'lend' ? 'lending-offer-submit' : 'lending-borrow-submit'} disabled={!ready || busy || !quote?.ok || needsRisk || needsCapacity}>{side === 'lend' ? 'Lend' : 'Borrow'}</button>
   </form>
   {#if error}<p role="alert" data-testid="lending-error">{error}</p>{/if}
   {#if notice}<p role="status">{notice}</p>{/if}
@@ -210,8 +210,14 @@
   {/each}
 </section>
 <style>
-  .lending-panel { display: grid; gap: 14px; padding: 20px; max-width: 760px; }
+  .lending-panel { display: grid; gap: 14px; padding: 0; max-width: 760px; }
+  h2 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+  h3 { margin: 10px 0 0; font-size: 12px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--theme-text-secondary, #9aa3b2); }
+  p { margin: 0; max-width: 60ch; line-height: 1.5; color: var(--theme-text-secondary, #9aa3b2); }
   label { display: grid; gap: 6px; } input, select, button { font: inherit; padding: 10px; }
-  form, article { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border-color, #444); border-radius: 12px; }
-  [role=alert] { color: var(--color-error, #ff8080); } button { cursor: pointer; } button:disabled { opacity: .5; cursor: default; }
+  form, article { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--theme-border, #262a31); border-radius: 12px; background: var(--theme-surface, #121418); }
+  .primary-btn { min-height: 52px; padding: 0 18px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent); background: var(--theme-primary-metal); color: var(--theme-accent-contrast, #050608); font-weight: 600; letter-spacing: 0.02em; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 6px 18px rgba(0, 0, 0, 0.22); }
+  .primary-btn:disabled { opacity: 1; background: color-mix(in oklab, var(--theme-text-primary, #e6ebf2) 8%, transparent); border-color: transparent; color: var(--theme-text-muted, #80889a); box-shadow: none; }
+  .primary-btn:focus-visible { outline: 2px solid var(--theme-text-primary, #e6ebf2); outline-offset: 2px; }
+  [role=alert] { color: var(--theme-debit, #f87171); } button { cursor: pointer; } button:disabled { opacity: .5; cursor: default; }
 </style>

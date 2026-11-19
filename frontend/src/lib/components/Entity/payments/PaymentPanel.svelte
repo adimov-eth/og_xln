@@ -1259,8 +1259,9 @@
     <div class="amount-shell">
       <input
         id="payment-amount-input"
-        class="amount-input"
+        class="amount-input money-input"
         type="text"
+        inputmode="decimal"
         bind:value={amount}
         data-testid="payment-amount-input"
         aria-label="Payment amount"
@@ -1502,7 +1503,7 @@
     padding: 14px 0;
   }
   .pay-section + .pay-section {
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    border-top: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .delivery-mode {
@@ -1516,8 +1517,8 @@
     min-width: 0;
     min-height: 52px;
     padding: 7px 9px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 10%, transparent);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 3%, transparent);
     color: var(--theme-text-secondary, rgba(255, 255, 255, 0.55));
     font: inherit;
     text-align: left;
@@ -1525,8 +1526,9 @@
   }
 
   .delivery-mode button.active {
-    border-color: rgba(255, 255, 255, 0.28);
-    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--theme-input-border, #5f656e);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
+    box-shadow: inset 0 1px 3px color-mix(in srgb, #000 28%, transparent);
     color: var(--theme-text-primary, rgba(255, 255, 255, 0.96));
   }
 
@@ -1547,7 +1549,7 @@
   }
 
   .delivery-mode button.active .delivery-mode-radio {
-    border: 3px solid rgba(255, 255, 255, 0.96);
+    border: 3px solid currentColor;
   }
 
   .delivery-mode-default {
@@ -1593,8 +1595,8 @@
     min-height: 46px !important;
     border-radius: 12px !important;
     font-size: 14px !important;
-    background: rgba(255, 255, 255, 0.03) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    background: color-mix(in srgb, var(--theme-input-bg, #07080b) 88%, transparent) !important;
+    border: 1px solid var(--theme-input-border, #5f656e) !important;
     box-shadow: none !important;
   }
   :global(html body.xln-user-mode [data-pp] .entity-input-field:focus) {
@@ -1614,17 +1616,17 @@
     height: 46px !important;
     flex-shrink: 0 !important;
     border-radius: 12px !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid var(--theme-input-border, #5f656e) !important;
+    background: color-mix(in srgb, var(--theme-input-bg, #07080b) 88%, transparent) !important;
     color: var(--theme-text-muted, #5a5550) !important;
     cursor: pointer !important;
     transition: all 0.2s !important;
   }
   :global([data-pp] button.qr-btn:hover) {
-    color: #a09889 !important;
-    background: rgba(255, 255, 255, 0.06) !important;
+    color: var(--theme-text-primary, #e6ebf2) !important;
+    background: color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent) !important;
   }
-  :global([data-pp] button.qr-btn.clear-btn) { color: #c48b7a !important; }
+  :global([data-pp] button.qr-btn.clear-btn) { color: var(--theme-text-secondary, #9aa3b2) !important; }
 
   /* ══ Error ══ */
   .form-error {
@@ -1652,33 +1654,10 @@
     align-items: center;
   }
 
-  :global(html body.xln-user-mode [data-pp] input.amount-input) {
-    all: unset !important;
-    box-sizing: border-box !important;
-    display: block !important;
-    flex: 1 !important;
-    min-width: 0 !important;
-    width: 100% !important;
-    height: 72px !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border: none !important;
-    border-radius: 0 !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    outline: none !important;
-    color: var(--theme-text-primary, #f5efe6) !important;
-    font-size: 52px !important;
-    font-weight: 200 !important;
-    font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
-    font-variant-numeric: tabular-nums !important;
-    line-height: 72px !important;
-    text-align: right !important;
-    letter-spacing: -0.03em !important;
-    caret-color: var(--theme-accent, #c5cfde) !important;
-  }
-  :global(html body.xln-user-mode [data-pp] input.amount-input::placeholder) {
-    color: #3a3632 !important;
+  .amount-shell :global(input.amount-input) {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
   }
 
   .amount-token {
@@ -1689,8 +1668,8 @@
     min-height: 40px !important;
     padding: 8px 12px !important;
     border-radius: 10px !important;
-    background: rgba(255, 255, 255, 0.04) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    background: color-mix(in srgb, var(--theme-input-bg, #07080b) 88%, transparent) !important;
+    border: 1px solid var(--theme-input-border, #5f656e) !important;
     box-shadow: none !important;
   }
 
@@ -1716,8 +1695,8 @@
   /* ══ Note (liquid glass) ══ */
   .note-glass {
     border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.005));
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--theme-text-primary, white) 2%, transparent), color-mix(in srgb, var(--theme-text-primary, white) 0.5%, transparent));
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     padding: 2px;
@@ -1791,17 +1770,18 @@
     align-items: center;
     gap: 8px;
     padding: 8px 10px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 2%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 5%, transparent);
     border-radius: 10px;
     cursor: pointer;
     transition: all 0.15s;
     margin-bottom: 4px;
   }
-  .route-option:hover { border-color: rgba(255, 255, 255, 0.1); }
+  .route-option:hover { border-color: color-mix(in srgb, var(--theme-text-primary, white) 10%, transparent); }
   .route-option.selected {
-    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 45%, transparent);
-    background: rgba(66, 32, 6, 0.35);
+    border-color: var(--theme-input-border, #5f656e);
+    background: color-mix(in srgb, var(--theme-text-primary, #e6ebf2) 8%, transparent);
+    box-shadow: inset 0 1px 3px color-mix(in srgb, #000 28%, transparent);
   }
   :global([data-pp] .route-option input[type="radio"]) {
     position: absolute !important; opacity: 0 !important;
@@ -1812,7 +1792,7 @@
   .route-marker {
     width: 12px; height: 12px;
     border-radius: 999px;
-    border: 2px solid rgba(255, 255, 255, 0.4);
+    border: 2px solid var(--theme-text-secondary, #9aa3b2);
     flex: 0 0 auto;
   }
   .route-option.selected .route-marker {
@@ -1826,8 +1806,8 @@
   :global([data-pp] .route-cards .name) { font-size: 10px; letter-spacing: 0.03em; text-transform: uppercase; }
   .hop-card {
     padding: 3px 7px; border-radius: 7px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 2%, transparent);
   }
   .hop-arrow { color: var(--theme-text-muted, #5a5550); font-size: 11px; }
   .route-meta {
@@ -1857,7 +1837,7 @@
     border-radius: 16px !important;
     /* Machined metal in the theme's accent: the one primary on the screen, never gold. */
     border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent) !important;
-    background: linear-gradient(154deg, var(--theme-accent-hover, #f5f7fa) 0%, color-mix(in srgb, var(--theme-accent, #c5cfde) 55%, var(--theme-accent-hover, #f5f7fa)) 52%, var(--theme-accent, #c5cfde) 100%) !important;
+    background: var(--theme-primary-metal) !important;
     color: var(--theme-accent-contrast, #050608) !important;
     font-size: 16px !important;
     font-weight: 600 !important;
@@ -1870,7 +1850,7 @@
   :global([data-pp] button.btn-pay:hover:not([disabled]):not(.success)) {
     transform: translateY(-1px) !important;
     border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 60%, transparent) !important;
-    background: linear-gradient(154deg, var(--theme-accent-hover, #f5f7fa) 0%, color-mix(in srgb, var(--theme-accent, #c5cfde) 55%, var(--theme-accent-hover, #f5f7fa)) 52%, var(--theme-accent, #c5cfde) 100%) !important;
+    background: var(--theme-primary-metal) !important;
     filter: brightness(1.05);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.65), 0 14px 36px rgba(0,0,0,0.32) !important;
   }
@@ -1912,8 +1892,8 @@
 
   .pay-spinner {
     width: 16px; height: 16px;
-    border: 2px solid rgba(255,255,255,0.2);
-    border-top-color: #fff7ed;
+    border: 2px solid color-mix(in srgb, var(--theme-accent-contrast, #050608) 22%, transparent);
+    border-top-color: var(--theme-accent-contrast, #050608);
     border-radius: 999px;
     animation: spin 0.7s linear infinite;
   }
@@ -1944,8 +1924,9 @@
     width: min(100%, 480px);
     display: flex; flex-direction: column; gap: 14px;
     padding: 20px; border-radius: 20px;
-    background: rgba(20,17,15,0.95);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: color-mix(in srgb, var(--theme-surface, #121418) 94%, transparent);
+    backdrop-filter: blur(18px) saturate(1.1);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
     box-shadow: 0 32px 80px rgba(0,0,0,0.6);
   }
   .scanner-card-header {
@@ -1967,11 +1948,6 @@
   /* ══ Responsive ══ */
   @media (max-width: 900px) {
     .payment-panel { max-width: 100%; }
-    :global(html body.xln-user-mode [data-pp] input.amount-input) {
-      font-size: 36px !important;
-      height: 56px !important;
-      line-height: 56px !important;
-    }
     .amount-shell { flex-wrap: wrap; }
     .amount-token { width: 100%; margin-left: 0; margin-top: 8px; }
     :global([data-pp] button.btn-pay) { height: 50px !important; }

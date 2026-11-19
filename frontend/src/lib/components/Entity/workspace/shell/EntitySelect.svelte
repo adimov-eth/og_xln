@@ -220,7 +220,7 @@
   }
 
   .es-option:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
   }
 
   .es-option.selected {

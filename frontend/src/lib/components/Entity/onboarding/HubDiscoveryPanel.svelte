@@ -342,7 +342,7 @@ import { asTokenId } from '@xln/core/protocol/units';
     background: color-mix(in srgb, var(--theme-warning, #f59e0b) 9%, transparent);
     border: 1px solid color-mix(in srgb, var(--theme-warning, #f59e0b) 18%, transparent);
     border-radius: 12px;
-    color: color-mix(in srgb, var(--theme-warning, #f59e0b) 76%, white 24%);
+    color: color-mix(in srgb, var(--theme-warning, #f59e0b) 76%, var(--theme-text-primary, white) 24%);
     font-size: 12px;
   }
 
@@ -351,7 +351,7 @@ import { asTokenId } from '@xln/core/protocol/units';
     background: color-mix(in srgb, var(--theme-debit, #ef4444) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--theme-debit, #ef4444) 22%, transparent);
     border-radius: 12px;
-    color: color-mix(in srgb, var(--theme-debit, #ef4444) 78%, white 22%);
+    color: color-mix(in srgb, var(--theme-debit, #ef4444) 78%, var(--theme-text-primary, white) 22%);
     font-size: 12px;
   }
 
@@ -466,7 +466,7 @@ import { asTokenId } from '@xln/core/protocol/units';
     font-size: 10px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: color-mix(in srgb, var(--theme-credit, #22c55e) 72%, white 28%);
+    color: color-mix(in srgb, var(--theme-credit, #22c55e) 72%, var(--theme-text-primary, white) 28%);
     background: color-mix(in srgb, var(--theme-credit, #22c55e) 10%, transparent);
     display: inline-flex;
     align-items: center;
@@ -476,7 +476,7 @@ import { asTokenId } from '@xln/core/protocol/units';
 
   .connection-state.opening {
     border-color: color-mix(in srgb, var(--hub-accent) 22%, transparent);
-    color: color-mix(in srgb, var(--hub-accent) 72%, white 28%);
+    color: color-mix(in srgb, var(--hub-accent) 72%, var(--theme-text-primary, white) 28%);
     background: color-mix(in srgb, var(--hub-accent) 10%, transparent);
   }
 

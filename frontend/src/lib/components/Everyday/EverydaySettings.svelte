@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { armedAttribute, createArmedPress, type ArmState } from '#lib/utils/control/armed-press.ts';
   import { vaultOperations, type Runtime } from '#lib/stores/vault/vaultStore.ts';
   import { setWalletPosture } from '#lib/stores/everyday/walletPostureStore.ts';
   import { resetRetiredTestnetState } from '#lib/utils/control/resetEverything.ts';
@@ -63,11 +64,22 @@
     finally { exporting = false; }
   }
 
+  // Clearing test data is irreversible: the first press arms it, a second press inside the window clears.
+  // Clearing test data is irreversible, so it takes two deliberate presses (see createArmedPress).
+  let arm = $state<ArmState>('idle');
+  const armed = $derived(arm !== 'idle');
+  const clearPress = createArmedPress(next => { arm = next; });
+  const disarm = clearPress.disarm;
+  function pressClear(): void {
+    if (resetting || !clearPress.press()) return;
+    void clearTestData();
+  }
+
   async function clearTestData(): Promise<void> {
     if (resetting) return;
     resetting = true; errorMsg = ''; statusMsg = resetCopy.pending;
     try { await resetRetiredTestnetState('/app'); statusMsg = resetCopy.done; }
-    catch (err) { errorMsg = err instanceof Error ? err.message : resetCopy.failed; statusMsg = ''; resetting = false; }
+    catch (err) { console.error('[reset] clear test data failed', err); errorMsg = resetCopy.failed; statusMsg = ''; resetting = false; }
   }
 </script>
 
@@ -148,10 +160,11 @@
 
 <section class="ev-card">
   <h2 style="margin:0;font-size:1.15rem;">Test network</h2>
-  <p class="ev-muted">Clear local test state while keeping your wallet login.</p>
-  <button type="button" class="ev-btn danger" data-testid="settings-clear-test-data" disabled={resetting} onclick={() => void clearTestData()}>
-    {resetting ? resetCopy.pending : resetCopy.before}
+  <p class="ev-muted">Your test balance goes to zero and test accounts and activity leave this device. Your login stays.</p>
+  <button type="button" class="ev-btn" class:danger={armed || resetting} data-armed={armedAttribute(arm)} data-testid="settings-clear-test-data" disabled={resetting} onclick={pressClear} onblur={disarm}>
+    {resetting ? resetCopy.pending : armed ? resetCopy.confirm : resetCopy.before}
   </button>
+  <span class="ev-sr-only" role="status">{armed ? 'Press again to clear test data. This cannot be undone.' : ''}</span>
 </section>
 
 {#if errorMsg}<p class="ev-alert error" role="alert">{errorMsg}</p>{/if}

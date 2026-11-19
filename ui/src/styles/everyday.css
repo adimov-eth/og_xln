@@ -394,6 +394,31 @@
 	flex: 0 0 auto;
 }
 
+/* On a phone a labelled action drops below its explanation instead of squeezing it into a column. */
+@media (max-width: 480px) {
+	.everyday-panel-head:has(> .btn),
+	.everyday-panel-head:has(> .segc) {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.everyday-panel-head > .btn {
+		width: 100%;
+	}
+
+	/* A segmented choice takes the full width and shares it equally, so no option falls off the panel. */
+	.everyday-panel-head > .segc {
+		display: flex;
+		align-self: stretch;
+	}
+
+	.everyday-panel-head > .segc > button {
+		flex: 1 1 0;
+		min-width: 0;
+		justify-content: center;
+	}
+}
+
 .everyday-preview-stage {
 	position: relative;
 	isolation: isolate;
@@ -916,7 +941,19 @@
 .app[data-posture='everyday'] .btn.danger {
 	background: var(--dispute-dim);
 	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dispute) 30%, transparent);
-	color: var(--dispute);
+	color: color-mix(in oklab, var(--dispute) 70%, var(--ink));
+}
+
+.app[data-posture='everyday'] .btn.danger:hover:not(:disabled) {
+	color: color-mix(in oklab, var(--dispute) 58%, var(--ink));
+	background: color-mix(in oklab, var(--dispute) 20%, var(--dispute-dim));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dispute) 50%, transparent);
+}
+
+.app[data-posture='everyday'] .btn.danger:active:not(:disabled) {
+	color: color-mix(in oklab, var(--dispute) 58%, var(--ink));
+	background: color-mix(in oklab, var(--dispute) 14%, var(--dispute-dim));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dispute) 50%, transparent), inset 0 1px 3px var(--ev-soft-drop);
 }
 
 @media (forced-colors: active) {

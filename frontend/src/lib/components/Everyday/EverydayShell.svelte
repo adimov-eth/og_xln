@@ -417,7 +417,15 @@
   .everyday-shell :global(.ev-btn:hover:not(:disabled)) { background: var(--ev-surface-active); }
   .everyday-shell :global(.ev-btn.primary) { background: linear-gradient(calc(var(--ev-bevel-angle) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%); border-color: var(--ev-btn-primary-top); color: var(--ev-btn-primary-fg); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78), 0 1px 3px rgba(0, 0, 0, 0.36); }
   .everyday-shell :global(.ev-btn.primary:hover:not(:disabled)) { opacity: 0.92; }
-  .everyday-shell :global(.ev-btn.danger) { background: rgba(242,109,109,0.14); border-color: rgba(242,109,109,0.4); color: var(--ink-dispute); }
+  .everyday-shell :global(.ev-btn.danger) { background: color-mix(in oklab, var(--ink-dispute) 14%, transparent); border-color: color-mix(in srgb, var(--ink-dispute) 40%, transparent); color: color-mix(in oklab, var(--ink-dispute) 70%, var(--ev-ink)); }
+  /* Danger keeps its identity in every state: hover deepens the tint, press sinks, disabled fades. */
+  .everyday-shell :global(.ev-btn.danger:hover:not(:disabled)) { color: color-mix(in oklab, var(--ink-dispute) 58%, var(--ev-ink)); background: color-mix(in oklab, var(--ink-dispute) 22%, transparent); border-color: color-mix(in srgb, var(--ink-dispute) 60%, transparent); }
+  .everyday-shell :global(.ev-btn.danger:active:not(:disabled)) { color: color-mix(in oklab, var(--ink-dispute) 58%, var(--ev-ink)); background: color-mix(in oklab, var(--ink-dispute) 16%, transparent); border-color: color-mix(in srgb, var(--ink-dispute) 60%, transparent); box-shadow: inset 0 1px 3px var(--ev-soft-drop); }
+  .everyday-shell :global(.ev-btn.danger:disabled) { opacity: 0.6; }
+  /* An irreversible action keeps its width while it arms and runs, so the row never reflows under the finger. */
+  .everyday-shell :global(.ev-btn.ev-reset-action), .everyday-shell :global(.ev-test-row > .ev-btn.ev-reset-action) { min-width: 10.5em; }
+  /* Read by assistive technology, invisible on screen. */
+  .everyday-shell :global(.ev-sr-only) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .everyday-shell :global(.ev-btn:disabled) { opacity: 0.48; cursor: not-allowed; }
   .everyday-shell :global(.ev-actions) { display: flex; flex-wrap: wrap; gap: 8px; }
   .everyday-shell :global(.ev-actions > .ev-btn) { flex: 1 1 128px; }

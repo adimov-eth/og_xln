@@ -118,7 +118,7 @@
     <section class="invoice-builder">
       <div class="field">
         <div class="field-label">Amount</div>
-        <input type="text" bind:value={amount} data-testid="receive-invoice-amount" aria-label="Invoice amount" />
+        <input class="money-input" type="text" inputmode="decimal" placeholder="0" bind:value={amount} data-testid="receive-invoice-amount" aria-label="Invoice amount" />
       </div>
       <div class="field">
         <div class="field-label">Asset</div>
@@ -204,7 +204,7 @@
   .invoice-builder,
   .invoice-preview {
     background: var(--theme-surface, #121418);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
     border-radius: 16px;
   }
 
@@ -257,7 +257,7 @@
     min-height: var(--receive-field-h);
     padding: 0 14px;
     border-radius: var(--receive-field-radius);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
     background: var(--theme-surface-hover, #1b1e24);
     color: var(--theme-text-primary, #f5efe6);
     font-size: 14px;
@@ -294,17 +294,17 @@
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
   }
 
   .primary-inline {
-    background: linear-gradient(154deg, var(--theme-accent-hover, #f5f7fa) 0%, color-mix(in srgb, var(--theme-accent, #c5cfde) 55%, var(--theme-accent-hover, #f5f7fa)) 52%, var(--theme-accent, #c5cfde) 100%);
+    background: var(--theme-primary-metal);
     color: var(--theme-accent-contrast, #050608);
     border-color: var(--theme-accent, #c5cfde);
   }
 
   .secondary-inline {
-    background: rgba(255, 255, 255, 0.04);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
     color: var(--theme-text-primary, #f5efe6);
   }
 
@@ -328,7 +328,7 @@
     border-radius: 16px;
     align-self: center;
     background: var(--theme-background, #07080b);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
     object-fit: contain;
     display: block;
   }
@@ -353,7 +353,7 @@
     padding: 12px 14px;
     border-radius: 12px;
     background: var(--theme-surface-hover, #1b1e24);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
   }
 
   .invoice-error {

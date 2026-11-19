@@ -524,7 +524,7 @@
     bottom: -1px;
     width: 30px;
     border-radius: 999px;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), rgba(251, 191, 36, 0.3), transparent);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), color-mix(in srgb, var(--theme-badge-pending, #8cc8ff) 34%, transparent), transparent);
     z-index: 10;
     animation: sweep-rtl var(--bar-sweep-duration) ease-out forwards;
     pointer-events: none;

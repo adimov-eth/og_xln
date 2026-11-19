@@ -332,7 +332,7 @@
   }
 
   .usd-hint {
-    color: #94a3b8;
+    color: var(--theme-text-muted, #80889a);
     font-size: 0.48em;
     font-weight: 600;
     letter-spacing: -0.01em;
@@ -359,7 +359,7 @@
     padding: 1px 5px;
     height: auto;
     border-radius: 3px;
-    border: 1px solid #3f3f46;
+    border: 1px solid var(--theme-input-border, #5f656e);
     background: transparent;
     color: var(--theme-text-muted, #52525b);
     cursor: pointer;
@@ -387,7 +387,7 @@
   .summary-action:disabled {
     opacity: 0.45;
     cursor: not-allowed;
-    border-color: #3f3f46;
+    border-color: var(--theme-input-border, #5f656e);
     color: var(--theme-text-muted, #71717a);
     background: transparent;
   }
@@ -399,7 +399,7 @@
     letter-spacing: 0.04em;
     padding: 1px 4px;
     border-radius: 3px;
-    border: 1px solid #3f3f46;
+    border: 1px solid var(--theme-input-border, #5f656e);
     background: transparent;
     color: var(--theme-text-muted, #52525b);
     cursor: pointer;
@@ -687,8 +687,8 @@
     animation: flash-fade 1.5s ease-out forwards;
     pointer-events: none;
   }
-  .delta-flash.positive { color: #22c55e; }
-  .delta-flash.negative { color: #ef4444; }
+  .delta-flash.positive { color: var(--theme-credit, #4ade80); }
+  .delta-flash.negative { color: var(--theme-debit, #f43f5e); }
   @keyframes flash-fade {
     0% { opacity: 1; transform: translateY(0); }
     70% { opacity: 0.8; transform: translateY(-4px); }

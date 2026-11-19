@@ -951,7 +951,7 @@
   }
 
   .runtime-menu-group:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .runtime-menu-group.focused {
@@ -1007,7 +1007,7 @@
   }
 
   .current-mark {
-    color: #34d399;
+    color: var(--theme-text-primary, #e6ebf2);
     font-size: 11px;
     font-weight: 900;
   }
@@ -1049,7 +1049,7 @@
   .focus-heading code {
     padding: 3px 5px;
     border-radius: 5px;
-    background: rgba(255, 255, 255, 0.04);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .jurisdiction-list {
@@ -1136,12 +1136,12 @@
   }
 
   .entity-row + .entity-row {
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    border-top: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .entity-row:hover,
   .entity-row.active {
-    background: rgba(255, 255, 255, 0.06);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
   }
 
   .entity-row.active {
@@ -1156,7 +1156,7 @@
   }
 
   .entity-current {
-    color: #34d399;
+    color: var(--theme-text-secondary, #9aa3b2);
   }
 
   .entity-select {
@@ -1210,7 +1210,7 @@
   }
 
   .add-runtime-btn:hover {
-    background: rgba(255, 255, 255, 0.07);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 7%, transparent);
   }
 
   .reset-btn {
@@ -1224,7 +1224,7 @@
   }
 
   .reset-btn:hover {
-    color: #fca5a5;
+    color: color-mix(in srgb, var(--theme-debit, #f43f5e) 76%, var(--theme-text-primary, white) 24%);
   }
 
   @media (max-width: 680px) {

@@ -957,7 +957,7 @@
   textarea {
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #3f3f46) 84%, transparent);
+    border: 1px solid var(--theme-input-border, #3f3f46);
     border-radius: 8px;
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 94%, transparent);
     color: var(--theme-text-primary, #f4f4f5);
@@ -973,7 +973,7 @@
   select {
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #3f3f46) 84%, transparent);
+    border: 1px solid var(--theme-input-border, #3f3f46);
     border-radius: 8px;
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 94%, transparent);
     color: var(--theme-text-primary, #f4f4f5);

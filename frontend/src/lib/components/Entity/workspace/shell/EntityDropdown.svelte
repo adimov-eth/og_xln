@@ -584,7 +584,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .menu-item:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
   }
 
   .add-item {
@@ -592,6 +592,6 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
   }
 
   .add-item:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
   }
 </style>

@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { VALUELESS_CHAIN_IDS } from '@xln/core/jurisdiction/adapter/chain-ids';
+import { armedAttribute } from '@xln/frontend/lib/utils/control/armed-press';
 import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { requireAdapter } from '../../runtime/adapter';
-import { resetReactRetiredTestnetState } from '../../runtime/deploy-version';
 import { requestExternalWalletRefresh, requestFaucet } from '../../runtime/financial/external';
 import { receiveTestMoney } from '../../runtime/financial/test-money';
 import { useApp } from '../../runtime/store';
 import { getTokenMeta } from '../../runtime/token-meta';
 import { useEverydayWallet } from '../../runtime/use-everyday-wallet';
+import { useClearTestData } from '../../components/settings/useClearTestData';
 
 type BusyAction = 'cash' | 'gas' | 'erc20' | 'reset' | null;
 
@@ -20,7 +21,7 @@ export function EverydayTest() {
   const { wallet, projection } = useEverydayWallet(entityId, selectedTokenId);
 
   const [busy, setBusy] = useState<BusyAction>(null);
-  const [confirmReset, setConfirmReset] = useState(false);
+  const reset = useClearTestData();
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
 
@@ -79,12 +80,6 @@ export function EverydayTest() {
       });
       requestExternalWalletRefresh();
       return `Added 100 test ${token.symbol} to your external address.`;
-    });
-
-  const resetDemo = (): Promise<void> =>
-    runAction('reset', async () => {
-      await resetReactRetiredTestnetState();
-      return EVERYDAY_COPY.flows.resetDemo.done;
     });
 
   if (!isDemoChain) {
@@ -162,27 +157,18 @@ export function EverydayTest() {
         <div className="everyday-list-row">
           <div className="everyday-row-meta">
             <span className="everyday-row-title">{EVERYDAY_COPY.flows.resetDemo.before}</span>
-            <span className="everyday-row-sub">Clears local test wallet data on this device.</span>
+            <span className="everyday-row-sub">Your test balance goes to zero and test accounts and activity leave this device. Your login stays.</span>
           </div>
           <button
             type="button"
-            className="btn"
-            disabled={busy !== null}
-            onClick={() => {
-              if (!confirmReset) {
-                setConfirmReset(true);
-                return;
-              }
-              setConfirmReset(false);
-              void resetDemo();
-            }}
+            className={reset.armed || reset.resetting ? 'btn danger reset-action' : 'btn reset-action'}
+            disabled={busy !== null || reset.resetting}
+            onClick={reset.press}
+            onBlur={reset.disarm}
+            data-armed={armedAttribute(reset.arm)}
             data-testid="everyday-test-reset"
           >
-            {busy === 'reset'
-              ? EVERYDAY_COPY.flows.resetDemo.pending
-              : confirmReset
-                ? 'Confirm reset'
-                : 'Reset'}
+            {reset.resetting || reset.armed ? reset.label : 'Clear'}
           </button>
         </div>
       </div>

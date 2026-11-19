@@ -507,7 +507,13 @@ export async function runEverydayCaseE10(page: Page, wallet: WalletKind): Promis
   await expect(page.getByTestId('nav-home')).toHaveCount(0);
 
   await page.getByTestId('nav-settings').locator('visible=true').first().click();
-  await page.getByTestId('settings-clear-test-data').click();
+  // Clearing is irreversible, so the first press only arms it; the second press clears.
+  const clearButton = page.getByTestId('settings-clear-test-data');
+  await clearButton.click();
+  // A press during the settle beat is ignored, so wait for the armed state before confirming.
+  await expect(clearButton).toHaveAttribute('data-armed', 'true');
+  await expect(clearButton).toHaveText('Confirm clear');
+  await clearButton.click();
   await expect
     .poll(
       async () => {

@@ -104,7 +104,7 @@
     display: block;
     font-size: 12px;
     font-weight: 600;
-    color: #78716c;
+    color: var(--theme-text-muted, #80889a);
     margin-bottom: 6px;
     text-transform: none;
     letter-spacing: 0.01em;
@@ -115,10 +115,10 @@
     align-items: center;
     gap: 8px;
     padding: 12px 14px;
-    background: #1c1917;
-    border: 1px solid #292524;
+    background: var(--theme-input-bg, #121418);
+    border: 1px solid var(--theme-input-border, #5a6270);
     border-radius: 8px;
-    color: #e7e5e4;
+    color: var(--theme-text-primary, #e6ebf2);
     font-size: 14px;
     cursor: pointer;
     transition: border-color 0.15s;
@@ -132,7 +132,7 @@
   }
 
   .select-trigger:hover:not(:disabled) {
-    border-color: #44403c;
+    border-color: var(--theme-input-focus, var(--theme-text-secondary, #9aa3b2));
   }
 
   .select-trigger:focus {
@@ -166,7 +166,7 @@
   }
 
   .chevron {
-    color: #78716c;
+    color: var(--theme-text-muted, #80889a);
     flex-shrink: 0;
   }
 
@@ -178,8 +178,8 @@
     width: max-content;
     max-width: min(260px, calc(100vw - 24px));
     margin-top: 4px;
-    background: #1c1917;
-    border: 1px solid #292524;
+    background: var(--theme-surface, #121418);
+    border: 1px solid var(--theme-border, #262a31);
     border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     z-index: 100;
@@ -194,7 +194,7 @@
     padding: 10px 12px;
     background: none;
     border: none;
-    color: #e7e5e4;
+    color: var(--theme-text-primary, #e6ebf2);
     font-size: 13px;
     text-align: left;
     cursor: pointer;
@@ -202,11 +202,12 @@
   }
 
   .dropdown-item:hover {
-    background: #292524;
+    background: var(--theme-surface-hover, #1b1e24);
   }
 
   .dropdown-item.selected {
-    background: #422006;
+    background: color-mix(in srgb, var(--theme-text-primary, #e6ebf2) 10%, transparent);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18);
   }
 
   .token-info {
@@ -218,7 +219,7 @@
 
   .token-name {
     font-size: 11px;
-    color: #78716c;
+    color: var(--theme-text-muted, #80889a);
     white-space: normal;
     overflow-wrap: anywhere;
   }

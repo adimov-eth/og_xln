@@ -291,7 +291,7 @@
         </div>
       </div>
       <div class="move-inline-composer">
-        <input class="move-amount-input" type="text" bind:value={moveAmount} placeholder="0.00" data-testid="move-amount" />
+        <input class="move-amount-input money-input" type="text" inputmode="decimal" aria-label="Move amount" bind:value={moveAmount} placeholder="0.00" data-testid="move-amount" />
         <select class="move-asset-select" bind:value={moveAssetSymbol} data-testid="move-asset-symbol">
           {#each moveAssetOptions as token}
             <option value={token.symbol}>{token.symbol}</option>
@@ -551,7 +551,7 @@
     min-width: 0;
     padding: 10px;
     border-radius: 10px;
-    border: 1px solid color-mix(in srgb, var(--move-border) 46%, transparent);
+    border: 1px solid var(--theme-input-border, #5f656e);
     background: color-mix(in srgb, var(--move-input-bg) 86%, transparent);
     color: var(--move-text);
     text-align: center;
@@ -585,11 +585,11 @@
   .move-node.selected,
   .move-node.source-active,
   .move-node.target-active {
-    box-shadow: none;
+    box-shadow: inset 0 1px 3px color-mix(in srgb, #000 30%, transparent), inset 0 0 0 1px color-mix(in srgb, #000 6%, transparent);
   }
 
   .move-node.source-active {
-    border-color: color-mix(in srgb, var(--move-accent) 48%, transparent);
+    border-color: var(--move-accent);
     background:
       linear-gradient(90deg, color-mix(in srgb, var(--move-accent) 10%, transparent), transparent 18%),
       color-mix(in srgb, var(--move-surface-hover) 82%, transparent);
@@ -601,7 +601,7 @@
   }
 
   .move-node.target-active {
-    border-color: color-mix(in srgb, var(--theme-credit, #4ade80) 36%, transparent);
+    border-color: var(--theme-credit, #4ade80);
     background:
       linear-gradient(90deg, color-mix(in srgb, var(--theme-credit, #4ade80) 10%, transparent), transparent 18%),
       color-mix(in srgb, var(--move-surface-hover) 82%, transparent);
@@ -728,7 +728,7 @@
     min-width: 140px;
     padding: 0 12px;
     border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--move-border) 54%, transparent);
+    border: 1px solid var(--theme-input-border, #5f656e);
     background: color-mix(in srgb, var(--move-input-bg) 92%, transparent);
     color: var(--move-text);
     font-size: 13px;

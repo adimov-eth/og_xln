@@ -11,6 +11,8 @@
   --money-lg: 30px;
   --money-md: 20px;
   --money-sm: 14px;
+  /* The one primary on a screen: machined metal in the theme accent. */
+  --theme-primary-metal: linear-gradient(154deg, var(--theme-accent-hover, #f5f7fa) 0%, color-mix(in srgb, var(--theme-accent, #c5cfde) 55%, var(--theme-accent-hover, #f5f7fa)) 52%, var(--theme-accent, #c5cfde) 100%);
 }
 
 /* Obsidian & Silver: the same ground, ink ladder and sterling accent as the React wallet (ui/src/styles/tokens.css).

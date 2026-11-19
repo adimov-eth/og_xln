@@ -77,7 +77,7 @@
 
   .avatar {
     border-radius: 8px;
-    border: 1px solid #232c39;
+    border: 1px solid var(--theme-border, #262a31);
     flex: 0 0 auto;
   }
 
@@ -96,7 +96,7 @@
   }
 
   .name {
-    color: #d8dee8;
+    color: var(--theme-text-primary, #e6ebf2);
     font-size: 13px;
     font-weight: 600;
     line-height: 1.2;
@@ -112,7 +112,7 @@
   }
 
   .address {
-    color: #8ea1b9;
+    color: var(--theme-text-secondary, #9aa3b2);
     font-family: 'JetBrains Mono', 'IBM Plex Mono', monospace;
     font-size: 11px;
     white-space: nowrap;
@@ -121,9 +121,9 @@
   }
 
   .copy {
-    border: 1px solid #2a3442;
-    background: #101722;
-    color: #94a6bc;
+    border: 1px solid var(--theme-border, #262a31);
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-secondary, #9aa3b2);
     border-radius: 6px;
     height: 20px;
     padding: 0 7px;
@@ -134,7 +134,7 @@
   }
 
   .open-link {
-    color: #bba36a;
+    color: var(--theme-text-secondary, #9aa3b2);
     font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.02em;
@@ -143,10 +143,10 @@
   }
 
   .open-link:hover {
-    color: #f0c86a;
+    color: var(--theme-text-primary, #e6ebf2);
   }
 
   .entity-identity:hover .name {
-    color: #eef3fa;
+    color: var(--theme-text-primary, #e6ebf2);
   }
 </style>
