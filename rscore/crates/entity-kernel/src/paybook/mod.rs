@@ -16,6 +16,24 @@ use crate::{DeterministicContext, EntityKernelError, OrderedAccountCommit};
 const MIN_TIMELOCK_DELTA_MS: u64 = 10_000;
 pub(crate) const SECRET_ACK_TIMEOUT_MS: u64 = 120_000;
 
+pub(crate) fn arm_payment_secret_ack_timeout(
+    timestamp: u64,
+    entry: &mut PaybookEntry,
+) -> Result<(), EntityKernelError> {
+    if entry.inbound_entity.is_none() {
+        return Err(EntityKernelError::htlc(
+            "PAYBOOK_SECRET_ACK_INBOUND_REQUIRED",
+        ));
+    }
+    let deadline = timestamp
+        .checked_add(SECRET_ACK_TIMEOUT_MS)
+        .ok_or_else(|| EntityKernelError::htlc("HTLC_SECRET_ACK_DEADLINE_OVERFLOW"))?;
+    entry.secret_ack_pending = true;
+    entry.secret_ack_started_at = Some(timestamp);
+    entry.secret_ack_deadline_at = Some(deadline);
+    Ok(())
+}
+
 /// A routed inbound refund waits for complete downstream reveal coverage.
 pub fn inbound_payment_timeout_blocked(
     route: &PaybookEntry,
@@ -427,14 +445,7 @@ fn apply_final_prepared(
         .cloned()
         .ok_or_else(|| EntityKernelError::htlc("PAYBOOK_ENTRY_WRITE_MISSING"))?;
     entry.secret = Some(secret.to_ascii_lowercase());
-    entry.secret_ack_pending = true;
-    entry.secret_ack_started_at = Some(state.timestamp);
-    entry.secret_ack_deadline_at = Some(
-        state
-            .timestamp
-            .checked_add(SECRET_ACK_TIMEOUT_MS)
-            .ok_or_else(|| EntityKernelError::htlc("HTLC_SECRET_ACK_DEADLINE_OVERFLOW"))?,
-    );
+    arm_payment_secret_ack_timeout(state.timestamp, &mut entry)?;
     paybook.put(entry)?;
     queue_secret(
         effects,
@@ -738,13 +749,7 @@ pub(crate) fn revealed_secret_followup(
     }
     if let Some(account) = route.inbound_entity.clone() {
         queue_secret(effects, &account, hashlock, secret);
-        route.secret_ack_pending = true;
-        route.secret_ack_started_at = Some(timestamp);
-        let deadline = timestamp
-            .checked_add(SECRET_ACK_TIMEOUT_MS)
-            .ok_or_else(|| EntityKernelError::htlc("HTLC_SECRET_ACK_DEADLINE_OVERFLOW"))?;
-        // The deadline lives on the entry; the wake derives from it.
-        route.secret_ack_deadline_at = Some(deadline);
+        arm_payment_secret_ack_timeout(timestamp, &mut route)?;
         return paybook.put(route);
     }
     effects.outputs.push(EntityKernelOutput::HtlcFinalized {
@@ -838,13 +843,7 @@ pub(crate) fn dispute_evidence_secret(
     route.secret = Some(secret.to_string());
     if local_sent_lock && let Some(inbound) = route.inbound_entity.clone() {
         queue_secret(effects, &inbound, hashlock, secret);
-        route.secret_ack_pending = true;
-        route.secret_ack_started_at = Some(state.timestamp);
-        let deadline = state
-            .timestamp
-            .checked_add(SECRET_ACK_TIMEOUT_MS)
-            .ok_or_else(|| EntityKernelError::htlc("HTLC_SECRET_ACK_DEADLINE_OVERFLOW"))?;
-        route.secret_ack_deadline_at = Some(deadline);
+        arm_payment_secret_ack_timeout(state.timestamp, &mut route)?;
     }
     paybook.put(route)
 }

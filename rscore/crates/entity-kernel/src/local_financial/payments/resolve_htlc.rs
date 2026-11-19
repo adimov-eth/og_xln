@@ -103,6 +103,9 @@ pub(super) fn apply(
     }
     *endpoint = Some(account_id.clone());
     entry.secret = Some(tx.secret.clone());
+    if !local_sent {
+        crate::paybook::arm_payment_secret_ack_timeout(state.timestamp, &mut entry)?;
+    }
     paybook.put(entry)?;
 
     account_txs.push((
@@ -199,6 +202,10 @@ mod tests {
                 &mut vec![],
             );
             assert!(result.is_ok(), "fee/case parity: {result:?}");
+            let mut after = state.clone();
+            changes.commit_sequential(&mut after).unwrap();
+            let stored = after.paybook.entry(&lock_id).unwrap().unwrap();
+            assert!(!stored.secret_ack_pending);
         }
     }
 
@@ -262,6 +269,9 @@ mod tests {
             .expect("entry");
         assert_eq!(entry.secret.as_deref(), Some(secret.as_str()));
         assert_eq!(entry.inbound_entity.as_deref(), Some(peer.as_str()));
+        assert!(entry.secret_ack_pending);
+        assert_eq!(entry.secret_ack_started_at, Some(3));
+        assert_eq!(entry.secret_ack_deadline_at, Some(120_003));
         assert!(matches!(
             account_txs.as_slice(),
             [(account, AccountTx::HtlcResolve(HtlcResolveTx { lock_id: queued, .. }))]

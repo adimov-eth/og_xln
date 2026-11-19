@@ -12,8 +12,8 @@ import type { EntityRuntimeContext } from '../../../runtime-context';
 import { HEAVY_LOGS } from '../../../../support/debug-flags';
 import { encryptedHtlcLayer, hashEncryptedHtlcLayer } from '../../../../protocol/htlc/codec/onion-layer';
 import {
-  armPaymentSecretAckTimeout,
   programPaymentTermination,
+  queueInboundSecretResolution,
 } from '../../../../paybook/lifecycle';
 import { pushCrossJurisdictionEntityOutput } from '../../j-events-htlc/cross-j-outputs';
 import { CROSS_J_MAX_FILL_RATIO } from '../../../../extensions/cross-j/index';
@@ -133,10 +133,7 @@ const applyPreparedHtlcOutcome = (
     const route = bookIntentSlot.getPaybookEntryForWrite(ctx.newState, lock.hashlock);
     if (!route) throw new Error(`PAYBOOK_ENTRY_WRITE_MISSING:${lock.hashlock}`);
     route.secret = prepared.outcome.secret.toLowerCase();
-    armPaymentSecretAckTimeout(ctx.newState, route);
-    ctx.accountTxs.push({ accountId: inboundEntity, tx: {
-      type: 'htlc_resolve', data: { lockId: lock.lockId, outcome: 'secret', secret: route.secret },
-    } });
+    queueInboundSecretResolution(ctx.newState, route, ctx.accountTxs, lock.lockId);
     countOp('htlc.inbound.final');
     return;
   }
@@ -318,17 +315,13 @@ export function applyHtlcSecretFollowups(ctx: HtlcSecretFollowupContext, reveale
     }
 
     if (hasInboundPayment(route)) {
-      accountTxs.push({
-        accountId: route.inboundEntity,
-        tx: { type: 'htlc_resolve', data: { lockId: hashlock, outcome: 'secret', secret } },
-      });
       // Never also resolve an originated self-cycle's outbound lock here.
       // The same entity may be both route origin and terminal recipient, but
       // each intermediary must still learn the preimage from its committed
       // downstream Account frame and propagate it upstream. Closing the first
       // and last legs together would hide a broken middle-hop propagation path
       // and can leave asymmetric commitments across a crash or dispute.
-      armPaymentSecretAckTimeout(newState, route);
+      queueInboundSecretResolution(newState, route, accountTxs, hashlock);
       continue;
     }
 

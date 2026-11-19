@@ -392,6 +392,9 @@
         "hashlock": "0xc30a517db8ecf1fc211fc219992fc80a7575415052543287dc5d173259cc97f8",
         "inboundEntity": "0x2222222222222222222222222222222222222222222222222222222222222222",
         "secret": "0x5555555555555555555555555555555555555555555555555555555555555555",
+        "secretAckDeadlineAt": 121000,
+        "secretAckPending": true,
+        "secretAckStartedAt": 1000,
         "tokenId": 1
       },
       "wakeTargets": [

@@ -634,9 +634,9 @@ fn apply_known_htlc_secret(
                 .take()
                 .expect("checked non-zero pending fee");
         }
-        if let Some(account_id) = &route.inbound_entity {
+        if let Some(account_id) = route.inbound_entity.clone() {
             proposals
-                .entry(account_id.clone())
+                .entry(account_id)
                 .or_default()
                 .push(AccountTx::HtlcResolve(HtlcResolveTx {
                     lock_id: hashlock.clone(),
@@ -644,6 +644,7 @@ fn apply_known_htlc_secret(
                         secret: secret.clone(),
                     },
                 }));
+            crate::paybook::arm_payment_secret_ack_timeout(state.timestamp, &mut route)?;
         }
         paybook.put(route)?;
     }
@@ -2787,6 +2788,12 @@ mod tests {
             .expect("lookup")
             .expect("route");
         assert_eq!(route.secret.as_deref(), Some(event.secret.as_str()));
+        assert!(route.secret_ack_pending);
+        assert_eq!(route.secret_ack_started_at, Some(state.timestamp));
+        assert_eq!(
+            route.secret_ack_deadline_at,
+            Some(state.timestamp + crate::paybook::SECRET_ACK_TIMEOUT_MS)
+        );
         assert!(route.pending_fee.is_none());
         assert_eq!(state.paybook.fees_earned, BigInt::from(3));
         assert!(matches!(
