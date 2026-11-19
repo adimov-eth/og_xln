@@ -1,9 +1,77 @@
 /* Everyday Wallet styles: scoped under [data-posture='everyday'] and .everyday-*
- * Consumes semantic tokens from tokens.css (--ink-settled, --ink-arriving, --ink-owed,
- * --ink-dispute, --ink-delta-in, --ink-action, --ink-action-fg, --ev-radius). */
+ * Obsidian & Silver gradient ground (in oklab), glass-integrated fixed rail/tabbar,
+ * monochrome machined-silver primary controls, and semantic-only money colours. */
 
-.app[data-posture='everyday'] .rail,
+.app[data-posture='everyday'] {
+	--ev-light-x: 54%;
+	--ev-light-y: -12%;
+	--ev-bevel-angle: 128deg;
+	--ev-glare-pos: 46%;
+	position: relative;
+	isolation: isolate;
+	background-color: var(--ev-ground-bottom);
+	background-image:
+		linear-gradient(
+			var(--ev-bevel-angle) var(--in-oklab),
+			transparent calc(var(--ev-glare-pos) - 18%),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) - 7%),
+			var(--ev-silver-band-peak) var(--ev-glare-pos),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) + 7%),
+			transparent calc(var(--ev-glare-pos) + 18%)
+		),
+		radial-gradient(ellipse 86% 52% at var(--ev-light-x) var(--ev-light-y) var(--in-oklab), var(--ev-silver-crown) 0%, var(--ev-silver-mid) 36%, var(--ev-silver-tail) 64%, transparent 82%),
+		linear-gradient(var(--ev-bevel-angle) var(--in-oklab), var(--ev-silver-bevel) 0%, var(--ev-silver-bevel-mid) 24%, transparent 54%, var(--ev-silver-rim) 100%),
+		linear-gradient(to bottom var(--in-oklab), var(--ev-ground-top) 0%, var(--ev-ground-mid) 46%, var(--ev-ground-bottom) 100%);
+	background-attachment: fixed;
+}
+
+/* Barometric conservation veil: invisible at equilibrium, responds quietly only out of equilibrium. */
+.app[data-posture='everyday']::after {
+	content: '';
+	position: fixed;
+	inset: 0 0 auto 0;
+	height: 220px;
+	pointer-events: none;
+	z-index: 0;
+	opacity: 0;
+	transition: opacity 420ms ease-out;
+}
+
+.app[data-posture='everyday'][data-ev-state='arriving']::after {
+	opacity: 1;
+	background: radial-gradient(ellipse 80% 75% at 50% -20% var(--in-oklab), var(--ev-wash-arriving), transparent 72%);
+}
+
+.app[data-posture='everyday'][data-ev-state='disputed']::after {
+	opacity: 1;
+	border-top: 2px solid var(--ink-dispute);
+	background: linear-gradient(to bottom var(--in-oklab), var(--ev-wash-dispute), transparent 65%);
+}
+
+/* Keep .rail and .tabbar at their fixed layout from app.css (never override position/z-index). */
+.app[data-posture='everyday'] .main {
+	position: relative;
+	z-index: 1;
+}
+
+.app[data-posture='everyday'] .rail {
+	background: var(--ev-rail-bg);
+	backdrop-filter: blur(20px);
+	-webkit-backdrop-filter: blur(20px);
+	border-right-color: var(--ev-rail-border);
+	gap: 8px;
+}
+
+/* Machined silver brand mark in Everyday (replaces purple accent badge). */
+.app[data-posture='everyday'] .rail-mark {
+	background: linear-gradient(145deg var(--in-oklab), var(--ev-btn-primary-top), var(--ev-btn-primary-bot));
+	color: var(--ev-btn-primary-fg);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
 .app[data-posture='everyday'] .tabbar {
+	background: var(--ev-rail-bg);
+	border-top-color: var(--ev-rail-border);
 	gap: 8px;
 }
 
@@ -12,12 +80,15 @@
 	height: auto;
 	padding: 10px 12px;
 	border-radius: var(--ev-radius);
+	border: 1px solid transparent;
 }
 
 .app[data-posture='everyday'] .rail-item.active,
 .app[data-posture='everyday'] .tabbar-item.active {
 	color: var(--display);
-	background: var(--surface-2);
+	background: linear-gradient(to bottom var(--in-oklab), var(--ev-btn-secondary-top), var(--ev-btn-secondary-bot));
+	border-color: var(--ev-btn-secondary-border);
+	box-shadow: inset 0 1px 0 var(--ev-btn-inset);
 }
 
 .app[data-posture='everyday'] .tabbar-item,
@@ -37,16 +108,22 @@
 	border-radius: var(--ev-radius);
 }
 
-/* Monochrome high-contrast primary actions: colour stays reserved for money states. */
+.app[data-posture='everyday'] .btn {
+	background: linear-gradient(to bottom var(--in-oklab), var(--ev-btn-secondary-top), var(--ev-btn-secondary-bot));
+	border-color: var(--ev-btn-secondary-border);
+	box-shadow: inset 0 1px 0 var(--ev-btn-inset);
+}
+
+/* Machined silver-white (dark) / obsidian (light) primary CTA; colour stays reserved for money states. */
 .app[data-posture='everyday'] .btn.primary {
-	background: var(--ink-action);
-	border-color: var(--ink-action);
-	color: var(--ink-action-fg);
-	box-shadow: none;
+	background: linear-gradient(calc(var(--ev-bevel-angle) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%);
+	border-color: var(--ev-btn-primary-top);
+	color: var(--ev-btn-primary-fg);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78), 0 1px 3px rgba(0, 0, 0, 0.36);
 }
 
 .app[data-posture='everyday'] .btn.primary:hover:not(:disabled) {
-	opacity: 0.9;
+	opacity: 0.92;
 }
 
 .app[data-posture='everyday'] .tabs,
@@ -60,7 +137,8 @@
 .everyday-topbar {
 	width: 100%;
 	max-width: 680px;
-	padding: calc(env(safe-area-inset-top, 0px) + 20px) 28px 0;
+	padding: calc(env(safe-area-inset-top, 0px) + 22px) 28px 16px;
+	border-bottom: 1px solid var(--ev-rail-border);
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -68,20 +146,26 @@
 	min-width: 0;
 }
 
-.everyday-context-pill {
+.everyday-brand {
 	display: inline-flex;
 	align-items: center;
-	gap: 8px;
+	gap: 10px;
 	min-height: 36px;
-	max-width: 100%;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--ink-2);
-	font-size: 13.5px;
-	font-weight: 600;
-	letter-spacing: 0.01em;
+	color: var(--display);
+	font-size: 17px;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.everyday-brand-name {
+	line-height: 1;
+}
+
+@media (min-width: 1100px) {
+	.everyday-brand {
+		visibility: hidden;
+		pointer-events: none;
+	}
 }
 
 /* Quiet top-right trigger on valueless test networks only. */
@@ -92,8 +176,8 @@
 	min-width: 48px;
 	padding: 0 12px;
 	border-radius: var(--ev-radius);
-	border: 1px solid var(--line-2);
-	background: transparent;
+	border: 1px solid var(--ev-btn-secondary-border);
+	background: var(--ev-btn-secondary-bg);
 	color: var(--ink-2);
 	font: inherit;
 	font-size: 13px;
@@ -108,63 +192,53 @@
 }
 
 .everyday-test-trigger.active {
-	background: var(--ink-action);
-	border-color: var(--ink-action);
-	color: var(--ink-action-fg);
-}
-
-.everyday-preview-stage {
-	padding: 16px 0 4px;
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
-	border-top: 1px solid var(--line);
-}
-
-.everyday-preview-pills {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-}
-
-.everyday-preview-pill {
-	appearance: none;
-	min-height: 40px;
-	padding: 0 12px;
-	border-radius: var(--ev-radius);
-	border: 1px solid var(--line-2);
-	background: transparent;
-	color: var(--ink-2);
-	font: inherit;
-	font-size: 13px;
-	font-weight: 600;
-	cursor: pointer;
-}
-
-.everyday-preview-pill[aria-pressed='true'] {
-	background: var(--ink-action);
-	border-color: var(--ink-action);
-	color: var(--ink-action-fg);
+	background: linear-gradient(to bottom var(--in-oklab), var(--ev-btn-primary-top), var(--ev-btn-primary-bot));
+	border-color: var(--ev-btn-primary-top);
+	color: var(--ev-btn-primary-fg);
 }
 
 .everyday-screen {
 	position: relative;
 	width: 100%;
 	max-width: 680px;
-	padding: 20px 28px 88px;
+	padding: 32px 28px 88px;
 	display: flex;
 	flex-direction: column;
-	gap: 24px;
+	gap: 28px;
 }
 
-/* Borderless hero: space and type carry the hierarchy instead of card chrome. */
+/* Borderless hero: space, light, and type carry hierarchy instead of card chrome. */
 .everyday-hero-card {
 	position: relative;
-	z-index: 1;
 	padding: 8px 0 4px;
 	display: flex;
 	flex-direction: column;
 	gap: 12px;
+}
+
+/* One-shot metallic silver sheen when a settled payment commits. */
+.everyday-hero-card.is-sheen::after {
+	content: '';
+	position: absolute;
+	inset: -8px -16px;
+	pointer-events: none;
+	border-radius: var(--ev-radius);
+	background: linear-gradient(112deg var(--in-oklab), transparent 22%, var(--ev-sheen) 48%, transparent 74%);
+	animation: everyday-settle-sheen 520ms ease-out forwards;
+}
+
+@keyframes everyday-settle-sheen {
+	0% {
+		opacity: 0;
+		transform: translateX(-28%);
+	}
+	35% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+		transform: translateX(36%);
+	}
 }
 
 .everyday-label {
@@ -197,11 +271,14 @@
 
 .everyday-cash-value {
 	font-family: var(--font-num);
-	font-size: clamp(44px, 8vw, 64px);
+	font-size: clamp(46px, 8vw, 66px);
 	font-weight: 650;
-	line-height: 1.05;
+	line-height: 1.04;
 	letter-spacing: -0.035em;
-	color: var(--ink-settled);
+	background: linear-gradient(calc(var(--ev-bevel-angle) + 38deg) var(--in-oklab), var(--ev-num-top) 0%, var(--ev-num-mid) 54%, var(--ev-num-bot) 100%);
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
 	font-variant-numeric: tabular-nums;
 	transition: opacity 200ms ease-out;
 }
@@ -211,13 +288,17 @@
 }
 
 .everyday-cash-value.is-savings {
+	background: none;
+	-webkit-background-clip: border-box;
+	background-clip: border-box;
 	color: var(--ink-owed);
 }
 
 .everyday-cents {
-	font-size: 0.56em;
+	font-size: 0.52em;
 	font-weight: 600;
-	vertical-align: 0.34em;
+	vertical-align: 0.24em;
+	margin-left: 0.02em;
 	opacity: 0.72;
 	letter-spacing: -0.01em;
 }
@@ -225,8 +306,7 @@
 .everyday-unit-suffix {
 	font-size: 0.42em;
 	font-weight: 600;
-	margin-left: 0.22em;
-	opacity: 0.72;
+	opacity: 0.68;
 	letter-spacing: 0;
 }
 
@@ -246,7 +326,7 @@
 .everyday-balance-truth {
 	margin: 0;
 	padding: 10px 14px;
-	border-left: 2px solid var(--line-2);
+	border-left: 2px solid var(--ev-btn-secondary-border);
 	font-size: 13.5px;
 	line-height: 1.5;
 	color: var(--ink);
@@ -279,8 +359,6 @@
 }
 
 .everyday-actions {
-	position: relative;
-	z-index: 1;
 	display: flex;
 	flex-wrap: wrap;
 	gap: 8px;
@@ -293,10 +371,9 @@
 }
 
 .everyday-panel {
-	position: relative;
-	z-index: 1;
-	background: var(--surface);
-	border: 1px solid var(--line);
+	background: color-mix(in oklab, var(--surface) 76%, transparent);
+	border: 1px solid var(--ev-btn-secondary-border);
+	box-shadow: inset 0 1px 0 var(--ev-silver-rim);
 	border-radius: var(--ev-radius);
 	padding: 20px;
 	display: flex;
@@ -311,9 +388,86 @@
 	gap: 12px;
 }
 
-.everyday-list-card {
+.everyday-panel-head > .btn {
+	width: auto;
+	flex: 0 0 auto;
+}
+
+.everyday-preview-stage {
 	position: relative;
-	z-index: 1;
+	isolation: isolate;
+	overflow: hidden;
+	padding: 20px 20px 18px;
+	border-radius: var(--ev-radius);
+	border: 1px solid var(--ev-btn-secondary-border);
+	box-shadow: inset 0 1px 0 var(--ev-silver-rim);
+	background-color: var(--ev-ground-bottom);
+	background-image:
+		linear-gradient(
+			var(--ev-bevel-angle) var(--in-oklab),
+			transparent calc(var(--ev-glare-pos) - 18%),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) - 7%),
+			var(--ev-silver-band-peak) var(--ev-glare-pos),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) + 7%),
+			transparent calc(var(--ev-glare-pos) + 18%)
+		),
+		radial-gradient(ellipse 86% 52% at var(--ev-light-x) var(--ev-light-y) var(--in-oklab), var(--ev-silver-crown) 0%, var(--ev-silver-mid) 36%, var(--ev-silver-tail) 64%, transparent 82%),
+		linear-gradient(var(--ev-bevel-angle) var(--in-oklab), var(--ev-silver-bevel) 0%, var(--ev-silver-bevel-mid) 24%, transparent 54%, var(--ev-silver-rim) 100%),
+		linear-gradient(to bottom var(--in-oklab), var(--ev-ground-top) 0%, var(--ev-ground-mid) 46%, var(--ev-ground-bottom) 100%);
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.everyday-preview-stage[data-ev-state='arriving'] {
+	background-image:
+		radial-gradient(ellipse 80% 70% at 50% -18% var(--in-oklab), var(--ev-wash-arriving), transparent 72%),
+		linear-gradient(
+			var(--ev-bevel-angle) var(--in-oklab),
+			transparent calc(var(--ev-glare-pos) - 18%),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) - 7%),
+			var(--ev-silver-band-peak) var(--ev-glare-pos),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) + 7%),
+			transparent calc(var(--ev-glare-pos) + 18%)
+		),
+		radial-gradient(ellipse 86% 52% at var(--ev-light-x) var(--ev-light-y) var(--in-oklab), var(--ev-silver-crown) 0%, var(--ev-silver-mid) 36%, var(--ev-silver-tail) 64%, transparent 82%),
+		linear-gradient(to bottom var(--in-oklab), var(--ev-ground-top) 0%, var(--ev-ground-mid) 46%, var(--ev-ground-bottom) 100%);
+}
+
+.everyday-preview-stage[data-ev-state='disputed'] {
+	border-top: 2px solid var(--ink-dispute);
+	background-image:
+		linear-gradient(to bottom var(--in-oklab), var(--ev-wash-dispute), transparent 55%),
+		linear-gradient(to bottom var(--in-oklab), var(--ev-ground-top) 0%, var(--ev-ground-mid) 46%, var(--ev-ground-bottom) 100%);
+}
+
+.everyday-preview-pills {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.everyday-preview-pill {
+	appearance: none;
+	min-height: 40px;
+	padding: 0 12px;
+	border-radius: var(--ev-radius);
+	border: 1px solid var(--ev-btn-secondary-border);
+	background: transparent;
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.everyday-preview-pill[aria-pressed='true'] {
+	background: linear-gradient(to bottom var(--in-oklab), var(--ev-btn-primary-top), var(--ev-btn-primary-bot));
+	border-color: var(--ev-btn-primary-top);
+	color: var(--ev-btn-primary-fg);
+}
+
+.everyday-list-card {
 	border-top: 1px solid var(--line);
 	border-bottom: 1px solid var(--line);
 }
@@ -322,7 +476,7 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 12px;
+	gap: 16px;
 	padding: 16px 0;
 	border-top: 1px solid var(--line);
 }
@@ -331,7 +485,15 @@
 	border-top: 0;
 }
 
+.everyday-list-row > .btn {
+	width: auto;
+	flex: 0 0 auto;
+	min-width: 132px;
+	justify-content: center;
+}
+
 .everyday-row-meta {
+	flex: 1 1 auto;
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
@@ -352,8 +514,8 @@
 .everyday-shield-notice {
 	padding: 12px 14px;
 	border-radius: var(--ev-radius);
-	border-left: 2px solid var(--line-2);
-	background: var(--surface-2);
+	border-left: 2px solid var(--ev-btn-secondary-border);
+	background: var(--ev-btn-secondary-bg);
 	font-size: 14px;
 	line-height: 1.45;
 	color: var(--ink);
@@ -361,7 +523,7 @@
 
 .everyday-shield-notice[data-category='unilateral-exit-needs-gas'],
 .everyday-shield-notice[data-category='tower-issue'] {
-	background: var(--debt-dim);
+	background: var(--ev-warn-bg);
 	border-left-color: var(--ink-owed);
 }
 
@@ -466,7 +628,32 @@
 @media (prefers-reduced-motion: reduce) {
 	.everyday-switch-track,
 	.everyday-switch-thumb,
-	.everyday-cash-value {
+	.everyday-cash-value,
+	.app[data-posture='everyday']::after {
 		transition: none;
+	}
+	.everyday-hero-card.is-sheen::after {
+		animation: none;
+		display: none;
+	}
+}
+
+@media (forced-colors: active) {
+	.app[data-posture='everyday']::after,
+	.everyday-hero-card.is-sheen::after {
+		display: none;
+	}
+	.app[data-posture='everyday'],
+	.everyday-preview-stage {
+		background-image: none;
+	}
+	.everyday-cash-value {
+		background: none;
+		-webkit-background-clip: border-box;
+		background-clip: border-box;
+		color: CanvasText;
+	}
+	.app[data-posture='everyday'][data-ev-state='disputed'] {
+		border-top: 2px solid CanvasText;
 	}
 }

@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { VALUELESS_CHAIN_IDS } from '@xln/core/jurisdiction/adapter/chain-ids';
+import { attachEverydayGlare } from '@xln/frontend/lib/everyday/wallet-posture';
 import { getJurisdictionBadgeInfo } from '@xln/frontend/lib/utils/identity/jurisdictionBadge';
 import { getAdapter, getEmbeddedEnv } from '../runtime/adapter';
 import { useExternalWalletSync } from '../runtime/financial/external';
@@ -88,18 +89,31 @@ export function Shell({ children }: { children: ReactNode }) {
   }, [wallet.entityId, batches]);
   const clearToasts = useApp(s => s.clearToasts);
   useEffect(() => clearToasts(), [pathname, clearToasts]);
+  const appRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (posture !== 'everyday') return;
+    return attachEverydayGlare(appRef.current);
+  }, [posture]);
 
   const navItems = posture === 'pro' ? PRO_NAV : EVERYDAY_NAV;
   const navigate = useNavigate();
+  const commandReady = useApp(s => s.commandReady);
   const runtimeId = getAdapter()?.runtimeId ?? '';
   const chainId = wallet.frame?.activeEntity?.core?.config.jurisdiction?.chainId;
   const isDemoChain = chainId !== undefined && VALUELESS_CHAIN_IDS.has(Number(chainId));
   const onTestScreen = pathname.startsWith('/test');
+  const hasDisputed = wallet.accounts.some(account => account.disputed);
+  const hasArriving = wallet.accounts.some(
+    account => account.isHub && !account.disputed && account.tokens.some(token => token.derived.outPeerCredit > 0n),
+  );
+  const evState = hasDisputed ? 'disputed' : !commandReady ? 'syncing' : hasArriving ? 'arriving' : 'settled';
 
   return (
     <div
+      ref={appRef}
       className="app jurisdiction-surface"
       data-posture={posture}
+      data-ev-state={posture === 'everyday' ? evState : undefined}
       data-jurisdiction={
         getJurisdictionBadgeInfo(wallet.jurisdiction, wallet.frame?.activeEntity?.core?.config.jurisdiction?.chainId)
           ?.className ?? 'generic'
@@ -154,7 +168,12 @@ export function Shell({ children }: { children: ReactNode }) {
             data-runtime-id={runtimeId}
             data-entity-id={wallet.entityId}
           >
-            <span className="everyday-context-pill">{wallet.name}</span>
+            <span className="everyday-brand">
+              <span className="rail-mark" aria-hidden="true">
+                <Logo size={17} />
+              </span>
+              <span className="everyday-brand-name">xln</span>
+            </span>
             {isDemoChain ? (
               <button
                 type="button"

@@ -44,9 +44,9 @@
   }
 
   .back-to-create:hover {
-    border-color: rgba(255, 200, 100, 0.24);
-    color: rgba(255, 200, 100, 0.95);
-    background: rgba(255, 200, 100, 0.08);
+    border-color: rgba(226, 232, 240, 0.28);
+    color: rgba(248, 250, 252, 0.96);
+    background: rgba(226, 232, 240, 0.08);
   }
 
   .back-to-create {
@@ -458,7 +458,7 @@
   }
 
   .section-eyebrow {
-    color: rgba(208, 168, 98, 0.8);
+    color: rgba(203, 213, 225, 0.78);
     font-size: 10px;
     font-weight: 750;
     letter-spacing: 0.12em;
@@ -944,11 +944,11 @@
     flex: 1;
     width: 100%;
     padding: 28px 20px 48px;
-    background: #000;
+    background: #030406;
     background-image:
-      radial-gradient(ellipse at 50% 0%, rgba(180, 140, 80, 0.08) 0%, transparent 50%),
-      radial-gradient(ellipse at 50% 20%, rgba(120, 90, 50, 0.05) 0%, transparent 40%),
-      linear-gradient(180deg, #0a0806 0%, #000 100%);
+      radial-gradient(ellipse 84% 48% at 54% -12%, rgba(248, 250, 255, 0.22) 0%, rgba(202, 212, 226, 0.09) 34%, transparent 74%),
+      linear-gradient(128deg, rgba(248, 250, 252, 0.07) 0%, transparent 48%, rgba(235, 240, 248, 0.08) 100%),
+      linear-gradient(180deg, #151920 0%, #080a0e 44%, #030406 100%);
     position: relative;
     overflow-y: auto;
     overflow-x: hidden;
@@ -971,8 +971,8 @@
     display: block;
     width: 92px;
     height: auto;
-    opacity: 0.92;
-    filter: drop-shadow(0 0 18px rgba(218, 176, 104, 0.18));
+    opacity: 0.94;
+    filter: drop-shadow(0 0 18px rgba(226, 232, 240, 0.2));
     animation: auth-mark-arrive 0.7s ease-out both;
   }
 
@@ -1076,15 +1076,15 @@
     color: rgba(196, 181, 161, 0.7);
   }
 
-  /* Glass Card - Sacred Chamber */
+  /* Glass Card */
   .glass-card {
-    background: rgba(10, 8, 6, 0.97);
-    border: 1px solid rgba(180, 140, 80, 0.15);
-    border-radius: 2px;
+    background: rgba(9, 11, 15, 0.88);
+    border: 1px solid rgba(226, 232, 240, 0.14);
+    border-radius: 8px;
     padding: 30px;
     box-shadow:
-      0 0 80px rgba(180, 140, 80, 0.05),
-      inset 0 1px 0 rgba(180, 140, 80, 0.1);
+      0 18px 56px rgba(0, 0, 0, 0.52),
+      inset 0 1px 0 rgba(235, 240, 248, 0.12);
     position: relative;
     box-sizing: border-box;
   }
@@ -1476,20 +1476,21 @@
     line-height: 1.4;
   }
 
-  /* Derive Button - Sacred Gate */
+  /* Primary entry CTA - machined sterling silver */
   .derive-btn {
     width: 100%;
-    padding: 18px;
-    background: rgba(180, 140, 80, 0.12);
-    border: 1px solid rgba(180, 140, 80, 0.5);
-    border-radius: 2px;
+    padding: 16px 18px;
+    background: linear-gradient(154deg, #ffffff 0%, #e7ecf4 52%, #c5cfde 100%);
+    border: 1px solid #ffffff;
+    border-radius: 8px;
     font-size: 13px;
-    font-weight: 400;
-    letter-spacing: 0.2em;
+    font-weight: 650;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: rgba(245, 215, 160, 0.96);
+    color: #050608;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78), 0 1px 3px rgba(0, 0, 0, 0.36);
     cursor: pointer;
-    transition: all 0.4s ease;
+    transition: opacity 0.2s ease, transform 0.2s ease;
     position: relative;
     overflow: hidden;
   }
@@ -1501,7 +1502,7 @@
     left: -100%;
     width: 100%;
     height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(180, 140, 80, 0.1), transparent);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
     transition: left 0.5s ease;
   }
 
@@ -1525,10 +1526,7 @@
   }
 
   .derive-btn:hover:not(:disabled) {
-    background: rgba(180, 140, 80, 0.1);
-    border-color: rgba(180, 140, 80, 0.6);
-    box-shadow: 0 0 40px rgba(180, 140, 80, 0.15);
-    color: rgba(180, 140, 80, 1);
+    opacity: 0.92;
   }
 
   .derive-btn:disabled {

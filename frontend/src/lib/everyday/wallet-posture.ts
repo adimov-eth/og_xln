@@ -206,6 +206,151 @@ export const EVERYDAY_DESIGN_PREVIEW_STATES: readonly EverydayDesignPreviewState
   },
 ] as const;
 
+function getMotionPermissionRequest(): (() => Promise<'granted' | 'denied'>) | null {
+  if (typeof window === 'undefined') return null;
+  const ctor: unknown = Reflect.get(window, 'DeviceOrientationEvent');
+  if (ctor === null || (typeof ctor !== 'object' && typeof ctor !== 'function')) return null;
+  const fn: unknown = Reflect.get(ctor, 'requestPermission');
+  return typeof fn === 'function' ? () => Promise.resolve(fn.call(ctor)) : null;
+}
+
+function hasDeviceOrientationCtor(): boolean {
+  if (typeof window === 'undefined') return false;
+  const ctor: unknown = Reflect.get(window, 'DeviceOrientationEvent');
+  return ctor !== null && (typeof ctor === 'object' || typeof ctor === 'function');
+}
+
+/** True only on coarse-pointer browsers (iOS Safari) that gate `deviceorientation` behind a user-gesture prompt. */
+export function needsEverydayMotionPermission(): boolean {
+  if (typeof window === 'undefined') return false;
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  return coarsePointer && getMotionPermissionRequest() !== null;
+}
+
+/** Requests iOS Safari motion permission inside a user tap and notifies active Everyday glare listeners. */
+export async function requestEverydayMotionPermission(): Promise<boolean> {
+  const fn = getMotionPermissionRequest();
+  if (!fn) return true;
+  try {
+    const result = await fn();
+    if (result === 'granted') {
+      window.dispatchEvent(new Event('xln-everyday-motion-granted'));
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Connects the Obsidian & Silver Everyday specular glare to device tilt
+ * (`deviceorientation`) with heavy-inertia desktop pointer fallback.
+ * Respects `prefers-reduced-motion` and `forced-colors`, stops RAF at rest
+ * (0% idle CPU), and never triggers unsolicited iOS permission dialogs.
+ */
+export function attachEverydayGlare(target: HTMLElement | null): () => void {
+  if (!target || typeof window === 'undefined') return () => {};
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const forcedColors = window.matchMedia?.('(forced-colors: active)').matches;
+  if (reducedMotion || forcedColors) return () => {};
+
+  const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+  const rest = { x: 54, y: -12, angle: 128, pos: 46 };
+  const goal = { ...rest };
+  const cur = { ...rest };
+  let rafId = 0;
+  let hasOrientation = false;
+  let listeningOrientation = false;
+  let ease = 0.045;
+
+  const paint = (): void => {
+    rafId = 0;
+    const settled =
+      Math.abs(goal.x - cur.x) < 0.05 &&
+      Math.abs(goal.y - cur.y) < 0.05 &&
+      Math.abs(goal.angle - cur.angle) < 0.05 &&
+      Math.abs(goal.pos - cur.pos) < 0.05;
+    if (settled) {
+      Object.assign(cur, goal);
+    } else {
+      cur.x += (goal.x - cur.x) * ease;
+      cur.y += (goal.y - cur.y) * ease;
+      cur.angle += (goal.angle - cur.angle) * ease;
+      cur.pos += (goal.pos - cur.pos) * ease;
+      rafId = window.requestAnimationFrame(paint);
+    }
+    target.style.setProperty('--ev-light-x', `${cur.x.toFixed(2)}%`);
+    target.style.setProperty('--ev-light-y', `${cur.y.toFixed(2)}%`);
+    target.style.setProperty('--ev-bevel-angle', `${cur.angle.toFixed(1)}deg`);
+    target.style.setProperty('--ev-glare-pos', `${cur.pos.toFixed(2)}%`);
+  };
+
+  const schedule = (): void => {
+    if (!rafId && document.visibilityState !== 'hidden') {
+      rafId = window.requestAnimationFrame(paint);
+    }
+  };
+
+  const onOrientation = (event: DeviceOrientationEvent): void => {
+    if (event.gamma === null || event.beta === null) return;
+    hasOrientation = true;
+    // Tilt nudges the light; it never swings it. Amplitudes are about a third of a full sweep.
+    ease = 0.05;
+    const nx = clamp(event.gamma / 36, -1, 1);
+    const ny = clamp((event.beta - 45) / 32, -1, 1);
+    goal.x = 52 + nx * 6;
+    goal.y = -10 + ny * 4;
+    goal.angle = 128 + nx * 5;
+    goal.pos = 46 + nx * 5 - ny * 1.5;
+    schedule();
+  };
+
+  const onPointerMove = (event: PointerEvent): void => {
+    if (hasOrientation || event.pointerType === 'touch') return;
+    // Pointer movement is barely felt: a few percent of drift, slow to arrive.
+    ease = 0.03;
+    const nx = clamp((event.clientX / (window.innerWidth || 1)) * 2 - 1, -1, 1);
+    const ny = clamp((event.clientY / (window.innerHeight || 1)) * 2 - 1, -1, 1);
+    goal.x = 54 + nx * 3;
+    goal.y = -12 + ny * 2;
+    goal.angle = 128 + nx * 2;
+    goal.pos = 46 + nx * 3 - ny * 0.75;
+    schedule();
+  };
+
+  const onPointerLeave = (): void => {
+    if (hasOrientation) return;
+    Object.assign(goal, rest);
+    schedule();
+  };
+
+  const bindOrientation = (): void => {
+    if (listeningOrientation) return;
+    listeningOrientation = true;
+    window.addEventListener('deviceorientation', onOrientation, { passive: true });
+  };
+
+  if (hasDeviceOrientationCtor() && !needsEverydayMotionPermission()) {
+    bindOrientation();
+  }
+  window.addEventListener('xln-everyday-motion-granted', bindOrientation);
+  window.addEventListener('pointermove', onPointerMove, { passive: true });
+  document.documentElement.addEventListener('mouseleave', onPointerLeave, { passive: true });
+
+  return () => {
+    if (rafId) window.cancelAnimationFrame(rafId);
+    if (listeningOrientation) window.removeEventListener('deviceorientation', onOrientation);
+    window.removeEventListener('xln-everyday-motion-granted', bindOrientation);
+    window.removeEventListener('pointermove', onPointerMove);
+    document.documentElement.removeEventListener('mouseleave', onPointerLeave);
+    target.style.removeProperty('--ev-light-x');
+    target.style.removeProperty('--ev-light-y');
+    target.style.removeProperty('--ev-bevel-angle');
+    target.style.removeProperty('--ev-glare-pos');
+  };
+}
+
 export function subscribeWalletPosture(listener: (posture: WalletPosture) => void): () => void {
   listeners.add(listener);
   if (typeof window === 'undefined') {

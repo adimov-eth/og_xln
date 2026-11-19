@@ -1,5 +1,9 @@
 import { useState } from 'react';
-import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
+import {
+  EVERYDAY_COPY,
+  needsEverydayMotionPermission,
+  requestEverydayMotionPermission,
+} from '@xln/frontend/lib/everyday/wallet-posture';
 import { lockEmbeddedRuntime } from '../../runtime/adapter';
 import { resetReactRetiredTestnetState } from '../../runtime/deploy-version';
 import { MATERIALS, NUMBER_FONTS } from '../../runtime/design';
@@ -29,6 +33,11 @@ export function EverydaySettingsPanel() {
   const [revealing, setRevealing] = useState(false);
   const [revealConfirmed, setRevealConfirmed] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [showMotionPrompt, setShowMotionPrompt] = useState(() => needsEverydayMotionPermission());
+
+  const enableTiltGlare = async (): Promise<void> => {
+    if (await requestEverydayMotionPermission()) setShowMotionPrompt(false);
+  };
 
   const seed = activeVaultId ? sessionSeeds[activeVaultId] : undefined;
 
@@ -166,6 +175,19 @@ export function EverydaySettingsPanel() {
             ))}
           </span>
         </div>
+        {showMotionPrompt ? (
+          <div className="everyday-panel-head">
+            <span className="everyday-row-sub">Tilt glare</span>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void enableTiltGlare()}
+              data-testid="everyday-enable-tilt"
+            >
+              Enable motion
+            </button>
+          </div>
+        ) : null}
         <EverydayDesignPreview />
       </div>
 

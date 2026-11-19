@@ -19,8 +19,15 @@ export function EverydayDesignPreview() {
     ?? EVERYDAY_DESIGN_PREVIEW_STATES[1]!;
   const parts = splitMoneyDisplay(current.amount);
 
+  const previewEvState =
+    current.id === 'arriving' ? 'arriving' : current.syncing ? 'syncing' : 'settled';
+
   return (
-    <div className="everyday-preview-stage" data-testid="everyday-design-preview">
+    <div
+      className="everyday-preview-stage"
+      data-ev-state={previewEvState}
+      data-testid="everyday-design-preview"
+    >
       <div className="everyday-preview-pills" role="group" aria-label="Preview wallet state">
         {EVERYDAY_DESIGN_PREVIEW_STATES.map(entry => (
           <button

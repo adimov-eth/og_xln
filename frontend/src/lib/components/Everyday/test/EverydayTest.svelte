@@ -86,9 +86,9 @@
     <p class="ev-muted">Faucets and reset actions for test networks.</p>
   </section>
 
-  <section class="ev-card">
-    <div class="ev-row" style="justify-content:space-between;">
-      <div>
+  <section class="ev-card" style="gap:0;">
+    <div class="ev-test-row">
+      <div style="flex:1;min-width:0;">
         <strong>Add $100 test cash</strong>
         <p class="ev-muted ev-num">$100.00 sent · about $99.89 after ~$0.11 settle fee</p>
       </div>
@@ -97,8 +97,8 @@
       </button>
     </div>
 
-    <div class="ev-row" style="justify-content:space-between;">
-      <div>
+    <div class="ev-test-row">
+      <div style="flex:1;min-width:0;">
         <strong>Add test gas</strong>
         <p class="ev-muted">Funds native gas for on-chain actions.</p>
       </div>
@@ -107,8 +107,8 @@
       </button>
     </div>
 
-    <div class="ev-row" style="justify-content:space-between;">
-      <div>
+    <div class="ev-test-row">
+      <div style="flex:1;min-width:0;">
         <strong>Add 100 test {symbol}</strong>
         <p class="ev-muted">Mints test tokens to your external address.</p>
       </div>
@@ -117,8 +117,8 @@
       </button>
     </div>
 
-    <div class="ev-row" style="justify-content:space-between;">
-      <div>
+    <div class="ev-test-row">
+      <div style="flex:1;min-width:0;">
         <strong>{EVERYDAY_COPY.flows.resetDemo.before}</strong>
         <p class="ev-muted">Clears local test wallet data on this device.</p>
       </div>

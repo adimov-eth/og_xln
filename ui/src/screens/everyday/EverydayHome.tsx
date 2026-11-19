@@ -30,6 +30,7 @@ export function EverydayHome({
   const [scanning, setScanning] = useState(false);
   const [showTruth, setShowTruth] = useState(false);
   const [deltaNotice, setDeltaNotice] = useState<BalanceDelta | null>(null);
+  const [sheenTick, setSheenTick] = useState(0);
   const lastCashRef = useRef<{ entityId: string; cash: bigint } | null>(null);
 
   const tokenId = projection.primaryTokenId;
@@ -49,6 +50,7 @@ export function EverydayHome({
     const diff = projection.primary.cash - prev.cash;
     if (diff === 0n) return;
     lastCashRef.current = { entityId: projection.entityId, cash: projection.primary.cash };
+    if (diff > 0n) setSheenTick(tick => tick + 1);
     setDeltaNotice({
       positive: diff > 0n,
       text: diff > 0n
@@ -71,7 +73,11 @@ export function EverydayHome({
 
   return (
     <div className="everyday-screen fade-in">
-      <section className="everyday-hero-card" aria-label="Cash balance">
+      <section
+        key={sheenTick}
+        className={`everyday-hero-card${sheenTick > 0 ? ' is-sheen' : ''}`}
+        aria-label="Cash balance"
+      >
         <span className="everyday-label">{EVERYDAY_COPY.terms.cash.label}</span>
         <button
           type="button"

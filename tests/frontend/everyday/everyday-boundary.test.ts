@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import {
+  attachEverydayGlare,
   EVERYDAY_COPY,
   EVERYDAY_DESIGN_PREVIEW_STATES,
+  needsEverydayMotionPermission,
   splitMoneyDisplay,
 } from '../../../frontend/src/lib/everyday/wallet-posture';
 
@@ -107,5 +109,127 @@ describe('Everyday wallet production boundary (one-way study -> wallet)', () => 
     expect(designTs).not.toContain("setProperty('--credit'");
     expect(tokensCss).not.toContain('--credit: #7a73ff');
     expect(tokensCss).not.toContain('--credit: #635bff');
+  });
+
+  test('Everyday obsidian-and-silver tokens keep zero gold or amber ink', () => {
+    const tokensCss = readFileSync(join(REPO_ROOT, 'ui/src/styles/tokens.css'), 'utf8');
+    const svelteShell = readFileSync(
+      join(REPO_ROOT, 'frontend/src/lib/components/Everyday/EverydayShell.svelte'),
+      'utf8',
+    );
+    expect(tokensCss).not.toMatch(/--ink-(arriving|owed):\s*(var\(--debt\)|var\(--credit\)|#e8b04b|#b45309)/i);
+    expect(svelteShell).not.toMatch(/#e8b04b|#b45309|232,\s*176,\s*75|201,\s*138,\s*22/i);
+  });
+
+  test('attachEverydayGlare drives CSS glare from deviceorientation, skips reduced-motion, and cleans up', () => {
+    const prevWin = globalThis.window;
+    const prevDoc = globalThis.document;
+    const winListeners = new Map<string, Set<(e: unknown) => void>>();
+    const docListeners = new Map<string, Set<(e: unknown) => void>>();
+    const props = new Map<string, string>();
+    const rafQueue: Array<() => void> = [];
+    let reducedMotion = false;
+    let coarsePointer = false;
+    let requestPermCalled = false;
+
+    const fakeTarget = {
+      style: {
+        setProperty: (k: string, v: string) => { props.set(k, v); },
+        removeProperty: (k: string) => { props.delete(k); },
+      },
+    } as unknown as HTMLElement;
+
+    const makeWin = (withPermGate: boolean) => ({
+      innerWidth: 1000,
+      innerHeight: 800,
+      matchMedia: (q: string) => ({
+        matches: q.includes('prefers-reduced-motion')
+          ? reducedMotion
+          : q.includes('pointer: coarse')
+            ? coarsePointer
+            : false,
+      }),
+      requestAnimationFrame: (cb: () => void) => {
+        rafQueue.push(cb);
+        return rafQueue.length;
+      },
+      cancelAnimationFrame: () => {},
+      addEventListener: (type: string, fn: (e: unknown) => void) => {
+        const set = winListeners.get(type) ?? new Set();
+        set.add(fn);
+        winListeners.set(type, set);
+      },
+      removeEventListener: (type: string, fn: (e: unknown) => void) => {
+        winListeners.get(type)?.delete(fn);
+      },
+      dispatchEvent: (ev: Event) => {
+        for (const fn of winListeners.get(ev.type) ?? []) fn(ev);
+        return true;
+      },
+      DeviceOrientationEvent: withPermGate
+        ? {
+            requestPermission: async () => {
+              requestPermCalled = true;
+              return 'granted' as const;
+            },
+          }
+        : {},
+    });
+
+    try {
+      (globalThis as Record<string, unknown>).document = {
+        visibilityState: 'visible',
+        documentElement: {
+          addEventListener: (type: string, fn: (e: unknown) => void) => {
+            const set = docListeners.get(type) ?? new Set();
+            set.add(fn);
+            docListeners.set(type, set);
+          },
+          removeEventListener: (type: string, fn: (e: unknown) => void) => {
+            docListeners.get(type)?.delete(fn);
+          },
+        },
+      };
+
+      // 1. Reduced motion attaches zero listeners
+      reducedMotion = true;
+      (globalThis as Record<string, unknown>).window = makeWin(false);
+      const detachReduced = attachEverydayGlare(fakeTarget);
+      expect(winListeners.size).toBe(0);
+      detachReduced();
+
+      // 2. iOS permission gate (coarse pointer + requestPermission) never auto-prompts on mount
+      reducedMotion = false;
+      coarsePointer = true;
+      (globalThis as Record<string, unknown>).window = makeWin(true);
+      expect(needsEverydayMotionPermission()).toBe(true);
+      const detachIos = attachEverydayGlare(fakeTarget);
+      expect(requestPermCalled).toBe(false);
+      expect(winListeners.get('deviceorientation')?.size ?? 0).toBe(0);
+      detachIos();
+
+      // 3. Standard orientation tilt drives all four optical custom properties and cleans up
+      coarsePointer = false;
+      winListeners.clear();
+      rafQueue.length = 0;
+      (globalThis as Record<string, unknown>).window = makeWin(false);
+      expect(needsEverydayMotionPermission()).toBe(false);
+      const detach = attachEverydayGlare(fakeTarget);
+      for (const fn of winListeners.get('deviceorientation') ?? []) {
+        fn({ gamma: 24, beta: 50 });
+      }
+      expect(rafQueue.length).toBeGreaterThan(0);
+      rafQueue.shift()?.();
+      expect(props.get('--ev-light-x')).toMatch(/%$/);
+      expect(props.get('--ev-light-y')).toMatch(/%$/);
+      expect(props.get('--ev-bevel-angle')).toMatch(/deg$/);
+      expect(props.get('--ev-glare-pos')).toMatch(/%$/);
+      detach();
+      expect(props.size).toBe(0);
+      expect(winListeners.get('deviceorientation')?.size ?? 0).toBe(0);
+    } finally {
+      (globalThis as Record<string, unknown>).window = prevWin;
+      (globalThis as Record<string, unknown>).document = prevDoc;
+    }
   });
 });

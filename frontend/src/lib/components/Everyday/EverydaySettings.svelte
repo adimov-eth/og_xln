@@ -5,6 +5,8 @@
   import {
     EVERYDAY_COPY,
     EVERYDAY_DESIGN_PREVIEW_STATES,
+    needsEverydayMotionPermission,
+    requestEverydayMotionPermission,
     splitMoneyDisplay,
     type EverydayDesignPreviewId,
   } from '#lib/everyday/wallet-posture.ts';
@@ -27,6 +29,13 @@
   let errorMsg = $state('');
   let previewId = $state<EverydayDesignPreviewId>('settled');
   let previewTruthOpen = $state(false);
+  let showMotionPrompt = $state(needsEverydayMotionPermission());
+
+  async function enableTiltGlare(): Promise<void> {
+    if (await requestEverydayMotionPermission()) {
+      showMotionPrompt = false;
+    }
+  }
 
   const resetCopy = EVERYDAY_COPY.flows.resetDemo;
   const shield = $derived(classifyRecoveryShieldState({
@@ -74,11 +83,14 @@
   <div class="ev-row" style="justify-content:space-between;">
     <p class="ev-label">Appearance &amp; design</p>
     <div class="ev-row">
-      <button type="button" class="ev-preview-pill" aria-pressed={theme === 'dark'} onclick={() => onThemeChange?.('dark')}>Dark</button>
-      <button type="button" class="ev-preview-pill" aria-pressed={theme === 'light'} onclick={() => onThemeChange?.('light')}>Light</button>
+      <button type="button" class="ev-preview-pill" data-testid="everyday-theme-dark" aria-pressed={theme === 'dark'} onclick={() => onThemeChange?.('dark')}>Dark</button>
+      <button type="button" class="ev-preview-pill" data-testid="everyday-theme-light" aria-pressed={theme === 'light'} onclick={() => onThemeChange?.('light')}>Light</button>
+      {#if showMotionPrompt}
+        <button type="button" class="ev-preview-pill" data-testid="everyday-enable-tilt" onclick={() => void enableTiltGlare()}>Tilt glare</button>
+      {/if}
     </div>
   </div>
-  <div class="ev-preview-stage">
+  <div class="ev-preview-stage" data-ev-state={previewState.id === 'arriving' ? 'arriving' : previewState.syncing ? 'syncing' : 'settled'}>
     <div class="ev-row" role="group" aria-label="Preview wallet state">
       {#each EVERYDAY_DESIGN_PREVIEW_STATES as entry (entry.id)}
         <button
@@ -106,7 +118,7 @@
     {#if previewTruthOpen}<p class="ev-truth">{previewState.truth}</p>{/if}
     {#if previewState.arrivingAmount}<div class="ev-pill">{previewState.arrivingAmount}</div>{/if}
     {#if previewState.showActions}
-      <div class="ev-row" aria-hidden="true">
+      <div class="ev-actions" aria-hidden="true">
         <span class="ev-btn primary">Pay</span>
         <span class="ev-btn">Request</span>
         <span class="ev-btn">Cash out</span>
@@ -123,9 +135,9 @@
     </span>
     <input
       type="checkbox"
+      class="ev-switch-input"
       data-testid="toggle-pro-mode"
       checked={proChecked}
-      style="width:48px;height:48px;accent-color:var(--ink-action);cursor:pointer;"
       onchange={e => {
         proChecked = (e.currentTarget as HTMLInputElement).checked;
         setWalletPosture(proChecked ? 'pro' : 'everyday');

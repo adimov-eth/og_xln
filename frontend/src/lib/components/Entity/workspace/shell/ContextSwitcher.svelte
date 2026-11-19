@@ -27,6 +27,7 @@
   export let allowAddJurisdiction = false;
   export let allowAddEntity = false;
   export let addRuntimeLabel = '+ Add Runtime';
+  export let brandTrigger = false;
 
   const dispatch = createEventDispatcher();
 
@@ -540,27 +541,40 @@
   <span
     slot="trigger"
     class="pill-trigger"
+    class:brand-trigger={brandTrigger}
   >
-    <span class="pill-avatar-wrap">
-      {#if currentAvatar}
-        <img src={currentAvatar} alt="" class="pill-avatar" />
-      {:else}
-        <span class="pill-avatar placeholder">◎</span>
-      {/if}
-      {#if currentJurisdictionBadge}
-        <span
-          class={`jurisdiction-badge ${currentJurisdictionBadge.className}`}
-          title={currentJurisdictionBadge.title}
-        >
-          {currentJurisdictionBadge.symbol}
-        </span>
-      {/if}
-    </span>
-    <span class="pill-copy">
-      <span class="pill-title">{currentTitle}</span>
-      <span class="pill-subtitle">{currentSubtitle}</span>
-    </span>
-    <span class="pill-arrow" class:open aria-hidden="true">›</span>
+    {#if brandTrigger}
+      <span class="ev-brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+          <path d="M12 3L3 20h18L12 3Z" />
+          <path d="M7.5 11.5h9" />
+          <path d="M5.4 15.8h13.2" />
+        </svg>
+      </span>
+      <span class="ev-brand-wordmark">xln</span>
+      <span class="pill-arrow" class:open aria-hidden="true">›</span>
+    {:else}
+      <span class="pill-avatar-wrap">
+        {#if currentAvatar}
+          <img src={currentAvatar} alt="" class="pill-avatar" />
+        {:else}
+          <span class="pill-avatar placeholder">◎</span>
+        {/if}
+        {#if currentJurisdictionBadge}
+          <span
+            class={`jurisdiction-badge ${currentJurisdictionBadge.className}`}
+            title={currentJurisdictionBadge.title}
+          >
+            {currentJurisdictionBadge.symbol}
+          </span>
+        {/if}
+      </span>
+      <span class="pill-copy">
+        <span class="pill-title">{currentTitle}</span>
+        <span class="pill-subtitle">{currentSubtitle}</span>
+      </span>
+      <span class="pill-arrow" class:open aria-hidden="true">›</span>
+    {/if}
   </span>
 
   <div slot="menu" class="switcher-menu">

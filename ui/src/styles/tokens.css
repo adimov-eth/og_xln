@@ -10,6 +10,17 @@
 	--radius-pill: 999px;
 	/* Everyday uniform control/surface radius. */
 	--ev-radius: 8px;
+	/* Progressive enhancement token for oklab gradient interpolation (avoids Chromium oklch neutral tint bug). */
+	--in-oklab: ;
+}
+
+@supports (background: linear-gradient(in oklab, white, black)) {
+	:root {
+		--in-oklab: in oklab;
+	}
+}
+
+:root {
 
 	--dur-fast: 140ms;
 	--dur-slow: 320ms;
@@ -61,14 +72,44 @@
 	--hold-dim: rgba(196, 181, 253, 0.28);
 	--dispute: #f26d6d;
 	--dispute-dim: rgba(242, 109, 109, 0.14);
-	/* Semantic Everyday ink grammar: monochrome controls, colour = money state only. */
+	/* Semantic Everyday ink grammar: monochrome obsidian & silver, cool steel states, zero gold. */
 	--ink-settled: var(--display);
-	--ink-arriving: var(--debt);
-	--ink-owed: var(--credit);
+	--ink-arriving: #8cc8ff;
+	--ink-owed: #a8b8cf;
 	--ink-dispute: var(--dispute);
 	--ink-delta-in: var(--reserve);
 	--ink-action: var(--display);
 	--ink-action-fg: var(--bg);
+	--ev-warn-bg: rgba(168, 184, 207, 0.1);
+	/* Everyday Obsidian & Silver dark ground: piano-black obsidian sculpted by subtle sterling-silver light. */
+	--ev-ground-top: #14181f;
+	--ev-ground-mid: #080a0e;
+	--ev-ground-bottom: #030406;
+	--ev-silver-crown: rgba(244, 248, 255, 0.17);
+	--ev-silver-mid: rgba(200, 210, 226, 0.072);
+	--ev-silver-tail: rgba(126, 138, 156, 0.018);
+	--ev-silver-band-peak: rgba(236, 242, 250, 0.06);
+	--ev-silver-band-soft: rgba(196, 208, 224, 0.02);
+	--ev-silver-bevel: rgba(244, 248, 252, 0.045);
+	--ev-silver-bevel-mid: rgba(203, 213, 225, 0.014);
+	--ev-silver-rim: rgba(235, 240, 248, 0.085);
+	--ev-rail-bg: rgba(6, 7, 10, 0.76);
+	--ev-rail-border: rgba(226, 232, 240, 0.1);
+	--ev-num-top: #ffffff;
+	--ev-num-mid: #e6ecf4;
+	--ev-num-bot: #9aa6b8;
+	--ev-btn-primary-top: #ffffff;
+	--ev-btn-primary-mid: #e7ecf4;
+	--ev-btn-primary-bot: #c5cfde;
+	--ev-btn-primary-fg: #050608;
+	--ev-btn-secondary-top: rgba(255, 255, 255, 0.08);
+	--ev-btn-secondary-bot: rgba(255, 255, 255, 0.02);
+	--ev-btn-secondary-bg: rgba(226, 232, 240, 0.05);
+	--ev-btn-secondary-border: rgba(226, 232, 240, 0.16);
+	--ev-btn-inset: rgba(255, 255, 255, 0.1);
+	--ev-sheen: rgba(248, 250, 252, 0.18);
+	--ev-wash-arriving: rgba(140, 200, 255, 0.085);
+	--ev-wash-dispute: rgba(242, 109, 109, 0.11);
 	--btn-ink: #ffffff;
 	--scrim: rgba(4, 6, 10, 0.66);
 	--shadow-card: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -108,12 +149,42 @@
 	--dispute: #df1b41;
 	--dispute-dim: rgba(223, 27, 65, 0.08);
 	--ink-settled: var(--display);
-	--ink-arriving: var(--debt);
-	--ink-owed: var(--credit);
+	--ink-arriving: #0369a1;
+	--ink-owed: #3b4b63;
 	--ink-dispute: var(--dispute);
 	--ink-delta-in: var(--coll);
 	--ink-action: var(--display);
 	--ink-action-fg: var(--bg);
+	--ev-warn-bg: rgba(59, 75, 99, 0.08);
+	/* Everyday Platinum & Obsidian light ground: crisp satin platinum skylight with deep onyx actions. */
+	--ev-ground-top: #fbfcfd;
+	--ev-ground-mid: #f2f4f8;
+	--ev-ground-bottom: #e5e9f0;
+	--ev-silver-crown: rgba(255, 255, 255, 0.88);
+	--ev-silver-mid: rgba(232, 237, 244, 0.24);
+	--ev-silver-tail: rgba(203, 213, 225, 0.08);
+	--ev-silver-band-peak: rgba(255, 255, 255, 0.45);
+	--ev-silver-band-soft: rgba(240, 244, 250, 0.14);
+	--ev-silver-bevel: rgba(255, 255, 255, 0.36);
+	--ev-silver-bevel-mid: rgba(226, 232, 240, 0.12);
+	--ev-silver-rim: rgba(148, 163, 184, 0.14);
+	--ev-rail-bg: rgba(248, 249, 252, 0.84);
+	--ev-rail-border: rgba(15, 23, 42, 0.09);
+	--ev-num-top: #090b0f;
+	--ev-num-mid: #1a212e;
+	--ev-num-bot: #3c4759;
+	--ev-btn-primary-top: #242a36;
+	--ev-btn-primary-mid: #11151d;
+	--ev-btn-primary-bot: #050608;
+	--ev-btn-primary-fg: #f8fafc;
+	--ev-btn-secondary-top: rgba(255, 255, 255, 0.88);
+	--ev-btn-secondary-bot: rgba(241, 245, 249, 0.62);
+	--ev-btn-secondary-bg: rgba(15, 23, 42, 0.04);
+	--ev-btn-secondary-border: rgba(15, 23, 42, 0.14);
+	--ev-btn-inset: rgba(255, 255, 255, 0.88);
+	--ev-sheen: rgba(255, 255, 255, 0.78);
+	--ev-wash-arriving: rgba(3, 105, 161, 0.07);
+	--ev-wash-dispute: rgba(223, 27, 65, 0.08);
 	--btn-ink: #ffffff;
 	--scrim: rgba(26, 31, 54, 0.4);
 	--shadow-card: 0 0 0 1px rgba(26, 31, 54, 0.06), 0 2px 5px rgba(60, 66, 87, 0.08), 0 1px 1px rgba(0, 0, 0, 0.04);

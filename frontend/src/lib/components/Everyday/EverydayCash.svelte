@@ -35,6 +35,7 @@
   let busy = $state(false); let statusMsg = $state(''); let errorMsg = $state('');
   let showTruth = $state(false);
   let deltaNotice = $state<{ positive: boolean; text: string } | null>(null);
+  let sheenTick = $state(0);
   let lastCashKey = ''; let lastCashValue = 0n;
 
   const terms = EVERYDAY_COPY.terms;
@@ -69,6 +70,7 @@
     const diff = cash - lastCashValue;
     if (diff === 0n) return;
     lastCashValue = cash;
+    if (diff > 0n) sheenTick += 1;
     deltaNotice = {
       positive: diff > 0n,
       text: diff > 0n ? `+${formatUsd(diff, decimals)} settled` : `−${formatUsd(-diff, decimals)} sent`,
@@ -192,33 +194,35 @@
   }
 </script>
 
-<section class="ev-hero-region" aria-label="Cash balance">
-  <p class="ev-label">{terms.cash.label}</p>
-  <button type="button" class="ev-balance-trigger" aria-expanded={showTruth} onclick={() => showTruth = !showTruth}>
-    <h1 class="ev-hero" class:is-syncing={!commandReady} data-testid="everyday-cash">
-      <span>{cashParts.major}</span>{#if cashParts.minor}<span class="ev-cents">{cashParts.minor}</span>{/if}{#if cashParts.suffix}<span class="ev-suffix">{cashParts.suffix}</span>{/if}
-    </h1>
-  </button>
-  {#if !commandReady}
-    <p class="ev-muted" role="status">Syncing latest balance. Sending resumes in a moment.</p>
-  {:else if deltaNotice}
-    <p class="ev-delta" class:is-out={!deltaNotice.positive} data-testid="everyday-cash-delta" role="status">{deltaNotice.text}</p>
-  {:else}
-    <p class="ev-muted">{terms.cash.note}</p>
-  {/if}
-  {#if showTruth}
-    <p class="ev-truth" data-testid="everyday-balance-truth">{balanceTruthLine}</p>
-  {/if}
-  {#if projection.primary.arriving > 0n}
-    <div class="ev-pill" data-testid="everyday-arriving">+{formatUsd(projection.primary.arriving, decimals)} {terms.arriving.label.toLowerCase()}</div>
-    <p class="ev-muted">{arrivingNote}</p>
-  {/if}
-  <div class="ev-row">
-    <button type="button" class="ev-btn" class:primary={panel === 'none' || panel === 'pay'} data-testid="everyday-pay-btn" onclick={() => openPanel('pay')}>{flows.pay.before}</button>
-    <button type="button" class="ev-btn" class:primary={panel === 'request'} data-testid="everyday-request-btn" onclick={() => openPanel('request')}>{flows.requestLink.before}</button>
-    <button type="button" class="ev-btn" class:primary={panel === 'cashout'} data-testid="everyday-cashout-btn" onclick={() => openPanel('cashout')}>{flows.cashOut.before}</button>
-  </div>
-</section>
+{#key sheenTick}
+  <section class="ev-hero-region" class:is-sheen={sheenTick > 0} aria-label="Cash balance">
+    <p class="ev-label">{terms.cash.label}</p>
+    <button type="button" class="ev-balance-trigger" aria-expanded={showTruth} onclick={() => showTruth = !showTruth}>
+      <h1 class="ev-hero" class:is-syncing={!commandReady} data-testid="everyday-cash">
+        <span>{cashParts.major}</span>{#if cashParts.minor}<span class="ev-cents">{cashParts.minor}</span>{/if}{#if cashParts.suffix}<span class="ev-suffix">{cashParts.suffix}</span>{/if}
+      </h1>
+    </button>
+    {#if !commandReady}
+      <p class="ev-muted" role="status">Syncing latest balance. Sending resumes in a moment.</p>
+    {:else if deltaNotice}
+      <p class="ev-delta" class:is-out={!deltaNotice.positive} data-testid="everyday-cash-delta" role="status">{deltaNotice.text}</p>
+    {:else}
+      <p class="ev-muted">{terms.cash.note}</p>
+    {/if}
+    {#if showTruth}
+      <p class="ev-truth" data-testid="everyday-balance-truth">{balanceTruthLine}</p>
+    {/if}
+    {#if projection.primary.arriving > 0n}
+      <div class="ev-pill" data-testid="everyday-arriving">+{formatUsd(projection.primary.arriving, decimals)} {terms.arriving.label.toLowerCase()}</div>
+      <p class="ev-muted">{arrivingNote}</p>
+    {/if}
+    <div class="ev-actions">
+      <button type="button" class="ev-btn" class:primary={panel === 'none' || panel === 'pay'} data-testid="everyday-pay-btn" onclick={() => openPanel('pay')}>{flows.pay.before}</button>
+      <button type="button" class="ev-btn" class:primary={panel === 'request'} data-testid="everyday-request-btn" onclick={() => openPanel('request')}>{flows.requestLink.before}</button>
+      <button type="button" class="ev-btn" class:primary={panel === 'cashout'} data-testid="everyday-cashout-btn" onclick={() => openPanel('cashout')}>{flows.cashOut.before}</button>
+    </div>
+  </section>
+{/key}
 
 {#if panel === 'pay'}
   <form class="ev-card" onsubmit={e => void submitPay(e)}>
