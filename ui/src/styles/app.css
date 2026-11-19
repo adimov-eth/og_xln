@@ -1253,6 +1253,19 @@ textarea.input.boxed {
 	padding: 0 14px;
 }
 
+/* On touch screens a small Pro button keeps its 34px look but gets a 48px hit area, so Pro stays dense and still meets touch size. */
+@media (pointer: coarse) {
+	.app:not([data-posture='everyday']) .btn.sm {
+		position: relative;
+	}
+
+	.app:not([data-posture='everyday']) .btn.sm::after {
+		content: '';
+		position: absolute;
+		inset: -7px 0;
+	}
+}
+
 .btn.quiet {
 	background: none;
 	box-shadow: none;
