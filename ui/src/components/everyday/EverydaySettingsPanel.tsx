@@ -210,7 +210,7 @@ export function EverydaySettingsPanel() {
       <div className="everyday-panel">
         <div className="everyday-panel-head">
           <div className="everyday-row-meta">
-            <span className="everyday-row-title">Reset test network data</span>
+            <span className="everyday-row-title">Test data</span>
             <span className="everyday-row-sub">Your test balance goes to zero and test accounts and activity leave this device. Your login stays.</span>
           </div>
           <button

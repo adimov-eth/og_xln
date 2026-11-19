@@ -117,7 +117,7 @@ export function SettingsScreen() {
             </div>
             <div className="setting">
               <div>
-                <div className="t">Reset test network data</div>
+                <div className="t">Test data</div>
                 <div className="s">Your test balance goes to zero and test accounts and activity leave this device. Your login stays.</div>
               </div>
               <button

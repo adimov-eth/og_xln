@@ -159,7 +159,7 @@
 </section>
 
 <section class="ev-card">
-  <h2 style="margin:0;font-size:1.15rem;">Test network</h2>
+  <h2 style="margin:0;font-size:1.15rem;">Test data</h2>
   <p class="ev-muted">Your test balance goes to zero and test accounts and activity leave this device. Your login stays.</p>
   <button type="button" class="ev-btn" class:danger={armed || resetting} data-armed={armedAttribute(arm)} data-testid="settings-clear-test-data" disabled={resetting} onclick={pressClear} onblur={disarm}>
     {resetting ? resetCopy.pending : armed ? resetCopy.confirm : resetCopy.before}
