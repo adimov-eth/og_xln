@@ -5,7 +5,8 @@ import { sendEntityTxs } from '../../runtime/tx';
 import { formatMoney } from '../../runtime/format';
 import { getTokenMeta } from '../../runtime/token-meta';
 import type { AccountView, WalletView } from '../../runtime/views';
-import { buildSettleApproveTx, describeSettlementOp, settlementView } from '../../runtime/financial/manage';
+import { buildSettlementApproveTx } from '@xln/frontend/lib/components/Entity/account/entity-action-txs';
+import { describeSettlementOp, settlementView } from '../../runtime/financial/manage';
 const moneyOf = (tokenId: number, amount: bigint): string => {
 	const meta = getTokenMeta(tokenId);
 	return `${formatMoney(amount, meta.decimals)} ${meta.symbol}`;
@@ -27,7 +28,7 @@ export function SettlementCard({ account, wallet }: { account: AccountView; wall
 		if (!wallet.signerId) return;
 		setBusy(true);
 		try {
-			await sendEntityTxs(wallet.entityId, wallet.signerId, [buildSettleApproveTx(account.counterpartyId, view.workspaceHash)]);
+			await sendEntityTxs(wallet.entityId, wallet.signerId, [buildSettlementApproveTx(account.counterpartyId, view.workspaceHash)]);
 			toast('Settlement signed');
 		} catch (error) {
 			toast(error instanceof Error ? error.message : String(error), 'danger');

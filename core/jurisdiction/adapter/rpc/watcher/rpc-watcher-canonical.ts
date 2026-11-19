@@ -191,7 +191,7 @@ const assertBoardRegistriesMatchStorage = async (
   unavailable: UnavailableStateHeights,
 ): Promise<Map<EntityReplica, string>> => {
   const replicaKeys = new Map<EntityReplica, string>();
-  if (services.mode !== 'rpc' && services.mode !== 'anvil') return replicaKeys;
+  if (services.mode !== 'rpc') return replicaKeys;
   const registries = new Map<string, CertifiedBoardRegistryState>();
   for (const replica of replicas) {
     const registry = replica.state.certifiedBoardState;
@@ -268,7 +268,7 @@ const assertEntityReservesMatchStorage = async (
   unavailable: UnavailableStateHeights,
 ): Promise<Map<EntityReplica, string>> => {
   const replicaKeys = new Map<EntityReplica, string>();
-  if (services.mode !== 'rpc' && services.mode !== 'anvil') return replicaKeys;
+  if (services.mode !== 'rpc') return replicaKeys;
   type Audited ={ auditKey: string; entityId: string; reserves: ReadonlyMap<number, bigint> };
   const groups = new Map<string, { height: number; entities: Audited[] }>();
   const audits = new Map<string, { root: string; tokenCount: bigint; batchNonce: bigint }>();
@@ -333,7 +333,7 @@ const assertEntityOutDebtsMatchStorage = async (
   unavailable: UnavailableStateHeights,
 ): Promise<Map<EntityReplica, string>> => {
   const replicaKeys = new Map<EntityReplica, string>();
-  if (services.mode !== 'rpc' && services.mode !== 'anvil') return replicaKeys;
+  if (services.mode !== 'rpc') return replicaKeys;
   type State =EntityReplica['state'];
   type Ledgers = { auditKey: string; entityId: string; outDebtsByToken: State['outDebtsByToken']; inDebtsByToken: State['inDebtsByToken'] };
   const groups = new Map<string, { height: number; entities: Ledgers[] }>();
@@ -398,7 +398,7 @@ const readEntityActionNoncesFromStorage = async (
   unavailable: UnavailableStateHeights,
 ): Promise<Map<EntityReplica, string>> => {
   const replicaKeys = new Map<EntityReplica, string>();
-  if (services.mode !== 'rpc' && services.mode !== 'anvil') return replicaKeys;
+  if (services.mode !== 'rpc') return replicaKeys;
   const groups = new Map<string, { height: number; entities: Array<{ auditKey: string; entityId: string }> }>();
   const audits = new Map<string, bigint>();
   for (const replica of replicas) {
@@ -454,7 +454,7 @@ const assertEntityDebtProvenance = async (
   emitWatcherDebug: EmitWatcherDebug,
   unavailable: ReadonlySet<number>,
 ): Promise<void> => {
-  if (services.mode !== 'rpc' && services.mode !== 'anvil') return;
+  if (services.mode !== 'rpc') return;
   const send = (method: string, params: unknown[]) => services.provider.send(method, params);
   const audits = new Set<string>();
   let proven = 0;
@@ -522,7 +522,7 @@ const assertEntityProvenValuesMatchStorage = (
   emitWatcherDebug: EmitWatcherDebug,
   unavailable: ReadonlySet<number>,
 ): void => {
-  if (services.mode !== 'rpc' && services.mode !== 'anvil') return;
+  if (services.mode !== 'rpc') return;
   const jurisdiction = {
     chainId: services.chainId,
     depositoryAddress: services.depositoryAddress,

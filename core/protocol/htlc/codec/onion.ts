@@ -1,3 +1,5 @@
+import { bytesToHex } from '../../../support/bytes/hex-bytes';
+import { UINT256_MAX } from '../../boundary/integer-ranges';
 import {
   assertOpaqueHtlcCiphertext,
   HTLC_OPAQUE_CIPHERTEXT_VERSION,
@@ -10,7 +12,6 @@ import {
   base64ToRawBytes,
   hexToRawBytes,
   rawBytesToBase64,
-  rawBytesToHex,
 } from './binary';
 
 const CIPHERTEXT_MAGIC = Uint8Array.of(0x58, 0x4c, 0x4d, 0x52); // XLMR
@@ -19,7 +20,6 @@ const CIPHERTEXT_CODEC_VERSION = 1;
 const ONION_CODEC_VERSION = 2;
 const FINAL_LAYER = 1;
 const FORWARD_LAYER = 2;
-const MAX_UINT256 = (1n << 256n) - 1n;
 
 export type DecodedOnionLayer = Readonly<{
   finalRecipient: true;
@@ -39,11 +39,11 @@ const expectMagic = (reader: BinaryReader, expected: Uint8Array, code: string): 
 };
 
 const uint256Bytes = (value: bigint, code: string): Uint8Array => {
-  if (value <= 0n || value > MAX_UINT256) throw new Error(code);
+  if (value <= 0n || value > UINT256_MAX) throw new Error(code);
   return hexToRawBytes(`0x${value.toString(16).padStart(64, '0')}`, code, 32);
 };
 
-const bytesToUint256 = (bytes: Uint8Array): bigint => BigInt(rawBytesToHex(bytes));
+const bytesToUint256 = (bytes: Uint8Array): bigint => BigInt(bytesToHex(bytes));
 
 /**
  * Encode the nested recipient envelope without recursively base64-encoding its
@@ -101,7 +101,7 @@ export const decodeOnionLayer = (encoded: Uint8Array): DecodedOnionLayer => {
   if (reader.u8() !== ONION_CODEC_VERSION) throw new Error('HTLC_ONION_LAYER_VERSION_INVALID');
   const kind = reader.u8();
   if (kind === FINAL_LAYER) {
-    const secret = rawBytesToHex(reader.raw(32));
+    const secret = bytesToHex(reader.raw(32));
     const flags = reader.u8();
     if ((flags & ~3) !== 0) throw new Error(code);
     const description = (flags & 1) !== 0 ? reader.text() : undefined;

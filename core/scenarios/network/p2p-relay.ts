@@ -201,22 +201,21 @@ const waitForLineOrError = (
 };
 
 const smokeConnect = async (relayUrl: string, timeoutMs = 3000) => {
-  const { WebSocket } = await import('ws');
   return new Promise<void>((resolve, reject) => {
     const ws = new WebSocket(relayUrl);
     const timer = setTimeout(() => {
       ws.close();
       reject(new Error(`WS_SMOKE_TIMEOUT: ${relayUrl}`));
     }, timeoutMs);
-    ws.on('open', () => {
+    ws.onopen = () => {
       clearTimeout(timer);
       ws.close();
       resolve();
-    });
-    ws.on('error', (err) => {
+    };
+    ws.onerror = () => {
       clearTimeout(timer);
-      reject(err);
-    });
+      reject(new Error(`WS_SMOKE_ERROR: ${relayUrl}`));
+    };
   });
 };
 

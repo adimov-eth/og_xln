@@ -1,4 +1,5 @@
 import { assertWatchtowerSubmissionSupported } from './submission-support';
+import { raceTimeout } from '../support/time';
 import { JsonRpcProvider, Wallet, ethers } from 'ethers';
 import { Depository__factory } from '../../jurisdictions/typechain-types/index.ts';
 import {
@@ -36,23 +37,11 @@ const WATCHTOWER_RPC_READ_TIMEOUT_MS = 10_000;
  * The sweep is serial: one RPC that never answers stalled it for every other
  * appointment, so every chain call of a sweep is bounded.
  */
-const withWatchtowerRpcTimeout = async <T>(
+const withWatchtowerRpcTimeout = <T>(
   promise: Promise<T>,
   label: string,
   timeoutMs: number,
-): Promise<T> => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label}_TIMEOUT:${timeoutMs}`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-};
+): Promise<T> => raceTimeout(promise, timeoutMs, () => new Error(`${label}_TIMEOUT:${timeoutMs}`));
 
 const isRpcLogRangeLimitError = (error: unknown): boolean => {
   const message = error instanceof Error ? error.message : String(error);
@@ -479,15 +468,11 @@ const waitForReceiptWithTimeout = async (
   timeoutMs: number,
 ): Promise<{ blockNumber?: number } | null> => {
   if (typeof tx.wait !== 'function') return null;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      tx.wait(),
-      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+  const timedOut = new Error('WATCHTOWER_RECEIPT_TIMEOUT');
+  return await raceTimeout(tx.wait(), timeoutMs, () => timedOut).catch(error => {
+    if (error === timedOut) return null;
+    throw error;
+  });
 };
 
 type ActiveDisputeContext = {

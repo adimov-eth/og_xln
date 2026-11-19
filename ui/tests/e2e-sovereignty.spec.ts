@@ -26,7 +26,7 @@ async function towerHolds(lookupKey: string): Promise<{ available: boolean; heig
 }
 
 test(
-  'shows signed Account protection and tower receipts, then opens Desk and Pay through the palette',
+  'shows signed Account protection and tower receipts, then opens Pay through the palette',
   { tag: '@functional' },
   async ({ page }, testInfo) => {
     test.setTimeout(90_000);
@@ -110,19 +110,11 @@ test(
     await expect(page.getByTestId('watchtower-state')).toHaveText('not backed up');
     await expect(page.getByTestId('watchtower-mode-local')).toHaveClass(/active/);
 
-    await page.getByRole('link', { name: 'Settings' }).first().click();
-    await page.getByTestId('density-desk').click();
-    await page.getByRole('link', { name: 'Home' }).first().click();
-    await expect(page.getByTestId('desk')).toBeVisible();
-    await expect(page.getByTestId('desk-table').locator('tbody tr')).not.toHaveCount(0);
-    await expect(page.getByTestId('desk-net')).toContainText('$100.00');
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
     await expect(page.getByTestId('palette')).toBeVisible();
     await page.getByTestId('palette-input').fill('pay');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/\/pay/);
-    await page.getByRole('link', { name: 'Settings' }).first().click();
-    await page.getByTestId('density-comfort').click();
     expect(pageErrors).toEqual([]);
   },
 );

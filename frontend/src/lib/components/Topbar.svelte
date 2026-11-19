@@ -1,6 +1,5 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { locale, LOCALES, type Locale } from '#lib/i18n/index.ts';
   import DeltaVisualizer from './Tools/DeltaVisualizer.svelte';
   import Dropdown from '#lib/components/UI/Dropdown.svelte';
 
@@ -14,14 +13,8 @@
   let currentPath = $derived(String(page.url.pathname));
 
   // Dropdown states
-  let langDropdownOpen = $state(false);
   let toolsDropdownOpen = $state(false);
   let showDeltaVisualizer = $state(false);
-
-  function selectLocale(loc: Locale) {
-    locale.set(loc);
-    langDropdownOpen = false;
-  }
 
   function openTool(tool: string) {
     toolsDropdownOpen = false;
@@ -63,26 +56,6 @@
             <span class="tool-icon">⚖️</span>
             <span class="tool-label">deriveDelta</span>
           </button>
-        </div>
-      </Dropdown>
-    </div>
-    <div class="topbar-dropdown language-dropdown">
-      <Dropdown bind:open={langDropdownOpen} minWidth={160} maxWidth={220}>
-        <span slot="trigger" class="topbar-trigger">
-          <span class="lang-flag">{LOCALES[$locale].flag}</span>
-          <span class="topbar-chevron" class:open={langDropdownOpen}>▼</span>
-        </span>
-        <div slot="menu" class="topbar-menu">
-          {#each Object.entries(LOCALES) as [code, info]}
-            <button
-              class="topbar-menu-item"
-              class:active={code === $locale}
-              onclick={() => selectLocale(code as Locale)}
-            >
-              <span class="menu-flag">{info.flag}</span>
-              <span class="menu-label">{info.name}</span>
-            </button>
-          {/each}
         </div>
       </Dropdown>
     </div>
@@ -217,10 +190,6 @@
     color: color-mix(in srgb, var(--theme-text-primary, white) 85%, transparent);
   }
 
-  .lang-flag {
-    font-size: 1.05rem;
-  }
-
   .topbar-chevron {
     font-size: 0.55rem;
     opacity: 0.6;
@@ -254,19 +223,6 @@
   .topbar-menu-item:hover {
     background: var(--dropdown-item-hover, rgba(255, 255, 255, 0.06));
     color: var(--theme-text-primary, white);
-  }
-
-  .topbar-menu-item.active {
-    background: var(--dropdown-selected, rgba(79, 209, 139, 0.15));
-    color: var(--topbar-accent);
-  }
-
-  .menu-flag {
-    font-size: 1rem;
-  }
-
-  .menu-label {
-    flex: 1;
   }
 
   .tool-icon {
@@ -306,8 +262,7 @@
 
   @media (max-width: 520px) {
     .optional-link,
-    .tools-dropdown,
-    .language-dropdown {
+    .tools-dropdown {
       display: none;
     }
 

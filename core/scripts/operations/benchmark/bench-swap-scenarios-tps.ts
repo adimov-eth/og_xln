@@ -8,6 +8,7 @@ import {
   type BookState,
   type Side,
 } from '../../../swapbook';
+import { parseArgs } from 'node:util';
 import { getPerfMs } from '../../../support/time';
 import { runSwapRuntimeBenchmark } from './bench-swap-runtime-tps';
 
@@ -45,29 +46,34 @@ type ScenarioBenchmarkResult = {
 
 const BASE_PRICE = 25_000_000n;
 
-const argValue = (args: string[], name: string, defaultValue: string): string => {
-  const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] ?? defaultValue : defaultValue;
-};
+type CliValues = Record<string, string | undefined>;
 
-const positiveInt = (args: string[], name: string, defaultValue: number): number => {
-  const value = Number.parseInt(argValue(args, name, String(defaultValue)), 10);
-  if (!Number.isFinite(value) || value <= 0) throw new Error(`INVALID_ARG:${name}`);
+const positiveInt = (values: CliValues, name: string, defaultValue: number): number => {
+  const value = Number.parseInt(values[name] ?? String(defaultValue), 10);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`INVALID_ARG:--${name}`);
   return value;
 };
 
-const nonNegativeInt = (args: string[], name: string, defaultValue: number): number => {
-  const value = Number.parseInt(argValue(args, name, String(defaultValue)), 10);
-  if (!Number.isFinite(value) || value < 0) throw new Error(`INVALID_ARG:${name}`);
+const nonNegativeInt = (values: CliValues, name: string, defaultValue: number): number => {
+  const value = Number.parseInt(values[name] ?? String(defaultValue), 10);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`INVALID_ARG:--${name}`);
   return value;
 };
 
-const parseCli = (args: string[]): Cli => ({
-  swaps: positiveInt(args, '--swaps', 25_000),
-  warmup: nonNegativeInt(args, '--warmup', 2_500),
-  minTps: positiveInt(args, '--min-tps', 10_000),
-  levels: positiveInt(args, '--levels', 32),
-});
+const parseCli = (args: string[]): Cli => {
+  const { values } = parseArgs({
+    args,
+    strict: true,
+    allowPositionals: true,
+    options: { 'swaps': { type: 'string' }, 'warmup': { type: 'string' }, 'min-tps': { type: 'string' }, 'levels': { type: 'string' } },
+  });
+  return {
+    swaps: positiveInt(values, 'swaps', 25_000),
+    warmup: nonNegativeInt(values, 'warmup', 2_500),
+    minTps: positiveInt(values, 'min-tps', 10_000),
+    levels: positiveInt(values, 'levels', 32),
+  };
+};
 
 const makeBook = (maxOrders: number): BookState =>
   createBook({

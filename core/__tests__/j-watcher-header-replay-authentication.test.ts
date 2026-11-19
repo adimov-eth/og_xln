@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 
 import { prepareAuthenticatedWatcherIngress } from '../jurisdiction/adapter/rpc-public';
 import { setJBlockHeadersIngressTransform } from '../jurisdiction/adapter/watcher';
-import type { AuthenticatedReceiptRange } from '../jurisdiction/adapter/receipt-root';
+import type { AuthenticatedReceiptRange } from '../jurisdiction/adapter/receipt/reader';
 
 const HASH_A = `0x${'11'.repeat(32)}`;
 const HASH_B = `0x${'22'.repeat(32)}`;

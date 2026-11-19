@@ -6,7 +6,6 @@ import { forkEntityReplicaForInput } from '../../replica/replica-clone';
 import type { EntityInput, EntityReplica } from '../../types';
 import type { EntityRuntimeContext } from '../../runtime-context';
 import { HEAVY_LOGS } from '../../../support/debug-flags';
-import { log } from '../../../support/diagnostics';
 import { copyLocalEntityLeaderTimeoutVoteAuthorization } from '../leader';
 import {
   type ApplyEntityInputContext,
@@ -96,7 +95,7 @@ export const prepareEntityInputIngress = (
     trustedLocalCrossJurisdiction,
   );
   if (admissionError) {
-    log.error(
+    entityLog.warn(
       `❌ Entity mempool admission rejected for ${ingressInput.entityId}: ${admissionError}`,
     );
     return rejectIngress('ENTITY_MEMPOOL_ADMISSION_REJECTED', replica);
@@ -108,7 +107,7 @@ export const prepareEntityInputIngress = (
     const detail =
       `entityId=${ingressInput.entityId} ` +
       `txs=${ingressInput.entityTxs?.map(tx => tx.type).join(',') || 'none'}`;
-    log.error(`❌ Invalid ingress input for ${ingressInput.entityId}: ${detail}`);
+    entityLog.warn(`❌ Invalid ingress input for ${ingressInput.entityId}: ${detail}`);
     return rejectIngress('ENTITY_INPUT_INVALID', replica);
   }
   const accountInputOnly = Boolean(

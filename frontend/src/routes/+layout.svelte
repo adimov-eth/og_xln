@@ -6,9 +6,9 @@
 	import Toast from '#lib/components/Toast.svelte';
 	import XlnMascot from '#lib/components/XlnMascot/XlnMascot.svelte';
 	import { initializeNativeShell } from '#lib/native/capacitor.ts';
-	import { installRangeSliderProgress } from '#lib/utils/rangeSliderProgress.ts';
 	import { optionalString, readJsonUnknown, rejectExtraKeys, requireUnknownRecord } from '#lib/utils/boundary/index.ts';
 	import '#lib/styles/apple-glass.css';
+	import '#lib/styles/themes.css';
 	import '#lib/styles/checkbox-controls.css';
 	import '#lib/styles/form-controls.css';
 	import '#lib/styles/range-sliders.css';
@@ -16,14 +16,10 @@
 
 	onMount(() => {
 		if (!browser) return;
-		const disposeRangeSliderProgress = installRangeSliderProgress();
 		void initializeNativeShell();
 		if (!skipDeployLabel && chromeMode === 'site') {
 			void loadDeployLabel();
 		}
-		return () => {
-			disposeRangeSliderProgress();
-		};
 	});
 
 	// Check for embed mode from URL

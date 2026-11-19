@@ -31,7 +31,7 @@ import type {
   RoutedEntityInput,
 } from '../../../runtime/types';
 import type { RuntimeInputApplyResult } from '../../../runtime/frame/apply';
-import type { RuntimeOutputRoutingDeps } from '../../../runtime/delivery/topology/output-routing';
+import type { RuntimeOutputRoutingDeps } from '../../../runtime/delivery/pending';
 import type { PersistedFrameJournal } from '../../types';
 import type { FrameLogEntry } from '../../../types/logging';
 import { createStructuredLogger } from '../../../support/logger';

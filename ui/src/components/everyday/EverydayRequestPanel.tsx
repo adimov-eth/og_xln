@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { buildWalletPayHref } from '@xln/frontend/lib/utils/xlnInvoice';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { useApp } from '../../runtime/store';
 import { Icon } from '../Icons';
 
@@ -59,10 +59,10 @@ export function EverydayRequestPanel({
     void navigator.clipboard.writeText(requestHref).then(
       () => {
         setCopied(true);
-        toast(SURFACES.everyday.flows['request-link'].done.text);
+        toast(EVERYDAY_COPY.flows.requestLink.done);
       },
       () => {
-        toast(SURFACES.everyday.flows['request-link'].failed.text, 'danger');
+        toast(EVERYDAY_COPY.flows.requestLink.failed, 'danger');
       },
     );
   };
@@ -70,7 +70,7 @@ export function EverydayRequestPanel({
   return (
     <section className="everyday-panel" aria-label="Request money">
       <div className="everyday-panel-head">
-        <strong>{SURFACES.everyday.flows['request-link'].before.text}</strong>
+        <strong>{EVERYDAY_COPY.flows.requestLink.before}</strong>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Close request panel">
           <Icon name="close" size={18} />
         </button>
@@ -115,7 +115,7 @@ export function EverydayRequestPanel({
             data-testid="everyday-request-copy"
           >
             <Icon name={copied ? 'check' : 'copy'} size={16} />
-            {copied ? SURFACES.everyday.flows['request-link'].done.text : 'Copy request link'}
+            {copied ? EVERYDAY_COPY.flows.requestLink.done : 'Copy request link'}
           </button>
         </div>
       ) : null}

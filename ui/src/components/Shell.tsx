@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { getJurisdictionBadgeInfo } from '@xln/frontend/lib/utils/identity/jurisdictionBadge';
 import { getAdapter, getEmbeddedEnv } from '../runtime/adapter';
 import { useExternalWalletSync } from '../runtime/financial/external';
-import { observeFundingBatches } from '../runtime/financial/funding-submission';
+import { observeFundingBatches } from '@xln/frontend/lib/everyday/funding-submission';
 import { useRecoverySync } from '../runtime/recovery-sync';
 import { useApp } from '../runtime/store';
 import { useWalletPosture } from '../runtime/use-everyday-wallet';
@@ -50,8 +50,7 @@ const PRO_NAV: NavDestination[] = [
       pathname.startsWith('/assets') ||
       pathname.startsWith('/lend') ||
       pathname.startsWith('/ownership') ||
-      pathname.startsWith('/sovereignty') ||
-      pathname.startsWith('/desk'),
+      pathname.startsWith('/sovereignty'),
   },
   { to: '/settings', label: 'Settings', testId: 'nav-settings', icon: 'settings', match: pathname => pathname.startsWith('/settings') },
 ];

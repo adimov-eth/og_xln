@@ -5,7 +5,7 @@
   import { runtimeQueryClient } from '#lib/stores/runtimeQueryClient.ts';
   import { setWalletPosture } from '#lib/stores/everyday/walletPostureStore.ts';
   import { invoiceNote, type ParsedXlnInvoice } from '#lib/utils/xlnInvoice.ts';
-  import { SIGNING_SHEETS } from '../../../../../docs/studies/ui/surfaces/surfaces.generated';
+  import { EVERYDAY_COPY } from '#lib/everyday/wallet-posture.ts';
   import { classifyExternalRequest, type EverydayWalletProjection } from '#lib/everyday/everyday-projection.ts';
   import { acceptedInvoiceJurisdictions, readTxTypeParam, resolveHubTarget } from '#lib/everyday/external-request.ts';
   import { planEverydaySend, planFriendSplitTxs, type EverydayExternalRow, type EverydaySendRoute } from '#lib/everyday/everyday-autopilot.ts';
@@ -28,7 +28,7 @@
   let errorMsg = $state('');
   let lastInvoiceRaw = '';
 
-  const sheetCopy = SIGNING_SHEETS['external-request-sheet'];
+  const sheetCopy = EVERYDAY_COPY.externalRequestSheet;
   const targetId = $derived(invoice.targetEntityId.toLowerCase());
   const targetEntity = $derived(frame?.entities.find(e => e.entityId.toLowerCase() === targetId));
   const isHubTarget = $derived(resolveHubTarget(projection.hubAccounts.includes(targetId), targetEntity));

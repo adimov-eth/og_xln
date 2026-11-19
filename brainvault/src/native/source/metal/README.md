@@ -8,12 +8,11 @@ Apple GPU. One 32-thread SIMD group cooperates on each independent shard.
 The register/SIMD-shuffle layout is a Metal adaptation of Ondrej Mosnacek's
 MIT-licensed `argon2-gpu` warp design. Its notice is retained in
 `LICENSE-ARGON2-GPU`. The fastest `modern64` kernel uses the equivalent compact
-permutation already validated in the sibling OpenCL experiment. The barrier
+permutation validated in an earlier, since removed, OpenCL experiment. The barrier
 kernel remains an independently written readable reference.
 
 The V1-specialized hybrid is now the measured M3 Ultra production engine.
-Automatic selection is restricted to that measured hardware class; the generic
-kernel remains selectable as an experimental independent implementation. Auto
+Automatic selection is restricted to that measured hardware class. Auto
 chooses an available verified engine before derivation; once selected, every
 accelerator failure is fatal and never silently switches. Promotion elsewhere
 still requires a real-device parity, memory-pressure, cancellation, and thermal

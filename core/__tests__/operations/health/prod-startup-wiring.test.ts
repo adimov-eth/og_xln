@@ -543,7 +543,7 @@ describe('production startup wiring', () => {
       scripts: Record<string, string>;
     };
 
-    expect(packageJson.scripts['test:all:quick']).not.toContain('--skip-build');
+    expect(packageJson.scripts['test']).not.toContain('--skip-build');
     expect(packageJson.scripts['test:all:smoke']).not.toContain('--skip-build');
   });
 
@@ -579,7 +579,7 @@ describe('production startup wiring', () => {
     const criticalFiles = [...criticalList[1].matchAll(/'([^']+)'/g)]
       .map(match => match[1])
       .filter((value): value is string => typeof value === 'string');
-    expect(criticalFiles.length).toBeGreaterThanOrEqual(15);
+    expect(criticalFiles.length).toBeGreaterThanOrEqual(14);
     for (const relativePath of criticalFiles) {
       const source = readFileSync(join(repoRoot, 'core', relativePath), 'utf8');
       const header = source.match(/^\/\*\*([\s\S]*?)\*\//)?.[1] ?? '';
@@ -665,7 +665,6 @@ describe('production startup wiring', () => {
     const runtimeLoopSource = readFileSync(join(repoRoot, 'core/runtime/loop/loop.ts'), 'utf8');
     const standaloneServer = readFileSync(join(repoRoot, 'core/api/server/index.ts'), 'utf8');
     const custodyBootstrap = readFileSync(join(repoRoot, 'core/orchestrator/bootstrap/custody-bootstrap.ts'), 'utf8');
-    const cli = readFileSync(join(repoRoot, 'core/api/server/cli.ts'), 'utf8');
     expect(orchestratorConfig).toContain(
       "relayUrl: normalizeWsUrl(getArg('--relay-url', process.env['RELAY_URL'] || '')",
     );
@@ -807,8 +806,6 @@ describe('production startup wiring', () => {
     expect(orchestrator).toContain('const primaryJurisdiction = resolvePrimaryHubJurisdiction(jurisdictionsConfig);');
     expect(orchestrator).toContain('jurisdictionId: primaryJurisdiction.key');
     expect(orchestrator).not.toContain("jurisdictionId: 'arrakis'");
-    expect(cli).toContain("const REMOTE_RPC = process.env['XLN_CLI_REMOTE_RPC'] || 'https://xln.finance/rpc';");
-    expect(cli).not.toContain('/rpc/arrakis');
     expect(readFileSync(join(repoRoot, 'core/orchestrator/j-select/jurisdictions.ts'), 'utf8')).toContain(
       'const seedPath = existsSync(canonicalPath) ? canonicalPath : resolveRepoJurisdictionsJsonPath();',
     );

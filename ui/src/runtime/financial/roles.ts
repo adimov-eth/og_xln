@@ -3,8 +3,8 @@ import type { AccountDisputeConfig, AccountRoleEvidence } from '@xln/core/accoun
 import { defaultAccountDisputeConfigForRoleEvidence } from '@xln/core/account/config/dispute-config';
 
 import { getEmbeddedEnv } from '../adapter';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
 
-const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 /**
  * Committed hub roles: only signer-backed replicas (our own entities) are

@@ -1,3 +1,4 @@
+import { normalizeEntityRef } from '../../../support/boundary-guards';
 import type { EntityState } from '../../types';
 import type { EntityRuntimeContext } from '../../runtime-context';
 import type { EntityTx } from '../../../types/entity-tx';
@@ -140,8 +141,6 @@ export const applyJHistoryAnchor = (input: {
 
 const J_ANCHOR_FRAME_PAYLOAD_DOMAIN = 'xln.entity-frame.j-anchor-payload.v1';
 
-const normalizeSignerId = (value: unknown): string => String(value || '').trim().toLowerCase();
-
 /**
  * The carried board registry is the whole EntityProvider registry, so the
  * anchor is held to the same canonical frame byte limit as a J range before
@@ -175,7 +174,7 @@ export const buildJAnchorTx = (
   values: JHistoryAnchorValues,
 ): Extract<EntityTx, { type: 'j_anchor' }> => {
   const jurisdiction = entityState.config.jurisdiction ?? fail('JURISDICTION_MISSING');
-  const from = normalizeSignerId(proposerSignerId);
+  const from = normalizeEntityRef(proposerSignerId);
   const anchor = {
     jurisdictionRef: getJEventJurisdictionRef(jurisdiction),
     anchorHeight: header.anchorHeight,
@@ -218,13 +217,13 @@ export const applyJAnchor = (
     if (code === 'J_ANCHOR_PROPOSER_SIGNATURE_INVALID') {
       throw haltRuntimeFailure(
         'J_ANCHOR_PROPOSER_SIGNATURE_INVALID',
-        `j_anchor rejected: invalid proposer signature for ${normalizeSignerId(data?.from)}`,
+        `j_anchor rejected: invalid proposer signature for ${normalizeEntityRef(data?.from)}`,
       );
     }
     throw haltRuntimeFailure('J_ANCHOR_REJECTED', `j_anchor rejected: ${code}`);
   };
-  const activeProposerId = normalizeSignerId(getEntityLeaderState(entityState).activeValidatorId);
-  if (normalizeSignerId(data?.from) !== activeProposerId) reject('J_ANCHOR_NOT_ACTIVE_PROPOSER');
+  const activeProposerId = normalizeEntityRef(getEntityLeaderState(entityState).activeValidatorId);
+  if (normalizeEntityRef(data?.from) !== activeProposerId) reject('J_ANCHOR_NOT_ACTIVE_PROPOSER');
   const jurisdiction = entityState.config.jurisdiction;
   if (!jurisdiction) return reject('J_ANCHOR_JURISDICTION_MISSING');
   let recomputedValuesRoot: string;

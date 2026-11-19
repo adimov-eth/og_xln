@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import type { WalletPosture } from '@xln/frontend/lib/everyday/wallet-posture';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { ExternalRequestSheet } from './components/everyday/ExternalRequestSheet';
 import { PaymentReceiptSheet } from './components/PaymentReceipt';
 import { RuntimeCommandGate } from './components/RuntimeCommandGate';
@@ -22,7 +22,6 @@ import { AccountDetail } from './screens/AccountDetail';
 import { ActivityScreen } from './screens/Activity';
 import { Assets } from './screens/Assets';
 import { CustomContracts } from './screens/CustomContracts';
-import { Desk } from './screens/Desk';
 import { EverydayFriends } from './screens/everyday/EverydayFriends';
 import { EverydayHome } from './screens/everyday/EverydayHome';
 import { EverydaySavings } from './screens/everyday/EverydaySavings';
@@ -56,18 +55,6 @@ function useInvoiceDeepLink(
     }
     void navigate(withPostureQuery('/pay', search), { replace: true, state: { invoice: invoiceHref } });
   }, [pathname, hash, search, posture, navigate, onEverydayInvoice]);
-}
-
-/** Desk replaces Home on wide viewports when the user chose the dense layout. */
-function HomeOrDesk() {
-  const density = useApp(s => s.density);
-  const [wide, setWide] = useState(() => window.innerWidth >= 1024);
-  useEffect(() => {
-    const onResize = (): void => setWide(window.innerWidth >= 1024);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-  return density === 'desk' && wide ? <Desk /> : <Home />;
 }
 
 export default function App() {
@@ -123,7 +110,7 @@ function WalletApp() {
   }
 
   if (deployState?.status === 'require-recovery') {
-    const clearFailed = SURFACES.everyday.flows['reset-demo'].failed.text;
+    const clearFailed = EVERYDAY_COPY.flows.resetDemo.failed;
     const clearTestData = (): void => {
       if (recoveryResetting) return;
       setRecoveryResetting(true);
@@ -154,8 +141,8 @@ function WalletApp() {
             data-testid="settings-clear-test-data"
           >
             {recoveryResetting
-              ? SURFACES.everyday.flows['reset-demo'].pending.text
-              : SURFACES.everyday.flows['reset-demo'].before.text}
+              ? EVERYDAY_COPY.flows.resetDemo.pending
+              : EVERYDAY_COPY.flows.resetDemo.before}
           </button>
         </div>
       </div>
@@ -184,7 +171,7 @@ function WalletApp() {
         </Routes>
       ) : (
         <Routes>
-          <Route path="/" element={<HomeOrDesk />} />
+          <Route path="/" element={<Home />} />
           <Route path="/manage/custom-contracts" element={<CustomContracts />} />
           <Route path="/accounts/:counterpartyId" element={<AccountDetail />} />
           <Route path="/pay" element={<Pay />} />
@@ -192,7 +179,6 @@ function WalletApp() {
           <Route path="/receive" element={<Receive />} />
           <Route path="/move" element={<Move />} />
           <Route path="/sovereignty" element={<Sovereignty />} />
-          <Route path="/desk" element={<Desk />} />
           <Route path="/manage" element={<Manage />} />
           <Route path="/assets" element={<Assets />} />
           <Route path="/lend" element={<Lending />} />

@@ -153,7 +153,7 @@ describe('isolated E2E first-failure diagnostics', () => {
     const reportPath = join(root, 'playwright-report.json');
     writeFileSync(reportPath, '{\n  "suites": [\n    nope\n  ]\n}');
     expect(() => readPlaywrightFailureReport(reportPath)).toThrow(
-      `E2E_JSON_INVALID:path=${reportPath}:line=3:column=5`,
+      `E2E_JSON_INVALID:path=${reportPath}:line=1:reason=`,
     );
 
     const eventsPath = deriveE2EShardPaths(root, 2).browserEventsPath;
@@ -162,9 +162,9 @@ describe('isolated E2E first-failure diagnostics', () => {
       flag: 'w',
     });
     expect(() => parseJsonLinesStrict(readFileSync(eventsPath, 'utf8'), eventsPath)).toThrow(
-      `E2E_JSON_INVALID:path=${eventsPath}:line=2:column=1`,
+      `E2E_JSON_INVALID:path=${eventsPath}:line=2:reason=`,
     );
-    expect(() => readShardBrowserIssues(root, 2)).toThrow(`E2E_JSON_INVALID:path=${eventsPath}:line=2:column=1`);
+    expect(() => readShardBrowserIssues(root, 2)).toThrow(`E2E_JSON_INVALID:path=${eventsPath}:line=2:reason=`);
 
     const statusPath = join(deriveE2EShardPaths(root, 2).resultsDir, '.last-run.json');
     mkdirSync(join(root, 'shard-2', 'artifacts', 'playwright'), { recursive: true });

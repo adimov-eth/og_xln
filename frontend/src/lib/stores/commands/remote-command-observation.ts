@@ -1,4 +1,5 @@
 import type { RuntimeAdapter, RuntimeAdapterSendResult, RuntimeInput } from '@xln/core/api/public/runtime-module';
+import { sleep } from '../../utils/primitives';
 
 type Observation = Readonly<{
   adapter: Pick<RuntimeAdapter, 'send'>;
@@ -34,11 +35,10 @@ const pollCommand = async (
     assertCurrent(observation, expired());
     first = false;
     if (result.status === 'observed') return result;
-    await delay(observation.pollMs ?? 100);
+    await sleep(observation.pollMs ?? 100);
   }
 };
 
-const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 export const waitForObservedRemoteCommand = async (observation: Observation): Promise<RuntimeAdapterSendResult> => {
   let expired = false;

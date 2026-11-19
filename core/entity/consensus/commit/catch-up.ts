@@ -1,4 +1,4 @@
-import { logError, shortHash } from '../../../support/logger';
+import { shortHash } from '../../../support/logger';
 import type { EntityState, EntityFrame, EntityCandidate } from '../../types';
 import { applyEntityFrame } from '../frame/application';
 import { copyProposableAccounts } from '../account/touched-accounts';
@@ -118,8 +118,7 @@ const validateReplayedCommitments = (
     frame.jPrefixCertificate,
   );
   if (replayedHash !== frame.hash) {
-    logError(
-      'FRAME_CONSENSUS',
+    entityLog.error(
       '❌ COMMIT REJECTED: replayed catch-up state does not match signed frame hash!',
       { expected: replayedHash, received: frame.hash },
     );

@@ -28,7 +28,7 @@ import { hasCurrentBoardProfileRouteAuthority } from './gossip/local-profile-lif
 import { inspectHankoForHash } from '../../hanko/signing';
 import { deriveEncryptionKeyPair, hexToPubKey, type P2PKeyPair } from '../../protocol/crypto/p2p-crypto';
 import { asFailFastPayload, failfastAssert } from './failfast';
-import { normalizeRuntimeId, isRuntimeId } from './auth/runtime-id';
+import { normalizeRuntimeId, isRuntimeId } from '../../protocol/identity/runtime-id';
 import { compareStableText, safeStringify } from '../../protocol/serialization';
 import { applyTransportPeerFailurePolicy } from './transport-peer-failure-policy';
 import { traceAccountDeliveryHop } from '../../support/performance/account-delivery-trace';

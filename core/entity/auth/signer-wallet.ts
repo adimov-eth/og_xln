@@ -1,3 +1,4 @@
+import { normalizeEntityRef } from '../../support/boundary-guards';
 import type { EntityState } from '../types';
 import type { JurisdictionEvent } from '../../types/jurisdiction-events';
 import { haltRuntimeFailure } from '../../protocol/errors/failure-taxonomy';
@@ -7,8 +8,6 @@ type ExternalWalletSnapshotEvent = Extract<JurisdictionEvent, { type: 'ExternalW
 type ExternalWalletDeltaEvent = Extract<JurisdictionEvent, { type: 'ExternalWalletDelta' }>;
 
 const NATIVE_EXTERNAL_TOKEN_ADDRESS = '0x0000000000000000000000000000000000000000';
-
-const normalizeSignerId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 const normalizeExternalWalletAddress = (value: unknown, label: string): string => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -35,8 +34,8 @@ const ensureNestedMap = <T>(map: Map<string, Map<string, T>>, key: string): Map<
 };
 
 const isSignerEntityExternalWalletOwner = (state: EntityState, owner: string): boolean => {
-  const normalizedOwner = normalizeSignerId(owner);
-  return (state.config.validators || []).some((validatorId) => normalizeSignerId(validatorId) === normalizedOwner);
+  const normalizedOwner = normalizeEntityRef(owner);
+  return (state.config.validators || []).some((validatorId) => normalizeEntityRef(validatorId) === normalizedOwner);
 };
 
 const assertSignerEntityExternalWalletOwner = (state: EntityState, owner: string): void => {

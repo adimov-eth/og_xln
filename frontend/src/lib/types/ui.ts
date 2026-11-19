@@ -56,8 +56,6 @@ export interface ComponentState {
 // Theme system
 export type ThemeName = 'dark' | 'editor' | 'light' | 'merchant' | 'gold-luxe' | 'matrix' | 'arctic';
 
-// ThemeColors interface is defined in utils/themes.ts (single source of truth)
-export type { ThemeColors } from '#lib/utils/themes.ts';
 
 export type BarColorMode = 'rgy' | 'theme' | 'token';
 export type BarLayoutMode = 'center' | 'sides';

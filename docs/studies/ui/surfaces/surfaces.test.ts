@@ -17,7 +17,7 @@ describe('xln Arrival Scheme UI surface & Program spec (DSL v3)', () => {
   test('validates base.scm, everyday.scm, personal.scm, pro.scm, programs.scm, forks.scm, and rounds/*.scm with zero errors', async () => {
     const res = await validateSpecFiles();
     expect(res.errors).toEqual([]);
-    expect(res.legacyScreens).toHaveLength(16);
+    expect(res.legacyScreens).toHaveLength(15);
     expect(res.signingSheets.length).toBeGreaterThanOrEqual(6);
     expect(res.apps.length).toBeGreaterThanOrEqual(10);
     expect(res.surfaces.map(s => s.id)).toEqual(['everyday', 'personal', 'pro']);

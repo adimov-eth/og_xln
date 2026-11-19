@@ -15,10 +15,10 @@ export type EverydayDisputeNotice = {
 type AccountDoc = NonNullable<RuntimeAdapterViewFrame['activeEntity']>['accounts']['items'][number];
 
 export function resolveAccountDisputePhase(
-  doc: AccountDoc,
+  doc: Pick<AccountDoc, 'status' | 'activeDispute' | 'disputePrepare'>,
   isLeft: boolean,
   counterpartyId: string,
-  batch: JBatch | null | undefined,
+  batch: { disputeStarts?: ReadonlyArray<Pick<JBatch['disputeStarts'][number], 'counterentity'>> } | null | undefined,
 ): { phase: EverydayDisputePhase; startedByUs: boolean; timeout: number } {
   const active = doc.activeDispute;
   if (active?.observedOnChain === true) {

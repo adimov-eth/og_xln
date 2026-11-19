@@ -1,7 +1,7 @@
 import { runtimeIsBrowser } from '../../support/process/runtime-process';
 import type { Level } from 'level';
 
-import { normalizeRuntimeId } from '../../network/p2p/auth/runtime-id';
+import { normalizeRuntimeId } from '../../protocol/identity/runtime-id';
 import type { EntityState } from '../../entity/types';
 import type { RuntimeReplica } from '../../runtime/types';
 import {

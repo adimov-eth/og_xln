@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { normalizeId } from '../utils/primitives';
   /**
    * UserModePanel - wallet shell for user mode
    *
@@ -98,7 +99,6 @@
     runtimeFrameRevision.update((revision) => revision + 1);
   }
 
-  const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
   function logUserModeDiagnostic(message: string, details?: unknown): void {
     errorLog.log(message, 'User Mode', details);

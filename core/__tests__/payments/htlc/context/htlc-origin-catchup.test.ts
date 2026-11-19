@@ -1,5 +1,4 @@
 import { prepareLocallyAuthoredEntityTxs, advanceEntityCommandNonce } from '../../../../entity/command';
-import { setFailFastErrors } from '../../../../support/logger';
 import {
   createEmptyEnv,
   closeRuntimeDb,
@@ -175,7 +174,6 @@ test.each(['hashlock', 'no-route', 'duplicate'] as const)('rejected %s signed HT
     const onlineObserver = env.infrastructure!.observeOnlineEntityIds;
     restoreStrict();
     env.infrastructure!.observeOnlineEntityIds = onlineObserver;
-    setFailFastErrors(false);
     const signerId = resolveScenarioBoardSigner(env, '2');
     const source = generateLazyEntityId([signerId], 1n, env).toLowerCase();
     const hub = generateLazyEntityId([resolveScenarioBoardSigner(env, '3')], 1n, env).toLowerCase();

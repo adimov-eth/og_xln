@@ -64,8 +64,8 @@
   :reads       ['account-lanes 'owed-payable 'unbacked-exposure 'net-position 'send-capacity]
   :requests    ['send-routed 'send-direct]
   :claim-shown (guess "Net open supplier items across your Accounts and sign one itemized residual line per counterparty.")
-  :why         (from-code "ui/src/screens/Desk.tsx" "Computes netting proposals outside the Kernel while signing per-lane residual payments without granting new credit.")
-  :sources     ["ui/src/screens/Desk.tsx" "docs/studies/ui/surfaces/perspectives/p3-commercial.scm"])
+  :why         (guess "Computes netting proposals outside the Kernel while signing per-lane residual payments without granting new credit.")
+  :sources     ["docs/studies/ui/surfaces/perspectives/p3-commercial.scm"])
 
 (xln-app 'cross-j-rfq
   :kind        'embedded

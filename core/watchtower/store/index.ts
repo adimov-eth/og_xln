@@ -1,7 +1,7 @@
 import type { TowerAppointmentV1 } from '../../storage/recovery/bundle/types';
 import { closeWatchtowerStore, createWatchtowerStoreContext } from './db';
 import { getLatest, getLatestReceipt, listLatestLastResortAppointments, upsertAppointment, upsertRecoveryArchive } from './appointments';
-import { appendActionReceipt, appendComplaint, getStats, listActionReceipts, pruneExpired } from './actions';
+import { appendActionReceipt, getStats, listActionReceipts, pruneExpired } from './actions';
 import type { StoredTowerActionReceipt, WatchtowerStoreOptions } from './types';
 
 export type {
@@ -27,7 +27,6 @@ export const createWatchtowerStore = (options: WatchtowerStoreOptions = {}) => {
     listLatestLastResortAppointments: () => listLatestLastResortAppointments(context),
     appendActionReceipt: (receipt: StoredTowerActionReceipt) => appendActionReceipt(context, receipt),
     listActionReceipts: (lookupKey: string) => listActionReceipts(context, lookupKey),
-    appendComplaint: (payload: Record<string, unknown>) => appendComplaint(context, payload),
     getStats: () => getStats(context),
     pruneExpired: () => pruneExpired(context),
     close: () => closeWatchtowerStore(context),

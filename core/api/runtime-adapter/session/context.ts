@@ -142,7 +142,7 @@ export type RuntimeAdapterRequestByOp<Op extends RuntimeAdapterRequest['op']> =
 
 export type RuntimeAdapterDiagnostic = () => RuntimeAdapterResponseDiagnostic;
 
-const RUNTIME_ADAPTER_BACKPRESSURE_DEFAULT_BYTES = 2 * 1024 * 1024;
+const RUNTIME_ADAPTER_BACKPRESSURE_BYTES = 2 * 1024 * 1024;
 
 export const runtimeAdapterLog = createStructuredLogger('runtime.radapter');
 export { errorMessage };
@@ -161,9 +161,6 @@ export const createConfiguredBucket = (
   readPositiveNumberEnv(`XLN_RADAPTER_${label}_BURST`, defaultCapacity),
   readPositiveNumberEnv(`XLN_RADAPTER_${label}_PER_SEC`, defaultRefillPerSecond),
 );
-
-const runtimeAdapterBackpressureBytes = (): number =>
-  readPositiveNumberEnv('XLN_RADAPTER_BACKPRESSURE_BYTES', RUNTIME_ADAPTER_BACKPRESSURE_DEFAULT_BYTES);
 
 export const compactReadQueryForLog = (query: RuntimeAdapterReadQuery | undefined): Record<string, unknown> | undefined => {
   if (!query) return undefined;
@@ -257,7 +254,7 @@ const emitRuntimeAdapterResponseTooLarge = (
 
 const closeRuntimeAdapterSocketIfBackpressured = (ws: RuntimeAdapterSocket): boolean => {
   const buffered = ws.getBufferedAmount?.() ?? 0;
-  if (buffered <= runtimeAdapterBackpressureBytes()) return false;
+  if (buffered <= RUNTIME_ADAPTER_BACKPRESSURE_BYTES) return false;
   ws.close?.(1013, 'runtime adapter socket backpressure');
   return true;
 };

@@ -8,7 +8,7 @@ import {
   findDirectBilateralRoute,
   resolveEverydayDeliveryMode,
 } from '@xln/frontend/lib/everyday/everyday-routes';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { toEverydayExternalRows } from '../../runtime/everyday';
 import { formatEverydayMoney } from '../../runtime/use-everyday-wallet';
 import { parseAmount } from '../../runtime/format';
@@ -193,14 +193,14 @@ export function EverydayPayPanel({
         route,
         onStage: setBusyStage,
       });
-      const label = SURFACES.everyday.flows.pay.done.text;
+      const label = EVERYDAY_COPY.flows.pay.done;
       setDone(`${label} ${formatEverydayMoney(parsedAmount, tokenId)}`);
       setAmountText('');
       setNote('');
       toast(`${label} ${formatEverydayMoney(parsedAmount, tokenId)}`);
     } catch (failure) {
       setError(
-        failure instanceof Error ? failure.message : SURFACES.everyday.flows.pay.failed.text,
+        failure instanceof Error ? failure.message : EVERYDAY_COPY.flows.pay.failed,
       );
     } finally {
       setBusyStage(null);
@@ -210,7 +210,7 @@ export function EverydayPayPanel({
   return (
     <section className="everyday-panel" aria-label="Pay someone">
       <div className="everyday-panel-head">
-        <strong>{SURFACES.everyday.flows.pay.before.text}</strong>
+        <strong>{EVERYDAY_COPY.flows.pay.before}</strong>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Close pay panel">
           <Icon name="close" size={18} />
         </button>
@@ -290,8 +290,8 @@ export function EverydayPayPanel({
         {busyStage
           ? busyStage
           : parsedAmount > 0n
-            ? `${SURFACES.everyday.flows.pay.before.text} ${formatEverydayMoney(parsedAmount, tokenId)}`
-            : SURFACES.everyday.flows.pay.before.text}
+            ? `${EVERYDAY_COPY.flows.pay.before} ${formatEverydayMoney(parsedAmount, tokenId)}`
+            : EVERYDAY_COPY.flows.pay.before}
       </button>
     </section>
   );

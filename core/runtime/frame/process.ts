@@ -3,7 +3,7 @@
  * commit the authoritative WAL, publish live state, then run external effects.
  * Key entrypoint: applyAndCommitRuntimeFrame. Human-audit importance: 100/100.
  */
-import { recordOpEvent, runWithOpScopes } from '../../support/performance/op-counters';
+import { runWithOpScopes } from '../../support/performance/op-counters';
 import { TIMING } from '../../config/constants';
 import { requireBoundaryInteger } from '../../protocol/boundary-validation';
 import { recordRuntimeTraceForTesting } from '../observability/runtime-trace';
@@ -146,38 +146,6 @@ const buildRuntimeFrameInput = (
   return runtimeInput;
 };
 
-const recordRuntimeFrameIngress = (
-  env: RuntimeReplica,
-  runtimeInput: RuntimeInput,
-  queuedAt: number | undefined,
-): void => {
-  let entityTxs = 0;
-  let accountProposals = 0;
-  let ackFrames = 0;
-  let acks = 0;
-  for (const input of runtimeInput.entityInputs) {
-    for (const tx of input.entityTxs ?? []) {
-      entityTxs += 1;
-      if (tx.type !== 'accountInput') continue;
-      if (tx.data.kind === 'ack_frame') {
-        accountProposals += 1;
-        if (tx.data.ack) ackFrames += 1;
-      }
-      else if (tx.data.kind === 'ack') acks += 1;
-    }
-  }
-  recordOpEvent('runtime.frame.ingress', {
-    runtimeId: String(env.runtimeId ?? env.dbNamespace ?? 'unknown').trim().toLowerCase(),
-    height: env.state.height + 1,
-    queuedAt: queuedAt ?? -1,
-    entityInputs: runtimeInput.entityInputs.length,
-    entityTxs,
-    accountProposals,
-    ackFrames,
-    acks,
-  });
-};
-
 const resolveRuntimeFrameTimestamp = (
   env: RuntimeReplica,
   mempoolQueuedAt: number | undefined,
@@ -229,7 +197,6 @@ const openRuntimeFrameCandidate = (
     adapter.setQuietLogs?.(quietRuntimeLogs);
   }
   const runtimeInput = buildRuntimeFrameInput(env, mempool);
-  recordRuntimeFrameIngress(env, runtimeInput, mempoolQueuedAt);
   liveState.inFlightEntityInputs = runtimeInput.entityInputs.length;
   return {
     transaction,

@@ -4,7 +4,7 @@ import {
   getSignerPrivateKeyIfAvailable,
 } from '../../account/crypto.ts';
 import { extractEntityId, extractSignerId } from '../../protocol/identity';
-import { normalizeRuntimeId } from '../../network/p2p/auth/runtime-id.ts';
+import { normalizeRuntimeId } from '../../protocol/identity/runtime-id.ts';
 import type { RuntimeReplica } from '../types.ts';
 
 export const deriveRuntimeId = (seed: string): string =>

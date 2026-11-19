@@ -400,18 +400,12 @@ const fetchBrowserJurisdictions = async (signal: AbortSignal): Promise<Response>
 /** Both environments decode the same canonical source; browser I/O never reads Node files. */
 export const loadJurisdictionsAsync = async (): Promise<JurisdictionsData> => {
   if (!isBrowser) return loadJurisdictions();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3000);
+  const response = await fetchBrowserJurisdictions(AbortSignal.timeout(3000));
   try {
-    const response = await fetchBrowserJurisdictions(controller.signal);
-    try {
-      return decodeJurisdictionsData(await response.json());
-    } catch (error: unknown) {
-      jurisdictionLoaderLog.error('browser_config_invalid', { error: errorMessage(error) });
-      throw new Error(`JURISDICTIONS_BROWSER_CONFIG_INVALID:${errorMessage(error)}`);
-    }
-  } finally {
-    clearTimeout(timeoutId);
+    return decodeJurisdictionsData(await response.json());
+  } catch (error: unknown) {
+    jurisdictionLoaderLog.error('browser_config_invalid', { error: errorMessage(error) });
+    throw new Error(`JURISDICTIONS_BROWSER_CONFIG_INVALID:${errorMessage(error)}`);
   }
 };
 

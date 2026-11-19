@@ -15,7 +15,6 @@
     "cli/scripts/agent-payments/*.ts",
     "tools/*.ts",
     "tools/**/*.test.ts",
-    "tools/xlnc/prototype.ts",
     "tools/release-snapshot/assert-clean.ts",
     "tools/hlt-viz/*.ts",
     "tests/**/*.spec.ts",
@@ -25,7 +24,6 @@
     "core/orchestrator/mm-node.ts",
     "core/orchestrator/orchestrator.ts",
     "core/__tests__/fixtures/**/*.ts",
-    "core/api/server/cli.ts",
     "core/qa/tools/code-fingerprint-cli.ts",
     "core/qa/tools/runtime-state-diff-cli.ts",
     "jurisdictions/hardhat.config.ts",
@@ -45,12 +43,8 @@
     "@openzeppelin/contracts",
     "buffer",
     "dockview",
-    "chai-as-promised",
     "electron",
     "@typescript/native",
-    "@tsconfig/node20",
-    "@types/minimatch",
-    "@stryker-mutator/command-runner",
     "three"
   ]
 }

@@ -35,7 +35,7 @@ import {
 } from '../../../extensions/cross-j/index';
 import { crossJurisdictionBookOwnerRef } from '../../../extensions/cross-j/orderbook';
 import { createStructuredLogger } from '../../../support/logger';
-import type { JAdapter, JTokenInfo } from '../../../jurisdiction/adapter/types';
+import type { JAdapter } from '../../../jurisdiction/adapter/types';
 import { assertJStackAddressMatch } from '../../../jurisdiction/adapter/operations/stack-binding';
 import {
   attachLiveJAdapter,
@@ -45,7 +45,7 @@ import {
 import { getJurisdictionIdentityRef } from '../../../jurisdiction/machine/jurisdiction-runtime';
 import { getJurisdictionStackId, requireJurisdictionChainId } from '../../../jurisdiction/machine/jurisdiction-stack';
 import { type DirectWebSocket } from '../../../network/p2p/direct-runtime-bun';
-import { normalizeRuntimeId } from '../../../network/p2p/auth/runtime-id';
+import { normalizeRuntimeId } from '../../../protocol/identity/runtime-id';
 import {
   baseAmountAtPrice,
   baseAmountAtPriceCeil,
@@ -661,25 +661,6 @@ export const createMarketMakerEntityContext = async (
     roleEvidence,
     samePairIndex,
   };
-};
-
-export const waitForTokenCatalog = async (jadapter: JAdapter, rounds = 80): Promise<JTokenInfo[]> => {
-  let lastReadError: unknown = null;
-  for (let i = 0; i < rounds; i += 1) {
-    try {
-      const tokens = await jadapter.getTokenRegistry();
-      if (tokens.length >= HUB_REQUIRED_TOKEN_COUNT) return tokens;
-      lastReadError = null;
-    } catch (error) {
-      lastReadError = error;
-    }
-    await sleep(250);
-  }
-  if (lastReadError) {
-    const message = lastReadError instanceof Error ? lastReadError.message : String(lastReadError);
-    throw new Error(`TOKEN_CATALOG_READ_FAILED:${message}`, { cause: lastReadError });
-  }
-  throw new Error('TOKEN_CATALOG_EMPTY');
 };
 
 const findJurisdictionAdapters = (env: RuntimeReplica, jurisdiction: JurisdictionConfig): JAdapter[] =>

@@ -1,12 +1,13 @@
+import { UINT256_MAX } from '../../protocol/boundary/integer-ranges';
 import {
   FinancialDataCorruptionError,
+  rejectUnexpectedKeys,
   validateArray,
   validateObject,
   validateString,
 } from '../../protocol/boundary/validation-primitives';
 import { isRuntimeFailureSignal } from '../../protocol/errors/failure-taxonomy';
 
-const MAX_UINT256 = (1n << 256n) - 1n;
 const FINGERPRINT_LIMIT = 256;
 const OUTCOMES = new Set([
   'submitted',
@@ -15,20 +16,6 @@ const OUTCOMES = new Set([
   'terminalFailure',
   'reconciled',
 ]);
-
-const rejectUnexpectedKeys = (
-  value: Record<string, unknown>,
-  allowed: readonly string[],
-  context: string,
-): void => {
-  for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) {
-      throw new FinancialDataCorruptionError(
-        `${context} has unexpected key "${key}"`,
-      );
-    }
-  }
-};
 
 const validateSafeInteger = (
   value: unknown,
@@ -256,7 +243,7 @@ export const validateEntityProviderActionSubmitState = (
   if (
     typeof state['actionNonce'] !== 'bigint' ||
     state['actionNonce'] <= 0n ||
-    state['actionNonce'] > MAX_UINT256
+    state['actionNonce'] > UINT256_MAX
   ) {
     throw new FinancialDataCorruptionError(
       `${context}.actionNonce must be uint256 > 0`,

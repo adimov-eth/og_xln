@@ -31,7 +31,8 @@ import {
 import { moveTargetCounterparties } from '../runtime/financial/move-targets';
 import { displayEntityName, useWallet } from '../runtime/views';
 import { paymentReviewHref, readPaymentFunding } from '../runtime/financial/payment-funding';
-import { batchFundsAccount, claimFundingSubmission, fundingSubmissionKey, releaseFundingSubmission, useFundingSubmission } from '../runtime/financial/funding-submission';
+import { batchFundsAccount, claimFundingSubmission, fundingSubmissionKey, releaseFundingSubmission } from '@xln/frontend/lib/everyday/funding-submission';
+import { useFundingSubmission } from '../runtime/financial/funding-submission';
 
 const PLACE_LABEL: Record<MoveEndpoint, { title: string; hint: string; kind: 'onchain' | 'reserve' | 'coll' }> = {
 	external: { title: 'Wallet', hint: 'On-chain, in your signer', kind: 'onchain' },

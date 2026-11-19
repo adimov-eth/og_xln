@@ -1,4 +1,5 @@
 import { applyAccountTx } from '../../../account/tx/apply';
+import { parseArgs } from 'node:util';
 import {
   accountTransitionView,
   beginAccountTransition,
@@ -38,29 +39,34 @@ type RuntimeSwapBenchmarkResult = {
 const entity = (byte: string): string => `0x${byte.repeat(32)}`;
 const addr = (byte: string): string => `0x${byte.repeat(20)}`;
 
-const argValue = (args: string[], name: string, defaultValue: string): string => {
-  const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] ?? defaultValue : defaultValue;
-};
+type CliValues = Record<string, string | undefined>;
 
-const positiveInt = (args: string[], name: string, defaultValue: number): number => {
-  const value = Number.parseInt(argValue(args, name, String(defaultValue)), 10);
-  if (!Number.isFinite(value) || value <= 0) throw new Error(`INVALID_ARG:${name}`);
+const positiveInt = (values: CliValues, name: string, defaultValue: number): number => {
+  const value = Number.parseInt(values[name] ?? String(defaultValue), 10);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`INVALID_ARG:--${name}`);
   return value;
 };
 
-const nonNegativeInt = (args: string[], name: string, defaultValue: number): number => {
-  const value = Number.parseInt(argValue(args, name, String(defaultValue)), 10);
-  if (!Number.isFinite(value) || value < 0) throw new Error(`INVALID_ARG:${name}`);
+const nonNegativeInt = (values: CliValues, name: string, defaultValue: number): number => {
+  const value = Number.parseInt(values[name] ?? String(defaultValue), 10);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`INVALID_ARG:--${name}`);
   return value;
 };
 
-const parseCli = (args: string[]): Cli => ({
-  swaps: positiveInt(args, '--swaps', 50_000),
-  warmup: nonNegativeInt(args, '--warmup', 5_000),
-  minTps: positiveInt(args, '--min-tps', 10_000),
-  txsPerFrame: positiveInt(args, '--txs-per-frame', 5),
-});
+const parseCli = (args: string[]): Cli => {
+  const { values } = parseArgs({
+    args,
+    strict: true,
+    allowPositionals: true,
+    options: { 'swaps': { type: 'string' }, 'warmup': { type: 'string' }, 'min-tps': { type: 'string' }, 'txs-per-frame': { type: 'string' } },
+  });
+  return {
+    swaps: positiveInt(values, 'swaps', 50_000),
+    warmup: nonNegativeInt(values, 'warmup', 5_000),
+    minTps: positiveInt(values, 'min-tps', 10_000),
+    txsPerFrame: positiveInt(values, 'txs-per-frame', 5),
+  };
+};
 
 const makeAccount = (leftEntity: string, rightEntity: string): AccountReplica => ({
   state: {

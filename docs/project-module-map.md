@@ -62,7 +62,7 @@ implementer per transition; it does not create a second state machine.
 | `cli/`                                  | Arguments, profile and daemon API              | Commands and final receipts                      | Invalid input, restart and retry without duplicate payment          |
 | `core/qa/`, `core/scenarios/`, `tests/` | Production artifact, invariant and exact input | First mismatch, named regression and evidence    | Earliest failing production boundary; completeness after replay     |
 | `scripts/`, `core/scripts/`, `tools/`   | SHA, configuration and locked resources        | Build, run, replay and gate artifacts            | Reproducible command, useful failure evidence and cleanup           |
-| `ai/`, `debates/`                       | User prompts and authorized read APIs          | Responses and artifacts                          | Explicit authority boundary; no independent consensus-writing right |
+| `ai/`                                   | User prompts and authorized read APIs          | Responses and artifacts                          | Explicit authority boundary; no independent consensus-writing right |
 
 ## Evidence and scope
 

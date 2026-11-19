@@ -136,8 +136,8 @@
       :actions ['open 'pay 'pay-direct]
       :mode 'pro-only
       :max-words 32
-      :why (from-code "ui/src/screens/Desk.tsx" "The operator grid becomes the entry. Send room stays a column beside the two bars.")
-      :sources ["ui/src/screens/Desk.tsx" "docs/studies/ui/surfaces/AS-IS.md" "todo.md"])
+      :why (guess "The operator grid becomes the entry. Send room stays a column beside the two bars.")
+      :sources ["docs/studies/ui/surfaces/AS-IS.md" "todo.md"])
     (screen 'credit-lanes
       :purpose (guess "Set the ceiling you extend, ask them to lock collateral, and sign a reserve policy.")
       :headline 'peer-credit-granted
@@ -334,7 +334,7 @@
   :requests ['send-routed 'send-direct]
   :claim-shown (guess "Nets open items across your lanes and asks you to sign only the residual payment. Each lane stays on its own line.")
   :why (guess "Netting reads the lane table and then asks for payments. It does not grant credit. A residual IOU still has to be raised on the credit screen, where the ceiling warning is the whole point. Keeping netting off the kernel stops the desk from growing a second ledger.")
-  :sources ["docs/studies/ui/surfaces/BRIEF.md" "ui/src/screens/Desk.tsx"])
+  :sources ["docs/studies/ui/surfaces/BRIEF.md"])
 
 (xln-app 'cross-j-rfq
   :kind 'embedded
@@ -451,7 +451,7 @@
   :steps ['net 'sign]
   :outcome (guess "Open items across the mesh collapse to a residual payment. Each lane remains a line on the sheet. The program does not raise a ceiling. A residual that cannot be paid is still an open IOU on the desk.")
   :why (guess "Netting is the freight and supplier case. The money step is still a routed or direct payment under the sheet.")
-  :sources ["docs/studies/ui/surfaces/BRIEF.md" "ui/src/screens/Desk.tsx"])
+  :sources ["docs/studies/ui/surfaces/BRIEF.md"])
 
 (story 'rfq-legs
   :surface 'cross-j-rfq

@@ -146,7 +146,6 @@ const SECTION_DEFS = [
       'debug',
       'debugging/consensus-debugging-guide',
       'e2e-debug-protocol',
-      'qa-cockpit',
       'deployment/deployment',
       'deployment/ops-runbook',
       'native-wallet-product-plan',

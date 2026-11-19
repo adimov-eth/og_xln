@@ -3,10 +3,10 @@ import type { RoutedEntityInput, RuntimeReplica, RuntimeTx } from '../types';
 import type { JInput } from '../../jurisdiction/machine/input';
 import {
   buildPendingNetworkOutputs,
-  planEntityOutputs,
   pruneSettledOutputs,
   type RuntimeOutputRoutingDeps,
-} from '../delivery/topology/output-routing';
+} from '../delivery/pending';
+import { planEntityOutputs } from '../delivery/plan';
 import { createPreparedOutputGraph } from './prepared-output';
 import { timePerfPhase } from '../../support/performance/profile';
 import { capturePlannedLocalContinuations } from '../observability/parity-evidence';

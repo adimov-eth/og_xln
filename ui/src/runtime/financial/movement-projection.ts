@@ -1,5 +1,6 @@
 import { originatedRecipient } from './payment-receipt-view';
 import type { RuntimeActivityEvent } from '@xln/core/api/public/runtime-module';
+import { normalizeId } from '../../../../frontend/src/lib/utils/primitives';
 
 export type MovementKind = 'payment' | 'swap' | 'settlement' | 'account' | 'onchain';
 export type MovementTone = 'settled' | 'inflight' | 'pending' | 'failed' | 'neutral';
@@ -33,7 +34,6 @@ export type Movement = {
 	events: RuntimeActivityEvent[];
 };
 
-export const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 export const amountText = (value: unknown): string => {
 	if (typeof value === 'bigint') return value.toString();

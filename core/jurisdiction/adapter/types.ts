@@ -12,7 +12,7 @@ import type { DisputeFinalizationEvidence } from '../../types/jurisdiction-event
 import type { EntityProvenValues } from './rpc/state-anchor/rpc-proven-values-root';
 import type { JAdapterFailure, JReplica, JTx } from '../../types/jurisdiction-runtime';
 
-export type JAdapterMode = 'browservm' | 'anvil' | 'rpc' | 'tron';
+export type JAdapterMode = 'browservm' | 'rpc' | 'tron';
 
 export type JAdapterReplicaConnection = Partial<JReplica>;
 

@@ -6,12 +6,12 @@ import { computeEntityProfileHash } from '../../entity/profile/profile-descripto
 import type { EntityReplica } from '../../entity/types';
 import type { RuntimeReplica } from '../types';
 import {
-  dispatchEntityOutputs,
-  planEntityOutputs,
   pruneSettledOutputs,
   type PlannedRemoteOutput,
   type RuntimeOutputRoutingDeps,
-} from '../delivery/topology/output-routing';
+} from '../delivery/pending';
+import { planEntityOutputs } from '../delivery/plan';
+import { dispatchEntityOutputs } from '../delivery/dispatch';
 import { ensureRuntimeInfrastructure } from '../envelope/replica-envelope';
 import { createPreparedOutputGraph, type PreparedOutputGraph } from '../delivery/prepared-output';
 import { isLocalRuntimeOutput, localOutputIncludedIn } from '../delivery/local-outbox';

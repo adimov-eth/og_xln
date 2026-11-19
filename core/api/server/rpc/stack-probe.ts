@@ -50,8 +50,6 @@ export const fetchRpcCode = async (
     throw new Error(`INVALID_PREDEPLOYED_ADDRESS:${String(address)}`);
   }
 
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(rpcUrl, {
       method: 'POST',
@@ -62,7 +60,7 @@ export const fetchRpcCode = async (
         method: 'eth_getCode',
         params: [address, 'latest'],
       }),
-      signal: controller.signal,
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
       throw new Error(`ETH_GET_CODE_HTTP_${response.status}`);
@@ -80,11 +78,9 @@ export const fetchRpcCode = async (
     }
     return body['result'];
   } catch (error) {
-    if ((error as Error)?.name === 'AbortError') {
+    if ((error as Error)?.name === 'TimeoutError') {
       throw new Error(`ETH_GET_CODE_TIMEOUT:${address}`);
     }
     throw error;
-  } finally {
-    clearTimeout(timeoutHandle);
   }
 };

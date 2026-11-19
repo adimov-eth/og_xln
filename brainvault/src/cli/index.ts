@@ -7,16 +7,12 @@
  *   bun test tests/core.test.ts                 # Run deterministic tests
  *   bun ./brainvault --bench                    # Benchmark performance
  *   bun ./brainvault --smoke                    # Fast 2-shard backend parity check
- *   bun ./brainvault --lib=wasm                 # Force hash-wasm (slower, parity check)
- *   bun ./brainvault --lib=native               # Force portable @node-rs/argon2
- *   bun ./brainvault --lib=neon                 # Force bundled Apple Silicon C/NEON
  *   bun ./brainvault --engine=metal             # Force the Apple Metal hybrid
  *   bun ./brainvault --ask                      # Ask for factor, multiplier, and workers
  *   bun ./brainvault --allow-short-password     # Legacy recovery only: allow fewer than 8 chars
  *   bun ./brainvault --repeat                   # Interactive: require double entry for name/pass
  *   bun ./brainvault --show-password            # Echo password input (unsafe on shared screens)
- *   bun ./brainvault --promo                    # Optional recording intro/outro cards
- *   bun ./brainvault --shard-multiplier=4       # Custom KDF mode: 256 MiB * multiplier per shard
+ *   bun ./brainvault --multiplier=4             # Custom KDF mode: 256 MiB * multiplier per shard
  *   bun ./brainvault --address-count=5          # Number of standard + ledger-live addresses
  *   bun ./brainvault --show-private-key         # Also reveal raw key for Address 1 (highest risk)
  *   bun ./brainvault --help                     # Show usage/help
@@ -28,9 +24,9 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { Writable } from 'node:stream';
+import { parseArgs } from 'node:util';
 import * as readline from 'readline/promises';
 import { Worker } from 'worker_threads';
-import { hashRaw as argon2Native } from '@node-rs/argon2';
 import {
   getShardCount, combineShardsWithParams, deriveKey, entropyToMnemonic,
   deriveEthereumAddress, deriveEthereumAddressMatrix, deriveEthereumPrivateKeyAtPath,
@@ -43,14 +39,13 @@ import {
   BRAINVAULT_MAX_SHARD_COUNT,
   shardRequestFingerprint,
 } from '../core/primitives/spec.ts';
-import { copyAndWipe } from '../core/primitives/encoding.ts';
 import { acceptShard, createShardSlots, finalizeShards } from '../native/shard-collector.ts';
 import {
-  cliCreationCharacterError, cliDomainError, cliPasswordError, cliProgressStatusLine,
+  cliDomainError, cliPasswordError, cliProgressStatusLine,
   fitTerminal, publicErrorCode, publicErrorMessage,
 } from './policy.ts';
 import { verifyBundledExecutable } from '../packaging/binary-integrity.ts';
-import { acceleratorPlan, deriveHybridNativeShards, type AcceleratorEngine } from '../native/hybrid.ts';
+import { acceleratorPlan, deriveHybridNativeShards, encodeNativeInput, type AcceleratorEngine } from '../native/hybrid.ts';
 import { BRAINVAULT_NATIVE_PROGRESS_ENV, readNativeProgress } from '../native/progress.ts';
 import {
   nativeChildEnvironment, readNativeOutput, terminateNativeChildGroup,
@@ -72,27 +67,26 @@ import {
 const PACKAGE_ROOT = resolve(import.meta.dir, '../..');
 
 const args = process.argv.slice(2);
-const BOOLEAN_FLAGS = new Set([
-  '--help', '-h', '--bench', '--smoke', '--password', '--ask', '--repeat',
-  '--show-private-key', '--reveal', '--allow-short-password',
-  '--suggest-password', '--unicode-recovery', '--show-password', '--promo',
-]);
-const VALUE_FLAGS = new Set([
-  '--level', '--shards', '--factor', '--multiplier', '--shard-multiplier',
-  '--workers', '--w', '--engine', '--address-count',
-]);
-const VALUE_FLAG_GROUPS = new Map([
-  ['--level', 'level'],
-  ['--shards', 'shards'],
-  ['--factor', 'factor'],
-  ['--multiplier', 'multiplier'],
-  ['--shard-multiplier', 'multiplier'],
-  ['--workers', 'workers'],
-  ['--w', 'workers'],
-  ['--engine', 'engine'],
-  ['--address-count', 'address-count'],
-]);
-const LEGACY_ENGINE_FLAGS = new Set(['--lib=wasm', '--lib=native', '--lib=neon']);
+const OPTIONS = {
+  help: { type: 'boolean', short: 'h', default: false },
+  bench: { type: 'boolean', default: false },
+  smoke: { type: 'boolean', default: false },
+  password: { type: 'boolean', default: false },
+  ask: { type: 'boolean', default: false },
+  repeat: { type: 'boolean', default: false },
+  'show-private-key': { type: 'boolean', default: false },
+  reveal: { type: 'boolean', default: false },
+  'allow-short-password': { type: 'boolean', default: false },
+  'suggest-password': { type: 'boolean', default: false },
+  'show-password': { type: 'boolean', default: false },
+  level: { type: 'string' },
+  shards: { type: 'string' },
+  factor: { type: 'string' },
+  multiplier: { type: 'string' },
+  workers: { type: 'string' },
+  engine: { type: 'string' },
+  'address-count': { type: 'string' },
+} as const;
 
 function rejectUnsafeArgv(): never {
   console.error('Error: unsupported or secret-bearing argv. Passwords are accepted only through interactive input.');
@@ -104,43 +98,25 @@ function rejectDuplicateArgv(): never {
   process.exit(1);
 }
 
-function validateArgv(argv: readonly string[]): void {
-  const seenValueGroups = new Set<string>();
-  const acceptValueFlag = (flag: string): void => {
-    const group = VALUE_FLAG_GROUPS.get(flag);
-    if (group === undefined) rejectUnsafeArgv();
-    if (seenValueGroups.has(group)) rejectDuplicateArgv();
-    seenValueGroups.add(group);
-  };
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index]!;
-    if (/^--(?:unsafe-password|passphrase|pass|secret)(?:=|$)/.test(argument)
-      || argument.startsWith('--password=')) rejectUnsafeArgv();
-    if (BOOLEAN_FLAGS.has(argument)) continue;
-    if (LEGACY_ENGINE_FLAGS.has(argument)) {
-      acceptValueFlag('--engine');
-      continue;
-    }
-    const equals = argument.indexOf('=');
-    if (equals !== -1) {
-      const flag = argument.slice(0, equals);
-      if (!VALUE_FLAGS.has(flag) || equals === argument.length - 1) rejectUnsafeArgv();
-      acceptValueFlag(flag);
-      continue;
-    }
-    if (VALUE_FLAGS.has(argument)) {
-      const value = argv[index + 1];
-      if (value === undefined || value.startsWith('--')) rejectUnsafeArgv();
-      acceptValueFlag(argument);
-      index += 1;
-      continue;
-    }
-    rejectUnsafeArgv();
+function parseArgv(argv: readonly string[]) {
+  let parsed;
+  try {
+    parsed = parseArgs({ args: [...argv], strict: true, tokens: true, options: OPTIONS });
+  } catch {
+    return rejectUnsafeArgv();
   }
+  const seen = new Set<string>();
+  for (const token of parsed.tokens) {
+    if (token.kind !== 'option' || typeof token.value !== 'string') continue;
+    if (token.value === '') rejectUnsafeArgv();
+    if (seen.has(token.name)) rejectDuplicateArgv();
+    seen.add(token.name);
+  }
+  return parsed.values;
 }
 
-validateArgv(args);
-const showHelp = args.includes('--help') || args.includes('-h');
+const flags = parseArgv(args);
+const showHelp = flags.help;
 
 const UI_INNER_WIDTH = 68;
 const MAX_WASM_MULTIPLIER = 7;
@@ -229,38 +205,6 @@ function printStep(step: number, title: string): void {
   const dim = color ? '\x1b[2m' : '';
   const reset = color ? '\x1b[0m' : '';
   console.log(`\n${cyan}◆${reset} ${title.toLowerCase()} ${dim}[${step}/3]${reset}`);
-}
-
-async function showPromoScreen(outro = false): Promise<void> {
-  if (!stdout.isTTY) throw new Error('BRAINVAULT_PROMO_TERMINAL_REQUIRED');
-  const color = process.env.NO_COLOR === undefined && process.env.TERM !== 'dumb';
-  const cyan = color ? '\x1b[38;5;45m' : '';
-  const warning = color ? '\x1b[38;5;214m' : '';
-  const bold = color ? '\x1b[1m' : '';
-  const dim = color ? '\x1b[2m' : '';
-  const reset = color ? '\x1b[0m' : '';
-  const columns = terminalColumns();
-  const innerWidth = Math.min(52, columns - 2);
-  const indent = ' '.repeat(Math.min(6, Math.max(0, Math.floor((columns - innerWidth - 2) / 2))));
-  const border = (left: string, right: string): string =>
-    `${indent}${cyan}${left}${'─'.repeat(innerWidth)}${right}${reset}`;
-  const row = (text: string): string =>
-    `${indent}${cyan}│${reset} ${fitTerminal(text, innerWidth - 2).padEnd(innerWidth - 2)} ${cyan}│${reset}`;
-  const centered = (text: string): string => {
-    const fitted = fitTerminal(text, columns);
-    return `${' '.repeat(Math.max(0, Math.floor((columns - fitted.length) / 2)))}${fitted}`;
-  };
-  stdout.write('\x1b[2J\x1b[H\n\n');
-  console.log(border('╭', '╮'));
-  console.log(row(outro ? 'no account · no seed file · no cloud' : 'brainvault v1'));
-  console.log(row(outro ? 'open source · auditable · deterministic' : 'memory-hard deterministic wallet'));
-  if (!outro) console.log(row('same exact inputs → same wallet'));
-  console.log(border('╰', '╯'));
-  if (!outro) console.log(`\n${dim}${centered('remember. derive. recover.')}${reset}`);
-  console.log(`\n${bold}${cyan}${centered('brainvault.sh')}${reset}`);
-  console.log(`\n${warning}${centered('demo wallet · never fund addresses shown')}${reset}`);
-  await new Promise(resolve => setTimeout(resolve, outro ? 4_000 : 3_000));
-  stdout.write('\x1b[2J\x1b[H');
 }
 
 function startDerivationProgress(shards: number, workers: number): Readonly<{
@@ -549,20 +493,9 @@ Flags:
   (10,000), High (100,000), or Maximum (1,000,000 shards). Standard is selected
   by default. Multiplier remains 1 and the verified production backend is used.
 - --engine NAME
-  Choose auto, metal, metal-generic, opencl, c-neon, c-neon-wipe,
-  native-direct, native-sync, native, rust, rust-no-wipe, or wasm.
-  native-direct is benchmark/smoke-only: wallet and site-password derivation
-  refuse it because same-isolate corruption was observed.
+  Choose auto, metal, c-neon, native, or wasm.
   On the measured M3 Ultra class, auto uses Metal V1 hybrid for 1,000+ shards at
   multiplier 1; other Apple Silicon safely uses C/NEON or portable native.
-- --lib=native
-  Force the portable @node-rs/argon2 worker implementation.
-- --lib=neon
-  Force the bundled C/NEON implementation on Apple Silicon.
-- --lib=wasm
-  Use hash-wasm worker (slower, cross-backend parity/testing path).
-- --w=N
-  Number of parallel workers in non-interactive mode (default: all CPU cores allowed by RAM).
 - --level N, --shards N, --factor N, --multiplier N, --workers N, --engine NAME
   Inline forms of every advanced setting. Both "--flag value" and "--flag=value"
   work. Levels 1..6 map to 1/100/1,000/10,000/100,000/1,000,000 shards.
@@ -574,13 +507,10 @@ Flags:
   Echo password and confirmation input. Explicitly unsafe: characters appear on
   screen and may be retained by scrollback, recordings, logs, tmux, or photos.
   Passwords remain forbidden in argv.
-- --promo
-  Show short brainvault.sh intro and outro cards for terminal recordings.
-  Off by default; wallet derivation and recovery semantics are unchanged.
 - --reveal
   Backward-compatible alias. The interactive flow always offers one password
   confirmation after printing the public fingerprint and first address.
-- --shard-multiplier=N
+- --multiplier=N
   Custom KDF mode. Memory per shard = 256 MiB * N.
   Warning: changing this changes the derived wallet.
 - --address-count=N
@@ -596,10 +526,6 @@ Flags:
   a-z/A-Z/0-9 characters (${SUGGESTED_PASSWORD_BITS.toFixed(2)} bits) with the
   operating-system CSPRNG. It is shown once in a temporary sensitive screen,
   must be repeated, and is then erased from the ordinary terminal view.
-- --unicode-recovery
-  Legacy no-op retained for old recovery instructions. Unicode input is accepted
-  by default and uses the frozen V1 NFKD/UTF-8 semantics. For values a terminal
-  cannot represent exactly, use the library API and verify the complete first address.
 
 Examples:
 - bunx brainvault
@@ -630,26 +556,12 @@ if (showHelp) {
   process.exit(0);
 }
 
-function getFlagValue(names: readonly string[]): string | undefined {
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index]!;
-    for (const name of names) {
-      if (argument.startsWith(`--${name}=`)) return argument.slice(name.length + 3);
-      if (argument === `--${name}`) {
-        const next = args[index + 1];
-        return next === undefined || next.startsWith('--') ? '' : next;
-      }
-    }
-  }
-  return undefined;
-}
-
-function getPositiveIntFlag(names: readonly string[], defaultValue?: number): number | undefined {
-  const raw = getFlagValue(names);
+function getPositiveIntFlag(name: 'level' | 'shards' | 'factor' | 'multiplier' | 'workers' | 'address-count', defaultValue?: number): number | undefined {
+  const raw = flags[name];
   if (raw === undefined) return defaultValue;
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value < 1) {
-    console.error(`Error: invalid --${names[0]} value. Expected a positive integer.`);
+    console.error(`Error: invalid --${name} value. Expected a positive integer.`);
     process.exit(1);
   }
   return value;
@@ -658,54 +570,33 @@ function getPositiveIntFlag(names: readonly string[], defaultValue?: number): nu
 const ENGINE_IDS = [
   'auto',
   'metal',
-  'metal-generic',
-  'opencl',
   'c-neon',
-  'c-neon-wipe',
-  'native-direct',
-  'native-sync',
   'native',
-  'rust',
-  'rust-no-wipe',
   'wasm',
 ] as const;
 type EngineSelection = typeof ENGINE_IDS[number];
 
-const legacyEngineFlags: EngineSelection[] = [
-  ...(args.includes('--lib=wasm') ? ['wasm' as const] : []),
-  ...(args.includes('--lib=native') ? ['native' as const] : []),
-  ...(args.includes('--lib=neon') ? ['c-neon' as const] : []),
-];
-const inlineEngine = getFlagValue(['engine']);
+const inlineEngine = flags.engine;
 if (inlineEngine !== undefined && !ENGINE_IDS.includes(inlineEngine as EngineSelection)) {
   console.error(`Error: invalid --engine value. Expected one of: ${ENGINE_IDS.join(', ')}.`);
   process.exit(1);
 }
-if (legacyEngineFlags.length > 1 || (inlineEngine !== undefined && legacyEngineFlags.length > 0)) {
-  console.error('Error: choose only one of --engine, --lib=wasm, --lib=native, or --lib=neon');
-  process.exit(1);
-}
 
-const flagEngine = (inlineEngine ?? legacyEngineFlags[0] ?? 'auto') as EngineSelection;
-if (flagEngine === 'native-direct' && !args.includes('--bench') && !args.includes('--smoke')) {
-  console.error('Error: BRAINVAULT_ENGINE_RESEARCH_ONLY:native-direct');
-  process.exit(1);
-}
-const requireRepeat = args.includes('--repeat');
-const showPasswordInput = args.includes('--show-password');
-const showPrivateKey = args.includes('--show-private-key');
-const revealRequested = args.includes('--reveal');
-const askAdvanced = args.includes('--ask');
-const allowShortPassword = args.includes('--allow-short-password');
-const suggestPassword = args.includes('--suggest-password');
-const unicodeRecovery = args.includes('--unicode-recovery');
-const addressCount = getPositiveIntFlag(['address-count'], 5)!;
-const shardMultiplierFlag = getPositiveIntFlag(['multiplier', 'shard-multiplier']);
+const flagEngine = (inlineEngine ?? 'auto') as EngineSelection;
+const requireRepeat = flags.repeat;
+const showPasswordInput = flags['show-password'];
+const showPrivateKey = flags['show-private-key'];
+const revealRequested = flags.reveal;
+const askAdvanced = flags.ask;
+const allowShortPassword = flags['allow-short-password'];
+const suggestPassword = flags['suggest-password'];
+const addressCount = getPositiveIntFlag('address-count', 5)!;
+const shardMultiplierFlag = getPositiveIntFlag('multiplier');
 const shardMultiplier = shardMultiplierFlag ?? 1;
-const inlineLevel = getPositiveIntFlag(['level']);
-const inlineFactor = getPositiveIntFlag(['factor']);
-const inlineShards = getPositiveIntFlag(['shards']);
-const inlineWorkers = getPositiveIntFlag(['workers', 'w']);
+const inlineLevel = getPositiveIntFlag('level');
+const inlineFactor = getPositiveIntFlag('factor');
+const inlineShards = getPositiveIntFlag('shards');
+const inlineWorkers = getPositiveIntFlag('workers');
 
 if ((revealRequested || showPrivateKey) && !canUseSensitiveScreen()) {
   console.error('Error: sensitive output requires a reliable interactive terminal with alternate-screen support.');
@@ -717,7 +608,7 @@ if (suggestPassword && !canUseSensitiveScreen()) {
   process.exit(1);
 }
 
-if (!args.includes('--bench') && !args.includes('--smoke') && (!stdin.isTTY || !stdout.isTTY)) {
+if (!flags.bench && !flags.smoke && (!stdin.isTTY || !stdout.isTTY)) {
   console.error('Error: interactive password input requires a TTY; piped or redirected input is refused.');
   process.exit(1);
 }
@@ -737,10 +628,6 @@ if (inlineFactor !== undefined && inlineFactor > BRAINVAULT_V1.MAX_FACTOR) {
 
 function getCliPasswordError(passphrase: string): string | undefined {
   return cliPasswordError(passphrase, allowShortPassword);
-}
-
-function getCliCreationCharacterError(name: string, passphrase: string): string | undefined {
-  return cliCreationCharacterError(name, passphrase, unicodeRecovery);
 }
 
 function isUserCancellation(error: unknown): boolean {
@@ -874,42 +761,13 @@ function isMeasuredM3Ultra(): boolean {
     && cpus().some(cpu => cpu.model.toLowerCase().includes('apple m3'));
 }
 
-function resolveRustExecutable(noWipe: boolean): string | undefined {
-  const basename = noWipe ? 'brainvault-argon2-rust-no-wipe' : 'brainvault-argon2-rust';
-  const isAppleM3 = process.platform === 'darwin'
-    && process.arch === 'arm64'
-    && cpus().some(cpu => cpu.model.toLowerCase().includes('apple m3'));
-  const candidates = [
-    ...(process.platform === 'darwin' && process.arch === 'arm64'
-      ? [
-        ...(isAppleM3 ? [`${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/${basename}-m3`] : []),
-        `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/${basename}`,
-      ]
-      : []),
-    ...(isAppleM3
-      ? [`${PACKAGE_ROOT}/src/native/source/rust/target-m3${noWipe ? '-no-wipe' : ''}/release/brainvault-argon2-rust`]
-      : []),
-    `${PACKAGE_ROOT}/src/native/source/rust/target-m1${noWipe ? '-no-wipe' : ''}/release/brainvault-argon2-rust`,
-  ];
-  return candidates.find(candidate => existsSync(candidate));
-}
-
 type AcceleratorBundle = Readonly<{
   executable: string;
   metalLibrary?: string;
-  openclKernel?: string;
 }>;
 
 function resolveAcceleratorBundle(engine: AcceleratorEngine): AcceleratorBundle | undefined {
   if (process.platform !== 'darwin' || process.arch !== 'arm64') return undefined;
-  if (engine === 'opencl') {
-    const openclKernel = `${PACKAGE_ROOT}/src/native/source/opencl/data/kernels/argon2_kernel.cl`;
-    const executable = [
-      `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/brainvault-argon2-opencl`,
-      `${PACKAGE_ROOT}/src/native/source/opencl/brainvault-argon2-opencl`,
-    ].find(candidate => existsSync(candidate));
-    return executable !== undefined && existsSync(openclKernel) ? { executable, openclKernel } : undefined;
-  }
   const prebuiltExecutable = `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/brainvault-argon2-metal`;
   const prebuiltLibrary = `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/argon2.metallib`;
   if (existsSync(prebuiltExecutable) && existsSync(prebuiltLibrary)) {
@@ -946,33 +804,10 @@ function getInteractiveEngineChoices(multiplier: number, shardCount: number): En
           : 'Metal V1 + C/NEON hybrid (advanced; benchmark locally)',
         referenceRate: 365.81,
       },
-      { id: 'metal-generic', label: '(experimental) Metal generic + C/NEON hybrid', referenceRate: 355.22 },
     );
-  }
-  if (multiplier === 1 && resolveAcceleratorBundle('opencl') !== undefined && neonAvailable) {
-    choices.push({ id: 'opencl', label: '(experimental) OpenCL + C/NEON hybrid', referenceRate: 337.43 });
   }
   if (neonAvailable && measuredMetalDefault) choices.push(cNeon);
-  if (neonAvailable) {
-    choices.push(
-      { id: 'c-neon-wipe', label: '(experimental) C/NEON wipe after every shard', referenceRate: 177.11 },
-    );
-  }
-  choices.push(
-    { id: 'native-sync', label: '(experimental) Native sync workers', referenceRate: 165.12 },
-    { id: 'native', label: 'Native isolated workers', referenceRate: 159.61 },
-  );
-  if (resolveRustExecutable(false) !== undefined) {
-    choices.push({ id: 'rust', label: '(experimental) Rust pool secure wipe', referenceRate: 149.03 });
-  }
-  if (resolveRustExecutable(true) !== undefined) {
-    choices.push({
-      id: 'rust-no-wipe',
-      label: '(experimental) Rust pool without internal wipe',
-      referenceRate: 136.94,
-      warning: 'unsafe memory-hygiene comparison',
-    });
-  }
+  choices.push({ id: 'native', label: 'Native isolated workers', referenceRate: 159.61 });
   if (multiplier <= MAX_WASM_MULTIPLIER) {
     choices.push({ id: 'wasm', label: 'TypeScript/WASM reference', referenceRate: 76.36 });
   }
@@ -985,23 +820,13 @@ async function deriveExecutableShards(
   passphrase: string,
   shardCount: number,
   workers: number,
-  wipePerShard = false,
   shardMemoryKb = BRAINVAULT_V1.SHARD_MEMORY_KB,
   algId = BRAINVAULT_V1.ALG_ID,
   onProgress?: (completed: number) => void,
 ): Promise<Uint8Array[]> {
   const verifiedExecutable = verifyBundledExecutable(executable, PACKAGE_ROOT);
   const password = new TextEncoder().encode(passphrase.normalize('NFKD'));
-  const header = Buffer.alloc(24);
-  header.writeUInt32LE(0x32435642, 0);
-  header.writeUInt32LE(shardCount, 4);
-  header.writeUInt32LE(workers, 8);
-  header.writeUInt32LE(password.length, 12);
-  header.writeUInt32LE(wipePerShard ? 1 : 0, 16);
-  header.writeUInt32LE(shardMemoryKb, 20);
-  const input = Buffer.alloc(header.length + password.length + (shardCount * 32));
-  header.copy(input, 0);
-  input.set(password, header.length);
+  let input = Buffer.alloc(0);
   let output = Buffer.alloc(0);
   let exitCode = -1;
   let lastProgress = 0;
@@ -1014,9 +839,12 @@ async function deriveExecutableShards(
     onProgress(completed);
   };
   try {
-    for (let index = 0; index < shardCount; index += 1) {
-      input.set(await createShardSalt(name, index, shardCount, algId), header.length + password.length + (index * 32));
-    }
+    const salts = await Promise.all(Array.from(
+      { length: shardCount },
+      (_, index) => createShardSalt(name, index, shardCount, algId),
+    ));
+    input = encodeNativeInput(password, salts, workers, shardMemoryKb);
+    for (const salt of salts) salt.fill(0);
     const child = trackNativeChild(Bun.spawn([verifiedExecutable], {
       env: nativeChildEnvironment({
         ...(onProgress === undefined ? {} : { [BRAINVAULT_NATIVE_PROGRESS_ENV]: '1' }),
@@ -1066,53 +894,6 @@ async function deriveExecutableShards(
   ));
   output.fill(0);
   return shards;
-}
-
-async function deriveDirectAsyncShards(
-  name: string,
-  passphrase: string,
-  shardCount: number,
-  workers: number,
-  shardMemoryKb: number,
-  algId: string,
-  onProgress?: (completed: number) => void,
-): Promise<Uint8Array[]> {
-  const password = new TextEncoder().encode(passphrase.normalize('NFKD'));
-  const shards = new Array<Uint8Array>(shardCount);
-  let nextShard = 0;
-  let completed = 0;
-  let failure: unknown;
-  try {
-    await Promise.all(Array.from({ length: workers }, async () => {
-      while (failure === undefined) {
-        const shardIndex = nextShard++;
-        if (shardIndex >= shardCount) return;
-        try {
-          const salt = await createShardSalt(name, shardIndex, shardCount, algId);
-          shards[shardIndex] = copyAndWipe(await argon2Native(password, {
-            salt,
-            memoryCost: shardMemoryKb,
-            timeCost: BRAINVAULT_V1.ARGON_TIME_COST,
-            parallelism: BRAINVAULT_V1.ARGON_PARALLELISM,
-            outputLen: BRAINVAULT_V1.SHARD_OUTPUT_BYTES,
-            algorithm: 2,
-            version: 1,
-          }));
-          completed += 1;
-          onProgress?.(completed);
-        } catch (error) {
-          failure ??= error instanceof Error ? error : new Error('BRAINVAULT_NATIVE_DIRECT_FAILURE');
-        }
-      }
-    }));
-    if (failure !== undefined) throw failure;
-    return shards;
-  } catch (error) {
-    for (const shard of shards) shard?.fill(0);
-    throw error;
-  } finally {
-    password.fill(0);
-  }
 }
 
 async function derive(name: string, passphrase: string, work: WorkSpec, workers = 64, options: DeriveOptions = {}) {
@@ -1169,7 +950,7 @@ async function derive(name: string, passphrase: string, work: WorkSpec, workers 
     throw new Error(`BRAINVAULT_ENGINE_MULTIPLIER_UNSUPPORTED:wasm:${shardMultiplier}:wasm32-memory-limit`);
   }
   let shardResults: Uint8Array[] | undefined;
-  if (selectedEngine === 'metal' || selectedEngine === 'metal-generic' || selectedEngine === 'opencl') {
+  if (selectedEngine === 'metal') {
     if (shardMultiplier !== 1) {
       throw new Error(`BRAINVAULT_ENGINE_MULTIPLIER_UNSUPPORTED:${selectedEngine}:${shardMultiplier}`);
     }
@@ -1180,7 +961,7 @@ async function derive(name: string, passphrase: string, work: WorkSpec, workers 
     const password = new TextEncoder().encode(passphrase.normalize('NFKD'));
     const planned = acceleratorPlan(selectedEngine, shardCount, actualWorkers);
     reportNotice(
-      `Using ${selectedEngine === 'metal' ? 'Metal V1' : selectedEngine === 'metal-generic' ? '(experimental) Metal generic' : '(experimental) OpenCL'} + C/NEON hybrid `
+      'Using Metal V1 + C/NEON hybrid '
       + `(${planned.acceleratorShards} GPU / ${planned.cpuShards} CPU shards · `
       + `${planned.acceleratorProcesses}×${planned.acceleratorWorkers} GPU / ${planned.cpuWorkers} CPU workers)`,
     );
@@ -1202,7 +983,6 @@ async function derive(name: string, passphrase: string, work: WorkSpec, workers 
           cpuExecutable: neonExecutable,
           acceleratorExecutable: acceleratorBundle.executable,
           metalLibrary: acceleratorBundle.metalLibrary,
-          openclKernel: acceleratorBundle.openclKernel,
         },
       });
       shardResults = accelerated.shards;
@@ -1212,45 +992,11 @@ async function derive(name: string, passphrase: string, work: WorkSpec, workers 
     }
   }
 
-  if (selectedEngine === 'c-neon' || selectedEngine === 'c-neon-wipe') {
+  if (selectedEngine === 'c-neon') {
     if (neonExecutable === undefined) throw new Error('BRAINVAULT_C_NEON_UNAVAILABLE');
-    reportNotice(`Using ${selectedEngine === 'c-neon' ? 'C/NEON final wipe' : '(experimental) C/NEON per-shard wipe'} (${actualWorkers} workers)`);
+    reportNotice(`Using C/NEON final wipe (${actualWorkers} workers)`);
     shardResults = await deriveExecutableShards(
       neonExecutable,
-      name,
-      passphrase,
-      shardCount,
-      actualWorkers,
-      selectedEngine === 'c-neon-wipe',
-      shardMemoryKb,
-      kdfAlgId,
-      completed => onProgress?.(completed, shardCount),
-    );
-  }
-
-  if (selectedEngine === 'rust' || selectedEngine === 'rust-no-wipe') {
-    const rustExecutable = resolveRustExecutable(selectedEngine === 'rust-no-wipe');
-    if (rustExecutable === undefined) throw new Error(`BRAINVAULT_RUST_UNAVAILABLE:${selectedEngine}`);
-    if (selectedEngine === 'rust-no-wipe') {
-      reportNotice('WARNING: Rust no-wipe is parity/performance mode; sensitive Argon memory is not zeroized.', true);
-    }
-    reportNotice(`Using ${selectedEngine === 'rust' ? '(experimental) Rust secure-wipe pool' : '(experimental) Rust no-wipe pool'} (${actualWorkers} workers)`);
-    shardResults = await deriveExecutableShards(
-      rustExecutable,
-      name,
-      passphrase,
-      shardCount,
-      actualWorkers,
-      false,
-      shardMemoryKb,
-      kdfAlgId,
-      completed => onProgress?.(completed, shardCount),
-    );
-  }
-
-  if (selectedEngine === 'native-direct') {
-    reportNotice(`Using (experimental) native direct async (${actualWorkers} workers)`);
-    shardResults = await deriveDirectAsyncShards(
       name,
       passphrase,
       shardCount,
@@ -1268,16 +1014,12 @@ async function derive(name: string, passphrase: string, work: WorkSpec, workers 
     let failed = false;
     const workerPath = selectedEngine === 'wasm'
       ? `${PACKAGE_ROOT}/src/native/workers/wasm.ts`
-      : selectedEngine === 'native-sync'
-        ? `${PACKAGE_ROOT}/src/native/workers/sync.ts`
-        : `${PACKAGE_ROOT}/src/native/workers/native.ts`;
+      : `${PACKAGE_ROOT}/src/native/workers/native.ts`;
     const pool: Worker[] = [];
 
     reportNotice(selectedEngine === 'wasm'
       ? `Using TypeScript/WASM reference (${actualWorkers} workers)`
-      : selectedEngine === 'native-sync'
-        ? `Using (experimental) native sync workers (${actualWorkers} workers)`
-        : `Using native isolated workers (${actualWorkers} workers)`);
+      : `Using native isolated workers (${actualWorkers} workers)`);
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -1540,57 +1282,18 @@ async function runBenchmark(smoke = false) {
       maxMultiplier: 1,
     },
     {
-      id: 'metal-generic',
-      label: '(experimental) Metal generic + C/NEON hybrid',
-      executable: resolveAcceleratorBundle('metal-generic')?.executable ?? '__unavailable__',
-      maxMultiplier: 1,
-    },
-    {
-      id: 'opencl',
-      label: '(experimental) OpenCL + C/NEON hybrid',
-      executable: resolveAcceleratorBundle('opencl')?.executable ?? '__unavailable__',
-      maxMultiplier: 1,
-    },
-    {
       id: 'c-neon',
       label: 'C/NEON final wipe',
       executable: benchmarkNeonExecutable ?? '__unavailable__',
       maxMultiplier: Number.MAX_SAFE_INTEGER,
     },
-    {
-      id: 'c-neon-wipe',
-      label: '(experimental) C/NEON per-shard wipe',
-      executable: benchmarkNeonExecutable ?? '__unavailable__',
-      maxMultiplier: Number.MAX_SAFE_INTEGER,
-    },
-    { id: 'direct-async', label: '(experimental) Native direct async', maxMultiplier: Number.MAX_SAFE_INTEGER },
-    { id: 'sync', label: '(experimental) Native sync workers', maxMultiplier: Number.MAX_SAFE_INTEGER },
     { id: 'baseline', label: 'Native isolated workers', maxMultiplier: Number.MAX_SAFE_INTEGER },
-    {
-      id: 'rust-pool',
-      label: '(experimental) Rust pool secure',
-      executable: resolveRustExecutable(false) ?? '__unavailable__',
-      maxMultiplier: Number.MAX_SAFE_INTEGER,
-    },
-    {
-      id: 'rust-pool-no-wipe',
-      label: '(experimental) Rust pool no wipe',
-      executable: resolveRustExecutable(true) ?? '__unavailable__',
-      maxMultiplier: Number.MAX_SAFE_INTEGER,
-    },
     { id: 'wasm', label: 'TypeScript/WASM', maxMultiplier: MAX_WASM_MULTIPLIER },
   ];
   const engineBackend: string | undefined = ({
     metal: 'metal-v1',
-    'metal-generic': 'metal-generic',
-    opencl: 'opencl',
     'c-neon': 'c-neon',
-    'c-neon-wipe': 'c-neon-wipe',
-    'native-direct': 'direct-async',
-    'native-sync': 'sync',
     native: 'baseline',
-    rust: 'rust-pool',
-    'rust-no-wipe': 'rust-pool-no-wipe',
     wasm: 'wasm',
     auto: undefined,
   } satisfies Record<EngineSelection, string | undefined>)[flagEngine];
@@ -1801,12 +1504,6 @@ async function interactive() {
     rejectPrompt(rl, passwordError);
     return;
   }
-  const characterError = getCliCreationCharacterError(name, pass);
-  if (characterError !== undefined) {
-    rejectPrompt(rl, characterError);
-    return;
-  }
-
   let selectedWork = workFromInlineSettings() ?? workFromLevel(BRAINVAULT_DEFAULT_LEVEL);
   let selectedMultiplier = shardMultiplier;
   let selectedEngine = flagEngine;
@@ -2038,12 +1735,6 @@ async function derivePassword() {
     return;
   }
 
-  const characterError = getCliCreationCharacterError(name, pass);
-  if (characterError !== undefined) {
-    rejectPrompt(rl, characterError);
-    return;
-  }
-
   let selectedWork = workFromInlineSettings();
   if (selectedWork === undefined) {
     const selection = await choosePrimaryWork(promptOutput, rl);
@@ -2140,23 +1831,17 @@ async function derivePassword() {
 // ============================================================================
 
 async function main(): Promise<void> {
-  const promo = args.includes('--promo');
-  if (promo && (args.includes('--bench') || args.includes('--smoke') || args.includes('--password'))) {
-    throw new Error('BRAINVAULT_PROMO_INTERACTIVE_ONLY');
-  }
-  if (args.includes('--bench') || args.includes('--smoke')) {
+  if (flags.bench || flags.smoke) {
     if (suggestPassword) throw new Error('BRAINVAULT_SUGGEST_PASSWORD_INTERACTIVE_ONLY');
-    await runBenchmark(args.includes('--smoke'));
-  } else if (args.includes('--password')) {
+    await runBenchmark(flags.smoke);
+  } else if (flags.password) {
     if (suggestPassword) throw new Error('BRAINVAULT_SUGGEST_PASSWORD_INTERACTIVE_ONLY');
     if (!canUseSensitiveScreen()) {
       throw new Error('BRAINVAULT_PASSWORD_MODE_TERMINAL_REQUIRED: site passwords require alternate-screen support');
     }
     await derivePassword();
   } else {
-    if (promo) await showPromoScreen();
     await interactive();
-    if (promo && (process.exitCode === undefined || process.exitCode === 0)) await showPromoScreen(true);
   }
 }
 

@@ -10,8 +10,6 @@ export function Appearance() {
   const showGuide = useApp(s => s.showXlnMascot);
   const setShowGuide = useApp(s => s.setShowXlnMascot);
   const theme = useApp(s => s.theme);
-  const density = useApp(s => s.density);
-  const setDensity = useApp(s => s.setDensity);
   const design = useApp(s => s.design);
   const setDesign = useApp(s => s.setDesign);
   const setTheme = useApp(s => s.setTheme);
@@ -22,33 +20,7 @@ export function Appearance() {
       <div className="sect">
         <h3 className="caps">Appearance</h3>
       </div>
-      <div className="setting first desktop-only">
-        <div>
-          <div className="t">Layout on wide screens</div>
-          <div className="s">
-            Desk is the dense console: every account and lane in one table, the book beside it, ⌘K to jump.
-          </div>
-        </div>
-        <span className="segc">
-          <button
-            type="button"
-            className={density === 'comfort' ? 'active' : ''}
-            onClick={() => setDensity('comfort')}
-            data-testid="density-comfort"
-          >
-            Comfort
-          </button>
-          <button
-            type="button"
-            className={density === 'desk' ? 'active' : ''}
-            onClick={() => setDensity('desk')}
-            data-testid="density-desk"
-          >
-            Desk
-          </button>
-        </span>
-      </div>
-      <div className="setting">
+      <div className="setting first">
         <div className="t">Theme</div>
         <span className="segc">
           <button type="button" className={theme === 'dark' ? 'active' : ''} onClick={() => setTheme('dark')}>

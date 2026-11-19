@@ -346,7 +346,7 @@ export async function assertEverydayPostureClean(page: Page): Promise<void> {
   for (const nav of ['nav-cash', 'nav-friends', 'nav-savings', 'nav-activity', 'nav-settings']) {
     await expect(page.getByTestId(nav).locator('visible=true').first()).toBeVisible();
   }
-  for (const proNav of ['nav-home', 'nav-manage', 'nav-move', 'nav-sovereignty', 'nav-desk']) {
+  for (const proNav of ['nav-home', 'nav-manage', 'nav-move', 'nav-sovereignty']) {
     await expect(page.getByTestId(proNav)).toHaveCount(0);
   }
   await expect(page.locator('[data-testid*="bar"]:visible, .delta-bar:visible, .capacity-bar:visible')).toHaveCount(0);

@@ -1,7 +1,7 @@
 {
 	"compilerOptions": {
 		"target": "ES2022",
-		"lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"],
+		"lib": ["ES2023", "ES2024.String", "DOM", "DOM.Iterable", "WebWorker"],
 		"module": "ESNext",
 		"moduleResolution": "bundler",
 		"jsx": "react-jsx",
@@ -35,7 +35,6 @@
 		"paths": {
 			"@xln/core/*": ["../core/*"],
 			"@xln/frontend/*": ["../frontend/src/*"],
-			"@xln/surfaces/*": ["../docs/studies/ui/surfaces/*"],
 			"$lib/*": ["../frontend/src/lib/*"],
 			"@/*": ["./src/*"]
 		}

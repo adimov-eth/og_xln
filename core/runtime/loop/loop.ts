@@ -1,5 +1,5 @@
 import { ensureRuntimeInfrastructure } from '../envelope/replica-envelope.ts';
-import type { RuntimeReplica, RuntimeInput } from '../types.ts';
+import type { RuntimeReplica } from '../types.ts';
 import {
   closeRuntimeWalDb,
   closeInfraDb,
@@ -47,19 +47,18 @@ import {
   discardRejectedEntityInput,
   RuntimeInputDiscardedError,
 } from '../frame/intake/discard.ts';
-import { createRuntimeRoutingApi } from './loop-routing.ts';
+import { runtimeRouting, type createRuntimeRoutingApi } from './loop-routing.ts';
 import {
   createRuntimeLifecycleApi,
 } from './loop-lifecycle.ts';
 import { waitForPromiseBeforeTimeout } from './loop-drain.ts';
+import { runtimeInputHasQueuedWork } from '../frame/transaction.ts';
 
 type RuntimeModule = typeof import('../../runtime.ts');
 
 export type RuntimeLoopApiDeps = {
-  notifyEnvChange(env: RuntimeReplica): void;
   processRuntime: RuntimeModule['processRuntime'];
   waitForRuntimeProcessingIdle: RuntimeModule['waitForRuntimeProcessingIdle'];
-  runtimeInputHasQueuedWork(input: RuntimeInput): boolean;
 };
 
 const throwSettledErrors = (
@@ -120,9 +119,8 @@ const closeManagedInfraDb = async (env: RuntimeReplica): Promise<void> => {
  * and publishes the stable API consumed by runtime.ts.
  */
 export const createRuntimeLoopApi = (deps: RuntimeLoopApiDeps) => {
-  const routing = createRuntimeRoutingApi({ notifyEnvChange: deps.notifyEnvChange });
   const workDeps: RuntimeWorkDeps = {
-    runtimeInputHasQueuedWork: deps.runtimeInputHasQueuedWork,
+    runtimeInputHasQueuedWork,
   };
   const getRuntimeWorkReason = (env: RuntimeReplica): string | null =>
     resolveRuntimeWorkReason(env, workDeps);
@@ -135,7 +133,7 @@ export const createRuntimeLoopApi = (deps: RuntimeLoopApiDeps) => {
       resolveNextWallClockWakeTimestamp(env),
   });
 
-  const closeRuntimeDb = createRuntimeDbCloser(lifecycle, routing);
+  const closeRuntimeDb = createRuntimeDbCloser(lifecycle, runtimeRouting);
 
   return {
     registerRuntimePublishedCallback,
@@ -173,6 +171,6 @@ export const createRuntimeLoopApi = (deps: RuntimeLoopApiDeps) => {
     RuntimeInputDiscardedError,
     waitForPromiseBeforeTimeout,
     ...lifecycle,
-    ...routing,
+    ...runtimeRouting,
   };
 };

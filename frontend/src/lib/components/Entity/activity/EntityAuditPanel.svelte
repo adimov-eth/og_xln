@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { normalizeId } from '../../../utils/primitives';
   import type { RuntimeAdapterActivityPage, RuntimeActivityEvent } from '@xln/core/api/public/runtime-module';
   import { runtimeControllerHandle } from '#lib/stores/runtimeControllerStore.ts';
   import { runtimeQueryClient } from '#lib/stores/runtimeQueryClient.ts';
@@ -12,7 +13,6 @@
   let lastKey = '';
   let requestId = 0;
 
-  const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
   const count = (value: unknown): string => Math.max(0, Math.floor(Number(value || 0))).toLocaleString('en-US');
   const short = (value: unknown): string => {
     const text = String(value || '');

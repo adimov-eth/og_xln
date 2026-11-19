@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { sleep } from '../../../../utils/primitives';
 import { asTokenId } from '@xln/core/protocol/units';
 import WalletGuide from "#lib/tutorial/WalletGuide.svelte";
 import { replaceState } from "$app/navigation";
@@ -164,7 +165,6 @@ function resolveApiBase(): string {
   if (typeof window === "undefined") return "https://xln.finance";
   return resolveConfiguredApiBase(window.location.origin);
 }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function buildHashRouteFromState(): string {
   return buildEntityPanelHashRouteFromState({
     activeTab,

@@ -1,4 +1,4 @@
-import { createStructuredLogger, logError, shortId } from '../../../support/logger';
+import { createStructuredLogger, shortId } from '../../../support/logger';
 import { decodeRoutedEntityInput } from '../../delivery/topology/routing-validation';
 import { validateJInputs } from '../../../storage/wal/runtime-machine-schema/j';
 import type { RuntimeReplica, RoutedEntityInput, RuntimeInput, RuntimeTx } from '../../types';
@@ -70,8 +70,7 @@ const validateEntityInputs = (
         `runtimeInput[${index}]`,
       );
     } catch (error) {
-      logError(
-        'RUNTIME_TICK',
+      runtimeLog.error(
         `🚨 CRITICAL FINANCIAL ERROR: Invalid EntityInput[${index}] before merge!`,
         {
           error: error instanceof Error ? error.message : String(error),

@@ -34,7 +34,7 @@ import {
 import type { TowerAppointmentV1 } from '../../../storage/recovery/bundle/types';
 import { computeCanonicalStateHashFromEnv } from '../../../storage/canonical-hash';
 import { resolveDbPath } from '../../../storage/runtime-db-path';
-import { buildRuntimeCheckpointSnapshot } from '../../../storage/wal';
+import { buildRuntimeCheckpointSnapshot } from '../../../storage/wal/snapshot';
 import { createWatchtowerStore } from '../../../watchtower/store';
 import { handleRecoveryDiscover, handleTowerAppointment, handleTowerRestore } from '../../../watchtower/http';
 import type { JurisdictionConfig } from '../../../entity/types';

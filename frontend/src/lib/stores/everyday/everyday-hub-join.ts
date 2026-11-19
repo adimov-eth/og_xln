@@ -8,6 +8,7 @@ import { normalizeEntityId } from '#lib/utils/identity/entityReplica.ts';
 import { getHubOpeningCredit, getOpenAccountRebalancePolicyData, readHubJoinPreference } from '#lib/utils/onboarding/onboardingPreferences.ts';
 import { buildHubOpenAccountRuntimeInput, hubDiscoveryJurisdictionKey } from '#lib/components/Entity/onboarding/hub-discovery-profile.ts';
 import { resolveEverydayApiBase } from './everydayApiBase.ts';
+import { sleep } from '../../utils/primitives';
 
 export type AutoHubJoinDeps = {
   fetchFn?: typeof fetch;
@@ -43,7 +44,6 @@ const inFlightJoins = new Map<string, Promise<void>>();
 const completedJoins = new Set<string>();
 const failedAttempts = new Map<string, number>();
 
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 const norm = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 export function resetEverydayHubJoinStateForTests(): void {

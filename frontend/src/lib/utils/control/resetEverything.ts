@@ -7,11 +7,11 @@ import {
   RETIRED_TESTNET_REBOOTSTRAP_KEY,
   runRetiredTestnetReset,
 } from './resetBrowserData';
+import { sleep } from '../primitives';
 let activeResetPromise: Promise<void> | null = null;
 
 const RESET_TAB_SETTLE_MS = 300;
 
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 export type ResetEverythingRequest = { reason: string };
 

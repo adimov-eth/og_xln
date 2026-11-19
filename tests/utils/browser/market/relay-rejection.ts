@@ -1,4 +1,3 @@
-import WebSocket from 'ws';
 import { expect, type Page, type TestInfo } from '../../../global-setup.mts';
 import { API_BASE_URL } from '../../e2e-baseline';
 import { requireOwnedRelay } from './relay-silence';
@@ -29,18 +28,18 @@ function subscribe(socket: WebSocket, hubId: string, id: string): Promise<void> 
       clearTimeout(timeout);
       reject(error);
     };
-    socket.once('error', fail);
-    socket.once('close', () => fail(new Error(`REAL_MARKET_SUBSCRIPTION_CLOSED:${id}`)));
-    socket.once('open', () => {
+    socket.addEventListener('error', () => fail(new Error(`REAL_MARKET_SUBSCRIPTION_ERROR:${id}`)), { once: true });
+    socket.addEventListener('close', () => fail(new Error(`REAL_MARKET_SUBSCRIPTION_CLOSED:${id}`)), { once: true });
+    socket.addEventListener('open', () => {
       socket.send(
         encodeMarketWireMessage({ type: 'market_subscribe', id, hubEntityIds: [hubId], pairs: ['1/2'], depth: 20 }),
       );
-    });
-    socket.on('message', (bytes, isBinary) => {
+    }, { once: true });
+    socket.addEventListener('message', ({ data }) => {
       // The shared relay also publishes binary Runtime envelopes; market wire is text.
-      if (isBinary) return;
+      if (typeof data !== 'string') return;
       try {
-        const message = decodeMarketWireResponse(bytes.toString());
+        const message = decodeMarketWireResponse(data);
         if (message.type === 'error') {
           fail(new Error(message.error));
           return;

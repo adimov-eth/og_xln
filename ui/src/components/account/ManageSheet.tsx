@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { buildAddTokenToAccountTx } from '@xln/frontend/lib/components/Entity/account/entity-action-txs';
 import { LoadTestingPanel } from './load-testing/Panel';
 import { Sheet } from '../Sheet';
 import { ClausesPanel } from './ClausesPanel';
@@ -9,7 +10,6 @@ import { formatMoney, parseAmount, amountInputText } from '../../runtime/format'
 import { getTokenMeta, knownTokenIds } from '../../runtime/token-meta';
 import type { AccountView, WalletView } from '../../runtime/views';
 import {
-  buildAddTokenTx,
   buildRequestCollateralTx,
   collateralFee,
   counterpartyFeePolicy,
@@ -325,7 +325,7 @@ export function ManageSheet({
             disabled={account.disputed || busy || !commandReady || addTokenId === null}
             onClick={() =>
               void run(`${getTokenMeta(addTokenId ?? 0).symbol} lane proposed`, async () => {
-                await send([buildAddTokenTx(counterpartyId, addTokenId!)]);
+                await send([buildAddTokenToAccountTx(counterpartyId, addTokenId!, laneTokenIds)]);
               })
             }
             data-testid="add-token-submit"

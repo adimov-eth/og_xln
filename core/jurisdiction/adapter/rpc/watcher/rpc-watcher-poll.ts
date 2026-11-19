@@ -1,5 +1,5 @@
 import { emptyDisputeReferences, referencesThrough } from '../../events/dispute/reference-state';
-import { readAuthenticatedReceiptRange } from '../../receipt-root';
+import { readAuthenticatedReceiptRange } from '../../receipt/reader';
 import { rebuildWatcherDisputeReferences } from './rpc-watcher-reference-recovery';
 import { compareStableText } from '../../../../protocol/serialization';
 import { getEntityCertifiedJAnchor, getValidatorJExpectedBlockHash } from '../../../machine/local-history';

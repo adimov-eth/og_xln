@@ -5,7 +5,7 @@ import { decodeAuthenticatedWatcherEvents } from '../../../jurisdiction/adapter/
 import { createEntityProposalFixture } from '../../helpers/entity-proposal-fixture';
 import { createTestJReplica } from '../../helpers/j-replica';
 import { createJurisdictionConfig } from '../../../scenarios/harness/boot';
-import type { AuthenticatedReceiptRange } from '../../../jurisdiction/adapter/receipt-root';
+import type { AuthenticatedReceiptRange } from '../../../jurisdiction/adapter/receipt/reader';
 import { ethers } from 'ethers';
 
 const hash = (height: number) => ethers.zeroPadValue(ethers.toBeHex(height), 32);

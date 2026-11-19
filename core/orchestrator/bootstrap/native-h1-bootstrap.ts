@@ -162,40 +162,34 @@ const submitNativeBootstrapCredit = async (
   tokenIds: readonly number[],
 ): Promise<void> => {
   const { args } = deps;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
-  try {
-    const response = await fetchLoopback(
-      `http://${args.host}:${String(child.apiPort)}/api/control/runtime/entity-inputs`,
-      {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'content-type': 'application/json' },
-        body: safeStringify({
-          commandId: `bootstrap-credit:${counterpartyEntityId}:${tokenIds.join(',')}`,
-          entityInputs: [{
-            entityId,
-            signerId,
-            entityTxs: tokenIds.map(tokenId => ({
-              type: 'extendCredit',
-              data: {
-                counterpartyEntityId,
-                tokenId,
-                amount: getBootstrapCreditAmount(tokenId),
-              },
-            })),
-          }],
-        }),
-      },
+  const response = await fetchLoopback(
+    `http://${args.host}:${String(child.apiPort)}/api/control/runtime/entity-inputs`,
+    {
+      method: 'POST',
+      signal: AbortSignal.timeout(20_000),
+      headers: { 'content-type': 'application/json' },
+      body: safeStringify({
+        commandId: `bootstrap-credit:${counterpartyEntityId}:${tokenIds.join(',')}`,
+        entityInputs: [{
+          entityId,
+          signerId,
+          entityTxs: tokenIds.map(tokenId => ({
+            type: 'extendCredit',
+            data: {
+              counterpartyEntityId,
+              tokenId,
+              amount: getBootstrapCreditAmount(tokenId),
+            },
+          })),
+        }],
+      }),
+    },
+  );
+  const payload = requireBoundaryRecord(await response.json(), 'RUST_HUB_BOOTSTRAP_CREDIT_RESPONSE');
+  if (!response.ok || payload['ok'] !== true || !Number.isSafeInteger(payload['height'])) {
+    throw new Error(
+      `RUST_HUB_BOOTSTRAP_CREDIT_FAILED:${counterpartyEntityId}:${response.status}:${safeStringify(payload)}`,
     );
-    const payload = requireBoundaryRecord(await response.json(), 'RUST_HUB_BOOTSTRAP_CREDIT_RESPONSE');
-    if (!response.ok || payload['ok'] !== true || !Number.isSafeInteger(payload['height'])) {
-      throw new Error(
-        `RUST_HUB_BOOTSTRAP_CREDIT_FAILED:${counterpartyEntityId}:${response.status}:${safeStringify(payload)}`,
-      );
-    }
-  } finally {
-    clearTimeout(timeout);
   }
 };
 
@@ -209,55 +203,49 @@ const configureNativeH1Entity = async (
   const { args, getMarketMakerIdentities } = deps;
   const quoteAuthority = getMarketMakerIdentities().find(peer => peer.jurisdictionName === jurisdictionName);
   if (!quoteAuthority) throw new Error('RUST_HUB_QUOTE_AUTHORITY_MISSING:H1');
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
-  try {
-    const response = await fetchLoopback(
-      `http://${args.host}:${String(child.apiPort)}/api/control/runtime/entity-inputs`,
-      {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'content-type': 'application/json' },
-        body: safeStringify({
-          commandId: `bootstrap-hub-policy:${entityId}`,
-          entityInputs: [{
-            entityId,
-            signerId,
-            entityTxs: [
-              {
-                type: 'setHubConfig',
-                data: {
-                  matchingStrategy: 'amount',
-                  policyVersion: 1,
-                  routingFeePPM: 1,
-                  baseFee: 0n,
-                  swapTakerFeeBps: 1,
-                  rebalanceLiquidityFeeBps: 1n,
-                  rebalanceTimeoutMs: 10 * 60 * 1_000,
-                },
+  const response = await fetchLoopback(
+    `http://${args.host}:${String(child.apiPort)}/api/control/runtime/entity-inputs`,
+    {
+      method: 'POST',
+      signal: AbortSignal.timeout(20_000),
+      headers: { 'content-type': 'application/json' },
+      body: safeStringify({
+        commandId: `bootstrap-hub-policy:${entityId}`,
+        entityInputs: [{
+          entityId,
+          signerId,
+          entityTxs: [
+            {
+              type: 'setHubConfig',
+              data: {
+                matchingStrategy: 'amount',
+                policyVersion: 1,
+                routingFeePPM: 1,
+                baseFee: 0n,
+                swapTakerFeeBps: 1,
+                rebalanceLiquidityFeeBps: 1n,
+                rebalanceTimeoutMs: 10 * 60 * 1_000,
               },
-              {
-                type: 'initOrderbookExt',
-                data: {
-                  name: child.name,
-                  spreadDistribution: DEFAULT_SPREAD_DISTRIBUTION,
-                  referenceTokenId: 1,
-                  usdQuoteAuthorityEntityId: quoteAuthority.entityId,
-                  minTradeSize: HUB_DEFAULT_MIN_TRADE_SIZE,
-                  supportedPairs: [...HUB_DEFAULT_SUPPORTED_PAIRS],
-                },
+            },
+            {
+              type: 'initOrderbookExt',
+              data: {
+                name: child.name,
+                spreadDistribution: DEFAULT_SPREAD_DISTRIBUTION,
+                referenceTokenId: 1,
+                usdQuoteAuthorityEntityId: quoteAuthority.entityId,
+                minTradeSize: HUB_DEFAULT_MIN_TRADE_SIZE,
+                supportedPairs: [...HUB_DEFAULT_SUPPORTED_PAIRS],
               },
-            ],
-          }],
-        }),
-      },
-    );
-    const payload = requireBoundaryRecord(await response.json(), 'RUST_HUB_BOOTSTRAP_POLICY_RESPONSE');
-    if (!response.ok || payload['ok'] !== true || !Number.isSafeInteger(payload['height'])) {
-      throw new Error(`RUST_HUB_BOOTSTRAP_POLICY_FAILED:${response.status}:${safeStringify(payload)}`);
-    }
-  } finally {
-    clearTimeout(timeout);
+            },
+          ],
+        }],
+      }),
+    },
+  );
+  const payload = requireBoundaryRecord(await response.json(), 'RUST_HUB_BOOTSTRAP_POLICY_RESPONSE');
+  if (!response.ok || payload['ok'] !== true || !Number.isSafeInteger(payload['height'])) {
+    throw new Error(`RUST_HUB_BOOTSTRAP_POLICY_FAILED:${response.status}:${safeStringify(payload)}`);
   }
 };
 

@@ -7,6 +7,20 @@
     "core/__tests__/storage/durability/lending-real-crash-recovery.test.ts",
     "core/__tests__/entity/profile/profile-recertify-on-state-change.test.ts",
     "core/__tests__/entity/consensus/invariants/entity-consensus-state-root.test.ts",
-    "jurisdictions/scripts/public-proof-smoke.ts"
+    "jurisdictions/scripts/public-proof-smoke.ts",
+    "core/__tests__/types/fints/results/apply-account-tx-result.positive.ts",
+    "core/__tests__/types/fints/results/apply-account-tx-result.negative.ts",
+    "core/__tests__/types/fints/results/apply-account-tx-result.widened.ts",
+    "core/__tests__/types/fints/results/account-consensus-result.positive.ts",
+    "core/__tests__/types/fints/results/account-consensus-result.negative.ts",
+    "core/__tests__/types/fints/results/account-consensus-result.widened.ts",
+    "core/__tests__/types/fints/entity/entity-frame-phase.positive.ts",
+    "core/__tests__/types/fints/entity/entity-frame-phase.negative.ts",
+    "core/__tests__/types/fints/entity/failure-disposition.positive.ts",
+    "core/__tests__/types/fints/entity/failure-disposition.negative.ts",
+    "core/__tests__/types/fints/entity/failure-disposition.widened.ts",
+    "core/__tests__/types/fints/protocol/protocol-brands.positive.ts",
+    "core/__tests__/types/fints/protocol/protocol-brands.negative.ts",
+    "core/__tests__/types/fints/protocol/protocol-brands.widened.ts"
   ]
 }

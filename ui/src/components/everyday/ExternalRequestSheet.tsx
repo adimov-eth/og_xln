@@ -12,7 +12,7 @@ import {
   resolveHubTarget,
 } from '@xln/frontend/lib/everyday/external-request';
 import { parseXlnInvoice } from '@xln/frontend/lib/utils/xlnInvoice';
-import { SIGNING_SHEETS, SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { pickActiveSavingsOffer } from '../../runtime/financial/lending';
 import { fetchLendingState } from '../../runtime/financial/lending-http';
 import { jurisdictionRef } from '../../runtime/financial/swap';
@@ -162,7 +162,7 @@ export function ExternalRequestSheet({ rawInvoice, onClose }: { rawInvoice: stri
           deliveryMode: resolveEverydayDeliveryMode(route),
           description: invoiceNote(parsed.invoice).description, route, onStage: setBusy,
         });
-        toast(SURFACES.everyday.flows.pay.done.text); onClose(); return;
+        toast(EVERYDAY_COPY.flows.pay.done); onClose(); return;
       }
       if (classification.kind === 'open-friend-tab') {
         const xln = peekXLN();
@@ -179,7 +179,7 @@ export function ExternalRequestSheet({ rawInvoice, onClose }: { rawInvoice: stri
           splitAmount: parsedAmount, existingAccount: existing, deriveDeltaFn: xln.deriveDelta, summaries,
         });
         await sendEntityTxs(wallet.entityId, wallet.signerId, txs);
-        toast(SURFACES.everyday.flows['split-tab'].done.text); onClose(); return;
+        toast(EVERYDAY_COPY.flows.splitTab.done); onClose(); return;
       }
       if (classification.kind === 'savings-deposit') {
         // Deposit only with the hub that sent the request, never a different one.
@@ -194,7 +194,7 @@ export function ExternalRequestSheet({ rawInvoice, onClose }: { rawInvoice: stri
           wallet, externalWallet, hubId, tokenId, amount: parsedAmount,
           amountText: effectiveAmountText, decimals: meta.decimals, terms: activeTerm.terms, onStage: setBusy,
         });
-        toast(SURFACES.everyday.flows['save-in'].done.text); onClose();
+        toast(EVERYDAY_COPY.flows.saveIn.done); onClose();
       }
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Could not complete request.');
@@ -251,8 +251,8 @@ export function ExternalRequestSheet({ rawInvoice, onClose }: { rawInvoice: stri
               </div>
             ) : null}
             {classification.riskNote ? <p className="everyday-note">{classification.riskNote}</p> : null}
-            {SIGNING_SHEETS['external-request-sheet'].survival ? (
-              <p className="everyday-note">{SIGNING_SHEETS['external-request-sheet'].survival}</p>
+            {EVERYDAY_COPY.externalRequestSheet.survival ? (
+              <p className="everyday-note">{EVERYDAY_COPY.externalRequestSheet.survival}</p>
             ) : null}
             {classification.kind === 'savings-deposit' ? (
               <label className="everyday-consent-row">

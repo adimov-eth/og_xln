@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { lockEmbeddedRuntime } from '../../runtime/adapter';
 import { resetReactRetiredTestnetState } from '../../runtime/deploy-version';
 import { useApp } from '../../runtime/store';
@@ -60,7 +60,7 @@ export function EverydaySettingsPanel() {
     setResetting(true);
     void resetReactRetiredTestnetState().catch(failure => {
       setResetting(false);
-      toast(failure instanceof Error ? failure.message : SURFACES.everyday.flows['reset-demo'].failed.text, 'danger');
+      toast(failure instanceof Error ? failure.message : EVERYDAY_COPY.flows.resetDemo.failed, 'danger');
     });
   };
 
@@ -170,8 +170,8 @@ export function EverydaySettingsPanel() {
             data-testid="settings-clear-test-data"
           >
             {resetting
-              ? SURFACES.everyday.flows['reset-demo'].pending.text
-              : SURFACES.everyday.flows['reset-demo'].before.text}
+              ? EVERYDAY_COPY.flows.resetDemo.pending
+              : EVERYDAY_COPY.flows.resetDemo.before}
           </button>
         </div>
       </div>

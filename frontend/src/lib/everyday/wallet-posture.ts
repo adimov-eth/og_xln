@@ -1,3 +1,65 @@
+export const EVERYDAY_COPY = {
+  terms: {
+    cash: { label: 'Cash', note: 'Your money, ready to spend or cash out anytime.' },
+    arriving: { label: 'Arriving', note: 'Finishing automatically before it joins your Cash.' },
+    people: { label: 'Friends & tabs', note: 'Shared bills and tabs with people you know.' },
+    owed: { label: 'You owe', note: 'Settle up in one tap whenever you are ready.' },
+    savings: {
+      label: 'Savings',
+      note: 'Lent to earn interest — not protected like Cash; separate from Cash and requires explicit consent.',
+    },
+  },
+  flows: {
+    pay: { before: 'Pay', pending: 'Sending...', done: 'Sent', failed: 'Not sent — your Cash is untouched.' },
+    requestLink: {
+      before: 'Request',
+      pending: 'Creating request link...',
+      done: 'Request link ready to share',
+      failed: 'Could not create request link.',
+    },
+    settleTab: {
+      before: 'Settle up',
+      pending: 'Settling tab...',
+      done: 'All settled up',
+      failed: 'Could not reach them — tab unchanged.',
+    },
+    splitTab: {
+      before: 'Split a bill',
+      pending: 'Sharing split...',
+      done: 'Added to tab',
+      failed: 'Split cancelled.',
+    },
+    cashOut: {
+      before: 'Cash out',
+      pending: 'Sending to your account...',
+      done: 'Cashed out',
+      failed: 'Cash out cancelled — balance unchanged.',
+    },
+    saveIn: {
+      before: 'Add to Savings',
+      pending: 'Moving to Savings...',
+      done: 'Earning interest in Savings',
+      failed: 'Stayed in Cash.',
+    },
+    saveOut: {
+      before: 'Move to Cash',
+      pending: 'Moving back to Cash...',
+      done: 'Back in Cash',
+      failed: 'Still in Savings — safe to retry.',
+    },
+    resetDemo: {
+      before: 'Clear test data',
+      pending: 'Clearing test data...',
+      done: 'Test data cleared; login kept.',
+      failed: 'Nothing changed.',
+    },
+  },
+  externalRequestSheet: {
+    survival: 'Completed payments are final; shared tabs stay between you and the person you named.',
+    warns: ['Only open a tab with someone you actually know and trust.'],
+  },
+} as const;
+
 export type WalletPosture = 'everyday' | 'pro';
 
 export const WALLET_POSTURE_STORAGE_KEY = 'xln-wallet-posture';

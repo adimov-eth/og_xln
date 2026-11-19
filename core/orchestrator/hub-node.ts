@@ -242,10 +242,7 @@ const MESH_BOOTSTRAP_STALL_TIMEOUT_MS = Math.max(
   5_000,
   readPositiveIntegerEnv('XLN_MESH_BOOTSTRAP_STALL_TIMEOUT_MS', 30_000),
 );
-const MESH_PRODUCER_PAUSE_TIMEOUT_MS = Math.max(
-  1_000,
-  readPositiveIntegerEnv('XLN_MESH_PRODUCER_PAUSE_TIMEOUT_MS', 5_000),
-);
+const MESH_PRODUCER_PAUSE_TIMEOUT_MS = 5_000;
 const nodeLog = createStructuredLogger('mesh.hub', { hub: resolvedArgs.name });
 
 const createHubBrainVaultOwner = (): BrainVaultOwnerController =>

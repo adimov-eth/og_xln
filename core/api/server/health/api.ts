@@ -14,8 +14,6 @@ import {
   getBootstrapReserveHealth,
   getHubMeshHealth,
 } from './hub';
-import type { MarketMakerServerState } from './market-maker';
-import { getMarketMakerHealth } from './market-maker';
 import { withRuntimeCommittedRead } from '../../../runtime/frame/lifecycle/writer-lock';
 
 export type RuntimeHealthCacheEntry = {
@@ -39,8 +37,6 @@ export type RuntimeHealthDeps = {
     error: string | null;
   };
   activeHubEntityIds: string[];
-  marketMakerState: MarketMakerServerState;
-  getAccountReplica: Parameters<typeof getMarketMakerHealth>[2];
   ensureTokenCatalog: () => Promise<JTokenInfo[]>;
 };
 
@@ -113,18 +109,34 @@ const mergeHubHealth = (
   });
 };
 
+const MARKET_MAKER_HEALTH = {
+  applicable: false,
+  enabled: false,
+  ok: true,
+  entityId: null,
+  expectedOffersPerHub: 0,
+  expectedOffersPerPair: 0,
+  cross: {
+    applicable: false,
+    ok: true,
+    expectedRoutes: 0,
+    expectedOffersPerRoute: 0,
+    expectedOffersPerPair: 0,
+    routes: [],
+  },
+  hubs: [],
+};
+
 const buildHealthBodies = async (deps: RuntimeHealthDeps): Promise<HealthBodies> => {
   const env = deps.env;
   const health = getHealthStatus(env);
   const storage = getStorageHealthSnapshotSync();
   const relay = collectRelayHealth(deps);
   const hubs = mergeHubHealth(health, env, deps, relay.activeClientRuntimeIds, relay.profiles);
-  const marketMaker = getMarketMakerHealth(env, deps.marketMakerState, deps.getAccountReplica);
   const meshApplicable = deps.activeHubEntityIds.length > 0;
-  const bootstrapReserves = meshApplicable || marketMaker.applicable
+  const bootstrapReserves = meshApplicable
     ? await getBootstrapReserveHealth(env, {
         activeHubEntityIds: deps.activeHubEntityIds,
-        marketMakerEntityId: deps.marketMakerState.entityId,
         loadTokenCatalog: deps.ensureTokenCatalog,
       })
     : {
@@ -157,7 +169,7 @@ const buildHealthBodies = async (deps: RuntimeHealthDeps): Promise<HealthBodies>
           hubIds: [],
           pairs: [],
         },
-    marketMaker,
+    marketMaker: MARKET_MAKER_HEALTH,
     bootstrapReserves,
     relay: {
       activeClients: relay.activeClientRuntimeIds,

@@ -18,3 +18,12 @@ export const hexToBytes = (hex: string): Uint8Array => {
   }
   return bytes;
 };
+
+const HEX_BYTE_TEXT = Array.from({ length: 256 }, (_, value) => value.toString(16).padStart(2, '0'));
+
+/** `0x`-prefixed lowercase hex of `bytes`. */
+export const bytesToHex = (bytes: Uint8Array): string => {
+  let output = '0x';
+  for (let index = 0; index < bytes.length; index += 1) output += HEX_BYTE_TEXT[bytes[index]!];
+  return output;
+};

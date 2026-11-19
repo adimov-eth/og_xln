@@ -18,12 +18,6 @@ export const hexToRawBytes = (value: string, code: string, exactBytes?: number):
     Number.parseInt(normalized.slice(2 + index * 2, 4 + index * 2), 16));
 };
 
-export const rawBytesToHex = (bytes: Uint8Array): string => {
-  let hex = '0x';
-  for (const byte of bytes) hex += byte.toString(16).padStart(2, '0');
-  return hex;
-};
-
 export const base64ToRawBytes = (value: string, code: string): Uint8Array => {
   if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
     throw new Error(code);

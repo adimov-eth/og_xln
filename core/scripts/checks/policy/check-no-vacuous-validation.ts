@@ -21,8 +21,8 @@
  * A blanket ban on `??` is not possible here - these directories hold ~1100
  * legitimate coalescings - so this checks the exact defect, not the operator.
  */
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { Glob } from 'bun';
+import { readFileSync } from 'node:fs';
 
 import ts from 'typescript';
 
@@ -36,13 +36,8 @@ const SCAN_ROOTS = [
   'core/extensions/cross-j',
 ] as const;
 
-const listFiles = (directory: string): string[] => readdirSync(directory, {
-  withFileTypes: true,
-}).flatMap(entry => {
-  const path = join(directory, entry.name);
-  if (entry.isDirectory()) return listFiles(path);
-  return entry.isFile() && path.endsWith('.ts') ? [path] : [];
-});
+const listFiles = (directory: string): string[] =>
+  [...new Glob(`${directory}/**/*.ts`).scanSync({ dot: true, onlyFiles: true })];
 
 /** Leftmost identifier of a property-access chain: `a.b.c` -> `a`. */
 const accessRoot = (node: ts.Expression): string | null => {

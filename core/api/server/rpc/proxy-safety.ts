@@ -194,31 +194,17 @@ export const fetchRpcProxyText = async (
   timeoutMs: number,
   timeoutCode = 'RPC_PROXY_TIMEOUT',
 ): Promise<{ response: Response; text: string }> => {
-  const controller = new AbortController();
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
-      (async () => {
-        const response = await fetch(url, { ...init, signal: controller.signal });
-        const text = await readBoundedText(
-          response,
-          MAX_RPC_PROXY_RESPONSE_BYTES,
-          502,
-          'RPC_PROXY_RESPONSE',
-        );
-        return { response, text };
-      })(),
-      new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          controller.abort();
-          reject(new Error(`${timeoutCode}:${timeoutMs}`));
-        }, timeoutMs);
-      }),
-    ]);
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    const text = await readBoundedText(
+      response,
+      MAX_RPC_PROXY_RESPONSE_BYTES,
+      502,
+      'RPC_PROXY_RESPONSE',
+    );
+    return { response, text };
   } catch (error) {
-    if ((error as Error)?.name === 'AbortError') throw new Error(`${timeoutCode}:${timeoutMs}`);
+    if ((error as Error)?.name === 'TimeoutError') throw new Error(`${timeoutCode}:${timeoutMs}`);
     throw error;
-  } finally {
-    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
   }
 };

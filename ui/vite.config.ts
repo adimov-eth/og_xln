@@ -109,7 +109,6 @@ export default defineConfig(({ mode }) => ({
 			// Framework-free wallet logic shared with the SvelteKit frontend: invoices,
 			// route quoting, payment commands, swap math. One implementation, two shells.
 			'@xln/frontend': fileURLToPath(new URL('../frontend/src', import.meta.url)),
-			'@xln/surfaces': fileURLToPath(new URL('../docs/studies/ui/surfaces', import.meta.url)),
 			$lib: fileURLToPath(new URL('../frontend/src/lib', import.meta.url)),
 		},
 	},

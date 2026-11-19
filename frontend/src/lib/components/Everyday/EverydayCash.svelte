@@ -7,7 +7,7 @@
   import { runtimeQueryClient } from '#lib/stores/runtimeQueryClient.ts';
   import { getOpenAccountRebalancePolicyData } from '#lib/utils/onboarding/onboardingPreferences.ts';
   import { buildWalletPayHref } from '#lib/utils/xlnInvoice.ts';
-  import { SURFACES } from '../../../../../docs/studies/ui/surfaces/surfaces.generated';
+  import { EVERYDAY_COPY } from '#lib/everyday/wallet-posture.ts';
   import type { EverydayWalletProjection } from '#lib/everyday/everyday-projection.ts';
   import { formatEverydayArrivingNote, inspectHubRebalanceStatus } from '#lib/everyday/everyday-policy.ts';
   import {
@@ -35,8 +35,8 @@
   let outAddress = $state(''); let outAmount = $state('');
   let busy = $state(false); let statusMsg = $state(''); let errorMsg = $state(''); let faucetBusy = $state(false);
 
-  const terms = SURFACES.everyday.terms;
-  const flows = SURFACES.everyday.flows;
+  const terms = EVERYDAY_COPY.terms;
+  const flows = EVERYDAY_COPY.flows;
   const knownContacts = $derived((frame?.entities ?? []).filter(e => e.entityId.toLowerCase() !== projection.entityId));
   const resolvedPayTo = $derived(resolveContactTarget(payTo, knownContacts));
   const requestLink = $derived(projection.entityId ? buildWalletPayHref({ targetEntityId: projection.entityId, tokenId: projection.primaryTokenId, amount: reqAmount.trim(), description: reqNote.trim() }) : '');
@@ -122,7 +122,7 @@
   async function submitPay(event: Event): Promise<void> {
     event.preventDefault();
     if (busy || !isLive || !commandReady || !projection.signerId || !xln || !resolvedPayTo.target) return;
-    busy = true; errorMsg = ''; statusMsg = flows.pay.pending.text;
+    busy = true; errorMsg = ''; statusMsg = flows.pay.pending;
     try {
       const target = resolvedPayTo.target;
       const amount = parseUsdAmount(payAmount, decimals);
@@ -140,15 +140,15 @@
         onStage: msg => { statusMsg = msg; },
         refreshPlan: async () => planEverydaySend({ frame: await runtimeQueryClient.readViewFrame({ entityId: projection.entityId }), entityId: projection.entityId, signerId: projection.signerId ?? '', targetEntityId: target, tokenId: projection.primaryTokenId, deliveryMode, description: payNote.trim(), route, externalRows: curExt, nativeBalance: curNative, deriveDeltaFn: xln.deriveDelta }),
       });
-      statusMsg = flows.pay.done.text; payAmount = ''; payNote = ''; void onRefresh();
-    } catch (err) { errorMsg = err instanceof Error ? err.message : flows.pay.failed.text; statusMsg = ''; }
+      statusMsg = flows.pay.done; payAmount = ''; payNote = ''; void onRefresh();
+    } catch (err) { errorMsg = err instanceof Error ? err.message : flows.pay.failed; statusMsg = ''; }
     finally { busy = false; }
   }
 
   async function submitCashOut(event: Event): Promise<void> {
     event.preventDefault();
     if (busy || !isLive || !commandReady || !projection.signerId || !xln) return;
-    busy = true; errorMsg = ''; statusMsg = flows['cash-out'].pending.text;
+    busy = true; errorMsg = ''; statusMsg = flows.cashOut.pending;
     try {
       const amount = parseUsdAmount(outAmount, decimals);
       let plan = planEverydayCashOut({ frame, entityId: projection.entityId, recipientEoa: outAddress.trim(), tokenId: projection.primaryTokenId, amount, hubAccountId: projection.primaryHubId, nativeBalance, deriveDeltaFn: xln.deriveDelta });
@@ -158,8 +158,8 @@
       }
       if (plan.kind !== 'from-reserve' && plan.kind !== 'from-hub-collateral') throw new Error(explainEverydayCashOutBlock(plan, amt => formatUsd(amt, decimals)));
       await submitEntityInputs([{ entityId: projection.entityId, signerId: projection.signerId, entityTxs: plan.entityTxs }]);
-      statusMsg = flows['cash-out'].done.text; outAmount = ''; void onRefresh();
-    } catch (err) { errorMsg = err instanceof Error ? err.message : flows['cash-out'].failed.text; statusMsg = ''; }
+      statusMsg = flows.cashOut.done; outAmount = ''; void onRefresh();
+    } catch (err) { errorMsg = err instanceof Error ? err.message : flows.cashOut.failed; statusMsg = ''; }
     finally { busy = false; }
   }
 
@@ -171,11 +171,11 @@
 </script>
 
 <section class="ev-card">
-  <p class="ev-muted">{terms.cash.text}</p>
+  <p class="ev-muted">{terms.cash.label}</p>
   <h1 class="ev-hero" data-testid="everyday-cash">{formatUsd(projection.primary.cash, decimals)}</h1>
   <p class="ev-muted">{terms.cash.note}</p>
   {#if projection.primary.arriving > 0n}
-    <div class="ev-pill" data-testid="everyday-arriving">+{formatUsd(projection.primary.arriving, decimals)} {terms.arriving.text.toLowerCase()} · finishing...</div>
+    <div class="ev-pill" data-testid="everyday-arriving">+{formatUsd(projection.primary.arriving, decimals)} {terms.arriving.label.toLowerCase()} · finishing...</div>
     <p class="ev-muted">{arrivingNote}</p>
   {/if}
   {#if showTestFaucet}
@@ -184,9 +184,9 @@
     </button>
   {/if}
   <div class="ev-row">
-    <button type="button" class="ev-btn primary" data-testid="everyday-pay-btn" onclick={() => openPanel('pay')}>{flows.pay.before.text}</button>
-    <button type="button" class="ev-btn" data-testid="everyday-request-btn" onclick={() => openPanel('request')}>{flows['request-link'].before.text}</button>
-    <button type="button" class="ev-btn" data-testid="everyday-cashout-btn" onclick={() => openPanel('cashout')}>{flows['cash-out'].before.text}</button>
+    <button type="button" class="ev-btn primary" data-testid="everyday-pay-btn" onclick={() => openPanel('pay')}>{flows.pay.before}</button>
+    <button type="button" class="ev-btn" data-testid="everyday-request-btn" onclick={() => openPanel('request')}>{flows.requestLink.before}</button>
+    <button type="button" class="ev-btn" data-testid="everyday-cashout-btn" onclick={() => openPanel('cashout')}>{flows.cashOut.before}</button>
   </div>
 </section>
 
@@ -200,7 +200,7 @@
     <label class="ev-field"><span>Note (optional)</span><input class="ev-input" placeholder="Dinner, groceries..." data-testid="everyday-pay-note" bind:value={payNote} disabled={busy} /></label>
     <p class="ev-muted ev-num" data-testid="everyday-pay-fee">{quoting ? 'Checking fee...' : quotedRoute ? (quotedRoute.totalFee === 0n ? 'Fee: Free' : `Fee: ${formatUsd(quotedRoute.totalFee, decimals)}`) : 'Enter recipient and amount to preview fee'}</p>
     {#if payWarning}<p class="ev-alert error">{payWarning}</p>{/if}
-    <button type="submit" class="ev-btn primary" data-testid="everyday-pay-submit" disabled={!canPay}>{busy ? statusMsg || flows.pay.pending.text : flows.pay.before.text}</button>
+    <button type="submit" class="ev-btn primary" data-testid="everyday-pay-submit" disabled={!canPay}>{busy ? statusMsg || flows.pay.pending : flows.pay.before}</button>
   </form>
 {:else if panel === 'request'}
   <section class="ev-card">
@@ -215,7 +215,7 @@
     <label class="ev-field"><span>External address</span><input class="ev-input" placeholder="0x..." data-testid="everyday-cashout-address" bind:value={outAddress} disabled={busy} /></label>
     <label class="ev-field"><span>Amount ({symbol})</span><input class="ev-input" inputmode="decimal" placeholder="0.00" data-testid="everyday-cashout-amount" bind:value={outAmount} disabled={busy} /></label>
     {#if cashOutWarning}<p class="ev-alert error">{cashOutWarning}</p>{/if}
-    <button type="submit" class="ev-btn primary" data-testid="everyday-cashout-submit" disabled={!canCashOut}>{busy ? flows['cash-out'].pending.text : flows['cash-out'].before.text}</button>
+    <button type="submit" class="ev-btn primary" data-testid="everyday-cashout-submit" disabled={!canCashOut}>{busy ? flows.cashOut.pending : flows.cashOut.before}</button>
   </form>
 {/if}
 

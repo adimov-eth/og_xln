@@ -17,10 +17,9 @@ Neither the harness name nor its marketing tier identifies the model version.
 | `tools/advisor.ts` | One second-opinion runner and persistent task evaluation intake |
 | `audits/registry.json`, `tools/audit/` | Audit findings, invariant coverage and release evidence |
 | `docs/audit/advisor-scorecard.md` | Frozen historical claims; not current routing authority |
-| Svelte `/qa/quorum` | Historical presentation, not the new intelligence leaderboard |
 | `ai/telegram-bot/` | Historical conversational integration; not development score authority |
 | `brainvault/docs/perfection-quorum.md` | Scoped evidence/review lessons; not permission to launch reviews |
-| `scripts/comparative-api.ts`, `design/review/` | Provider/design experiments and raw evidence, not rankings |
+| `design/review/` | Provider/design experiments and raw evidence, not rankings |
 
 Codex, OpenCode and pi support `AGENTS.md`; Claude receives its pointer through
 `CLAUDE.md`. Read this procedure when coordinating agents or invoking advisors.

@@ -11,7 +11,6 @@ import { DEBUG } from '../support/debug-flags';
 import { createStructuredLogger, shortId } from '../support/logger';
 import type { ConsensusConfig, JurisdictionConfig } from './types';
 import type { EntityRuntimeContext } from './runtime-context';
-import type { EntityType } from '../protocol/identity';
 
 const factoryLog = createStructuredLogger('entity.factory');
 
@@ -188,45 +187,6 @@ export const generateLazyEntityId = (
 export const generateNumberedEntityId = (entityNumber: number): string => {
   // Convert number to bytes32 (left-padded with zeros)
   return `0x${entityNumber.toString(16).padStart(64, '0')}`;
-};
-
-export const detectEntityType = (entityId: string): EntityType => {
-  // Check if this is a hex string (0x followed by hex digits)
-  if (entityId.startsWith('0x') && entityId.length === 66) {
-    try {
-      const num = BigInt(entityId);
-
-      // Small positive numbers = numbered entities
-      if (num > 0n && num < 1000000n) {
-        return 'numbered';
-      }
-
-      // Very large numbers are lazy entity hashes
-      return 'lazy';
-    } catch {
-      return 'lazy';
-    }
-  }
-
-  // Check if this is a numeric string before trying BigInt conversion
-  if (/^[0-9]+$/.test(entityId)) {
-    try {
-      const num = BigInt(entityId);
-
-      // Small positive numbers = numbered entities
-      if (num > 0n && num < 1000000n) {
-        return 'numbered';
-      }
-
-      // Very large numbers might be lazy entity hashes
-      return 'lazy';
-    } catch {
-      return 'lazy';
-    }
-  }
-
-  // Non-numeric, non-hex strings are lazy entities
-  return 'lazy';
 };
 
 export const extractNumberFromEntityId = (entityId: string): number => {

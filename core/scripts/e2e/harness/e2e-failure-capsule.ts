@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
-import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -42,25 +41,14 @@ const positiveInteger = (value: unknown): number => {
   return Number.isInteger(number) && number > 0 ? number : 0;
 };
 
-const jsonErrorLocation = (source: string, error: ParseError, firstLine: number) => {
-  const prefix = source.slice(0, Math.max(0, error.offset));
-  const lines = prefix.split('\n');
-  return {
-    line: firstLine + lines.length - 1,
-    column: (lines.at(-1)?.length ?? 0) + 1,
-  };
-};
-
 export const parseJsonStrict = (source: string, path: string, firstLine = 1): unknown => {
-  const errors: ParseError[] = [];
-  const value = parse(source, errors, { allowTrailingComma: false, disallowComments: true });
-  const firstError = errors[0];
-  if (!firstError) return value;
-  const location = jsonErrorLocation(source, firstError, firstLine);
-  throw new Error(
-    `E2E_JSON_INVALID:path=${path}:line=${location.line}:column=${location.column}:` +
-      `reason=${printParseErrorCode(firstError.error)}`,
-  );
+  try {
+    return JSON.parse(source);
+  } catch (error) {
+    throw new Error(
+      `E2E_JSON_INVALID:path=${path}:line=${firstLine}:reason=${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 };
 
 export const parseJsonLinesStrict = (source: string, path: string): unknown[] =>

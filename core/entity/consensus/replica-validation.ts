@@ -1,5 +1,5 @@
 import { LIMITS } from '../../config/constants';
-import { log } from '../../support/diagnostics';
+import { entityLog } from './entity-log';
 import { safeStringify } from '../../protocol/serialization';
 import type { EntityTx } from '../../types/entity-tx';
 import type { ConsensusConfig, EntityInput, EntityReplica, EntityState } from '../types';
@@ -9,27 +9,27 @@ import { getEntityInputPhaseCombinationError } from './input/phase-views';
 const hasWellFormedEntityTxs = (input: EntityInput): boolean => {
   if (!input.entityTxs) return true;
   if (!Array.isArray(input.entityTxs)) {
-    log.error(`❌ EntityTxs must be array, got: ${typeof input.entityTxs}`);
+    entityLog.warn(`❌ EntityTxs must be array, got: ${typeof input.entityTxs}`);
     return false;
   }
   if (input.entityTxs.length > LIMITS.MEMPOOL_SIZE) {
-    log.error(`❌ Too many transactions: ${input.entityTxs.length} > ${LIMITS.MEMPOOL_SIZE}`);
+    entityLog.warn(`❌ Too many transactions: ${input.entityTxs.length} > ${LIMITS.MEMPOOL_SIZE}`);
     return false;
   }
   const invalid = input.entityTxs.find(tx => !tx.type || !tx.data);
   if (!invalid) return true;
-  log.error(`❌ Invalid transaction: ${safeStringify(invalid)}`);
+  entityLog.warn(`❌ Invalid transaction: ${safeStringify(invalid)}`);
   return false;
 };
 
 const hasWellFormedHashPrecommits = (input: EntityInput): boolean => {
   if (!input.hashPrecommits) return true;
   if (!(input.hashPrecommits instanceof Map)) {
-    log.error(`❌ HashPrecommits must be Map, got: ${typeof input.hashPrecommits}`);
+    entityLog.warn(`❌ HashPrecommits must be Map, got: ${typeof input.hashPrecommits}`);
     return false;
   }
   if (input.hashPrecommits.size > LIMITS.MAX_VALIDATORS) {
-    log.error(`❌ Too many hashPrecommits: ${input.hashPrecommits.size} > ${LIMITS.MAX_VALIDATORS}`);
+    entityLog.warn(`❌ Too many hashPrecommits: ${input.hashPrecommits.size} > ${LIMITS.MAX_VALIDATORS}`);
     return false;
   }
   const reference = input.hashPrecommitFrame;
@@ -40,12 +40,12 @@ const hasWellFormedHashPrecommits = (input: EntityInput): boolean => {
     typeof reference.frameHash !== 'string' ||
     reference.frameHash.trim().length === 0
   ) {
-    log.error(`❌ Invalid hashPrecommitFrame: ${safeStringify(reference)}`);
+    entityLog.warn(`❌ Invalid hashPrecommitFrame: ${safeStringify(reference)}`);
     return false;
   }
   for (const [signerId, sigs] of input.hashPrecommits) {
     if (typeof signerId === 'string' && Array.isArray(sigs)) continue;
-    log.error(`❌ Invalid hashPrecommit format: ${signerId} -> ${typeof sigs}`);
+    entityLog.warn(`❌ Invalid hashPrecommit format: ${signerId} -> ${typeof sigs}`);
     return false;
   }
   return true;
@@ -54,16 +54,16 @@ const hasWellFormedHashPrecommits = (input: EntityInput): boolean => {
 const hasWellFormedJPrefixAttestations = (input: EntityInput): boolean => {
   if (!input.jPrefixAttestations) return true;
   if (!(input.jPrefixAttestations instanceof Map) || input.jPrefixAttestations.size === 0) {
-    log.error('❌ J-prefix attestations must be a non-empty Map');
+    entityLog.warn('❌ J-prefix attestations must be a non-empty Map');
     return false;
   }
   if (input.jPrefixAttestations.size > LIMITS.MAX_VALIDATORS) {
-    log.error(`❌ Too many J-prefix attestations: ${input.jPrefixAttestations.size}`);
+    entityLog.warn(`❌ Too many J-prefix attestations: ${input.jPrefixAttestations.size}`);
     return false;
   }
   for (const [signerId, attestation] of input.jPrefixAttestations) {
     if (typeof signerId === 'string' && attestation && typeof attestation === 'object') continue;
-    log.error('❌ Invalid J-prefix attestation entry');
+    entityLog.warn('❌ Invalid J-prefix attestation entry');
     return false;
   }
   return true;
@@ -74,15 +74,15 @@ const hasWellFormedProposedFrame = (input: EntityInput): boolean => {
   const frame = input.proposedFrame;
   validateProposedEntityFrame(frame, 'EntityInput.proposedFrame');
   if (typeof frame.height !== 'number' || frame.height < 0) {
-    log.error(`❌ Invalid frame height: ${frame.height}`);
+    entityLog.warn(`❌ Invalid frame height: ${frame.height}`);
     return false;
   }
   if (!Array.isArray(frame.txs)) {
-    log.error('❌ Frame txs must be array');
+    entityLog.warn('❌ Frame txs must be array');
     return false;
   }
   if (!frame.hash || typeof frame.hash !== 'string') {
-    log.error(`❌ Invalid frame hash: ${frame.hash}`);
+    entityLog.warn(`❌ Invalid frame hash: ${frame.hash}`);
     return false;
   }
   if (
@@ -91,7 +91,7 @@ const hasWellFormedProposedFrame = (input: EntityInput): boolean => {
     !Number.isSafeInteger(frame.leader.view) ||
     frame.leader.view < 0
   ) {
-    log.error('❌ Invalid frame leader metadata');
+    entityLog.warn('❌ Invalid frame leader metadata');
     return false;
   }
   return true;
@@ -107,7 +107,7 @@ const hasWellFormedLeaderTimeoutVote = (input: EntityInput): boolean => {
     Number.isSafeInteger(vote.targetHeight) &&
     Number.isSafeInteger(vote.fromView) &&
     Number.isSafeInteger(vote.toView);
-  if (!valid) log.error('❌ Invalid leader timeout vote');
+  if (!valid) entityLog.warn('❌ Invalid leader timeout vote');
   return valid;
 };
 
@@ -115,12 +115,12 @@ const hasWellFormedLeaderTimeoutVote = (input: EntityInput): boolean => {
 export const isEntityInputWellFormed = (input: EntityInput): boolean => {
   try {
     if (!input.entityId || typeof input.entityId !== 'string') {
-      log.error(`❌ Invalid entityId: ${input.entityId}`);
+      entityLog.warn(`❌ Invalid entityId: ${input.entityId}`);
       return false;
     }
     const phaseError = getEntityInputPhaseCombinationError(input);
     if (phaseError) {
-      log.error(`❌ Invalid EntityInput phase combination: ${phaseError}`);
+      entityLog.warn(`❌ Invalid EntityInput phase combination: ${phaseError}`);
       return false;
     }
     return (
@@ -131,7 +131,7 @@ export const isEntityInputWellFormed = (input: EntityInput): boolean => {
       hasWellFormedLeaderTimeoutVote(input)
     );
   } catch (error) {
-    log.error(`❌ Input validation error: ${error}`);
+    entityLog.warn(`❌ Input validation error: ${error}`);
     return false;
   }
 };
@@ -186,16 +186,16 @@ export const getEntityMempoolAdmissionError = (
 export const validateVotingPower = (power: bigint): boolean => {
   try {
     if (power < 0n) {
-      log.error(`❌ Negative voting power: ${power}`);
+      entityLog.warn(`❌ Negative voting power: ${power}`);
       return false;
     }
     if (power > BigInt(Number.MAX_SAFE_INTEGER)) {
-      log.error(`❌ Voting power overflow: ${power} > ${Number.MAX_SAFE_INTEGER}`);
+      entityLog.warn(`❌ Voting power overflow: ${power} > ${Number.MAX_SAFE_INTEGER}`);
       return false;
     }
     return true;
   } catch (error) {
-    log.error(`❌ Voting power validation error: ${error}`);
+    entityLog.warn(`❌ Voting power validation error: ${error}`);
     return false;
   }
 };

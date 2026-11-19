@@ -614,7 +614,6 @@ for (const [path, markers] of [
   ['core/entity/tx/handlers/dispute/index.ts', ["createStructuredLogger('entity.dispute')"]],
   ['core/entity/tx/handlers/payments/settle.ts', ["createStructuredLogger('entity.settle')"]],
   ['core/entity/tx/j-events-observations/debt.ts', ["createStructuredLogger('entity.debt')", 'ledger.divergence']],
-  ['core/account/utils.ts', ["logDebug('ACCOUNT_STATE'", 'deriveDelta.return']],
   ['core/account/validation/delta-validation.ts', ['ACCOUNT_DELTAS_MISSING', 'ACCOUNT_DELTAS_INVALID_TOKEN_ID']],
   ['core/runtime.ts', ["createStructuredLogger('runtime')", 'apply.profile', 'process.profile', 'joutbox.incoming']],
   [

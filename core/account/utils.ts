@@ -6,14 +6,12 @@ import type { TokenDecimals } from './tx/units';
  */
 
 import type { Delta, DerivedDelta } from '../types/account';
-import { PERFORMANCE } from '../config/constants';
 import { validateDelta } from './validation/delta-validation';
 // Re-exported under its own name so callers that already reach for account
 // utilities do not need a second import path for the LEFT tie-break.
 export { isLeftEntity } from '../protocol/identity/entity-id';
 import { CATALOG_TOKENS, defaultTokensForJurisdiction } from '../jurisdiction/machine/config/default-tokens';
 import { getTokenUsdMicros } from '../jurisdiction/machine/config/usd-reference-rate';
-import { logDebug } from '../support/logger';
 
 // CRITICAL: Default credit is 0 - credit must be explicitly extended via set_credit_limit
 const BASE_CREDIT_LIMIT = 0n;
@@ -145,15 +143,6 @@ export function deriveDelta(delta: Delta, isLeft: boolean, signedProgramMovement
   const left = deriveLeftPerspective(delta, totalDelta, collateral);
   const { effectiveOwnCreditWindow, totalCapacity, ...leftPerspective } = left;
   const perspective = isLeft ? leftPerspective : flipDeltaPerspective(leftPerspective);
-
-  if (PERFORMANCE.DEBUG_ACCOUNTS) {
-    logDebug('ACCOUNT_STATE', 'deriveDelta.return', {
-      isLeft,
-      inCapacity: perspective.inCapacity,
-      outCapacity: perspective.outCapacity,
-      capacitySum: perspective.inCapacity + perspective.outCapacity,
-    });
-  }
 
   return {
     delta: totalDelta,

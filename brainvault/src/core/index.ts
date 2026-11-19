@@ -16,9 +16,7 @@
  */
 
 import { blake3 } from '@noble/hashes/blake3.js';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { HDNodeWallet } from 'ethers';
-import { BIP39_ENGLISH } from './bip39-english.ts';
+import { HDNodeWallet, Mnemonic } from 'ethers';
 import { hexToBytes } from './primitives/encoding.ts';
 import { BRAINVAULT_V1 } from './primitives/spec.ts';
 
@@ -126,28 +124,7 @@ export async function entropyToMnemonic(entropy: Uint8Array): Promise<string> {
   if (![16, 20, 24, 28, 32].includes(entropy.length)) {
     throw new Error(`BRAINVAULT_ENTROPY_LENGTH_INVALID:${entropy.length}`);
   }
-
-  // Add checksum: SHA256 of entropy, take first entropy.length/32 bits
-  const checksumHash = sha256(entropy);
-  try {
-    const checksumBits = bytesToBits(checksumHash).slice(0, entropy.length * 8 / 32);
-
-    // Combine entropy bits + checksum bits
-    const entropyBits = bytesToBits(entropy);
-    const allBits = entropyBits + checksumBits;
-
-    // Split into 11-bit chunks, each maps to a word
-    const words: string[] = [];
-    for (let i = 0; i < allBits.length; i += 11) {
-      const chunk = allBits.slice(i, i + 11);
-      const index = parseInt(chunk, 2);
-      words.push(BIP39_ENGLISH[index]!);
-    }
-
-    return words.join(' ');
-  } finally {
-    checksumHash.fill(0);
-  }
+  return Mnemonic.fromEntropy(entropy).phrase;
 }
 
 function requireEmptyBip39Passphrase(passphrase: string): void {
@@ -271,7 +248,4 @@ export async function deriveSitePassword(
     masterKey.fill(0);
     raw?.fill(0);
   }
-}
-function bytesToBits(bytes: Uint8Array): string {
-  return Array.from(bytes).map(b => b.toString(2).padStart(8, '0')).join('');
 }

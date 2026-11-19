@@ -1,3 +1,4 @@
+import { Glob } from 'bun';
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
@@ -68,14 +69,9 @@ if (apiRootFiles.length > 0) {
 const REVERSE_DEPENDENCY_DEBT: Readonly<Record<string, number>> = {};
 
 const collectFiles = (directory: string): string[] =>
-  fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-    const target = path.join(directory, entry.name);
-    if (entry.isDirectory()) return collectFiles(target);
-    if (!entry.isFile() || !target.endsWith('.ts') || target.endsWith('.d.ts')) return [];
-    return EXCLUDED_PATH.test(`/${target}`) || target.endsWith('.test.ts') || target.endsWith('.spec.ts')
-      ? []
-      : [target];
-  });
+  [...new Glob(`${directory}/**/*.ts`).scanSync({ dot: true, onlyFiles: true })].filter(target =>
+    !target.endsWith('.d.ts') && !target.endsWith('.test.ts') && !target.endsWith('.spec.ts')
+    && !EXCLUDED_PATH.test(`/${target}`));
 
 const packageOwner = (file: string): string => {
   const relative = path.relative(RUNTIME_ROOT, file);

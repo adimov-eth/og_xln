@@ -1,7 +1,7 @@
 /** Reject physical persistence whose key has any content-digest provenance. */
 
+import { Glob } from 'bun';
 import { promises } from 'node:fs';
-import path from 'node:path';
 import ts from 'typescript';
 
 const roots = ['core', 'rscore/crates'] as const;
@@ -243,19 +243,9 @@ export const findRustPathKeyViolations = (
   return violations;
 };
 
-const walk = async (directory: string): Promise<string[]> => {
-  const entries = await promises.readdir(directory, { withFileTypes: true });
-  const nested = await Promise.all(entries.map(async entry => {
-    const file = path.join(directory, entry.name);
-    return entry.isDirectory() ? walk(file) : [file];
-  }));
-  return nested.flat();
-};
-
 const main = async (): Promise<void> => {
-  const sourceFiles = (await Promise.all(roots.map(walk)))
-    .flat()
-    .filter(file => /\.(?:rs|ts)$/.test(file))
+  const sourceFiles = roots
+    .flatMap(root => [...new Glob(`${root}/**/*.{rs,ts}`).scanSync({ dot: true, onlyFiles: true })])
     .filter(file => !excluded.some(part => `/${file}`.includes(part)))
     .sort();
   const violations: PathKeyViolation[] = [];

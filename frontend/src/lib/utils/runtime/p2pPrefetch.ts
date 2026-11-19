@@ -1,9 +1,9 @@
 import type { RuntimeReplica, RoutedEntityInput } from '@xln/core/api/public/runtime-module';
+import { sleep } from '../primitives';
 
 const DEFAULT_PROFILE_PREFETCH_TIMEOUT_MS = 1_200;
 const OPEN_ACCOUNT_PROFILE_WAIT_TIMEOUT_MS = 5_000;
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const normalizeEntityId = (value: string): string => String(value || '').trim().toLowerCase();
 

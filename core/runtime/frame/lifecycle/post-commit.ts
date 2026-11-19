@@ -10,7 +10,7 @@ import type { RuntimeFrameOutputPlan } from '../plan';
 import type { RuntimeProcessProfile } from '../process-profile';
 import { enqueueRuntimeContinuation } from '../../loop/loop-envelope';
 import { notifyRuntimeStateChanged } from '../notifications';
-import type { RuntimeOutputRoutingDeps } from '../../delivery/topology/output-routing';
+import type { RuntimeOutputRoutingDeps } from '../../delivery/pending';
 
 export type CommittedRuntimeEffectDeps = {
   enqueueRuntimeInputs?(

@@ -19,7 +19,6 @@ import {
   formatSigned,
   parseAmount,
   amountInputText,
-  splitAmountForDisplay,
 } from './format';
 import type { TokenCatalogEntry, TokenMeta } from './token-meta';
 
@@ -51,8 +50,6 @@ export function rejectConfusedTokenUnits(id: TokenId, decimals: TokenDecimals): 
   formatSigned(1n, id);
   // @ts-expect-error amountInputText takes precision, not identity.
   amountInputText(1n, id);
-  // @ts-expect-error splitAmountForDisplay takes precision, not identity.
-  splitAmountForDisplay(1n, id);
 }
 
 test('validated units retain number identity and exact catalog amounts', () => {

@@ -25,10 +25,10 @@
   :covers     ['send-routed 'send-direct 'extend-peer-tab]
   :shows      ['program-origin 'human-summary 'fee-ceiling 'expiry-deadline]
   :fee-before #t
-  :survival   (guess "Completed payments are final; shared tabs stay between you and the person you named.")
-  :warns      [(guess "Only open a tab with someone you actually know and trust.")]
+  :survival   (as-is "frontend/src/lib/everyday/wallet-posture.ts" "Completed payments are final; shared tabs stay between you and the person you named.")
+  :warns      [(as-is "frontend/src/lib/everyday/wallet-posture.ts" "Only open a tab with someone you actually know and trust.")]
   :why        (sweep "docs/studies/ui/surfaces/probes/runs-signing/summary-nous-oauth-frontier.json" "Fires only when an outside checkout link or embedded split calculator proposes an action, rendering the single concrete action in plain human words.")
-  :sources    ["docs/studies/ui/surfaces/probes/report-signing.md"])
+  :sources    ["frontend/src/lib/everyday/wallet-posture.ts" "docs/studies/ui/surfaces/probes/report-signing.md"])
 
 ;; ── 2. Everyday Human Surface (Venmo Cash + Splitwise Friends + Invisible Reliability) ────────────
 
@@ -39,24 +39,24 @@
   :modes   ['personal-only]
   :terms   {
     :cash     (term-copy
-                :label     (guess "Cash")
-                :note      (guess "Your money, ready to spend or cash out anytime.")
+                :label     (as-is "frontend/src/lib/everyday/wallet-posture.ts" "Cash")
+                :note      (as-is "frontend/src/lib/everyday/wallet-posture.ts" "Your money, ready to spend or cash out anytime.")
                 :note-when 'always)
     :arriving (term-copy
-                :label     (guess "Arriving")
-                :note      (guess "Finishing automatically before it joins your Cash.")
+                :label     (as-is "frontend/src/lib/everyday/wallet-posture.ts" "Arriving")
+                :note      (as-is "frontend/src/lib/everyday/wallet-posture.ts" "Finishing automatically before it joins your Cash.")
                 :note-when 'non-zero)
     :people   (term-copy
-                :label     (guess "Friends & tabs")
-                :note      (guess "Shared bills and tabs with people you know.")
+                :label     (as-is "frontend/src/lib/everyday/wallet-posture.ts" "Friends & tabs")
+                :note      (as-is "frontend/src/lib/everyday/wallet-posture.ts" "Shared bills and tabs with people you know.")
                 :note-when 'non-zero)
     :owed     (term-copy
-                :label     (guess "You owe")
-                :note      (guess "Settle up in one tap whenever you are ready.")
+                :label     (as-is "frontend/src/lib/everyday/wallet-posture.ts" "You owe")
+                :note      (as-is "frontend/src/lib/everyday/wallet-posture.ts" "Settle up in one tap whenever you are ready.")
                 :note-when 'non-zero)
     :savings  (term-copy
-                :label     (guess "Savings")
-                :note      (guess "Lent to earn interest — not protected like Cash; separate from Cash and requires explicit consent.")
+                :label     (as-is "frontend/src/lib/everyday/wallet-posture.ts" "Savings")
+                :note      (as-is "frontend/src/lib/everyday/wallet-posture.ts" "Lent to earn interest — not protected like Cash; separate from Cash and requires explicit consent.")
                 :note-when 'always)
   }
   :defaults [

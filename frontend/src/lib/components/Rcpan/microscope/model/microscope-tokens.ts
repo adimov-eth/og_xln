@@ -1,3 +1,4 @@
+import { formatDecimal } from '#lib/utils/format.ts';
 import { asTokenId } from '@xln/core/protocol/units';
 import { getTokenInfo } from '@xln/core/account/utils';
 import { getTokenUsdMicros } from '@xln/core/jurisdiction/machine/config/usd-reference-rate';
@@ -87,14 +88,7 @@ export function formatMicroscopeTokenAmount(
   amount: bigint,
   maximumFractionDigits = 3,
 ): string {
-  const sign = amount < 0n ? '-' : '';
-  const absolute = amount < 0n ? -amount : amount;
-  const scale = 10n ** BigInt(token.decimals);
-  const whole = absolute / scale;
-  const fraction = absolute % scale;
-  const digits = fraction.toString().padStart(token.decimals, '0').slice(0, maximumFractionDigits);
-  const trimmed = digits.replace(/0+$/, '');
-  return `${sign}${whole.toLocaleString('en-US')}${trimmed ? `.${trimmed}` : ''}`;
+  return formatDecimal(amount, token.decimals, { max: maximumFractionDigits });
 }
 
 export function formatUsdMicros(value: bigint): string {

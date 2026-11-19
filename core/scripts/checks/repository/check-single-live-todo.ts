@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { Glob } from 'bun';
+import { existsSync } from 'node:fs';
+import { join, sep } from 'node:path';
 
 const ROOT = process.cwd();
 const REQUIRED_LIVE_TODO = 'todo.md';
@@ -30,33 +31,15 @@ const GENERATED_PREFIXES = [
   `packages${sep}npm${sep}xlnfinance${sep}dist${sep}`,
 ];
 
-const normalize = (path: string): string => path.split(sep).join('/');
-
 const isGeneratedOrArchivePath = (relativePath: string): boolean => {
   if (relativePath.startsWith(`docs${sep}archive${sep}`)) return true;
   return GENERATED_PREFIXES.some((prefix) => relativePath.startsWith(prefix));
 };
 
-const collectFiles = (directory: string): string[] => {
-  const files: string[] = [];
-  for (const entry of readdirSync(directory)) {
-    if (GENERATED_OR_VENDOR_DIRS.has(entry)) continue;
-    const absolutePath = join(directory, entry);
-    const relativePath = relative(ROOT, absolutePath);
-    if (isGeneratedOrArchivePath(relativePath)) continue;
-    const stat = statSync(absolutePath);
-    if (stat.isDirectory()) {
-      files.push(...collectFiles(absolutePath));
-    } else {
-      files.push(relativePath);
-    }
-  }
-  return files;
-};
-
-const liveBacklogCandidates = collectFiles(ROOT)
-  .map(normalize)
-  .filter((path) => /(^|\/)(todo|next)\.md$/i.test(path));
+const liveBacklogCandidates = [...new Glob('**/*.md').scanSync({ cwd: ROOT, dot: true, onlyFiles: true })]
+  .filter((path) => /(^|\/)(todo|next)\.md$/i.test(path))
+  .filter((path) => !path.split('/').some((part) => GENERATED_OR_VENDOR_DIRS.has(part)))
+  .filter((path) => !isGeneratedOrArchivePath(path));
 
 const errors: string[] = [];
 

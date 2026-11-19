@@ -8,7 +8,7 @@ import {
   type EverydaySendPlan,
   type EverydaySendRoute,
 } from '@xln/frontend/lib/everyday/everyday-autopilot';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { requireAdapter } from '../../runtime/adapter';
 import { toEverydayExternalRows } from '../../runtime/everyday';
 import { sendRuntimeInput } from '../../runtime/commands';
@@ -17,7 +17,7 @@ import {
   claimFundingSubmission,
   fundingSubmissionKey,
   releaseFundingSubmission,
-} from '../../runtime/financial/funding-submission';
+} from '@xln/frontend/lib/everyday/funding-submission';
 import { approveDepository } from '../../runtime/financial/move';
 import { useApp } from '../../runtime/store';
 import { sendEntityTxs, waitFor } from '../../runtime/tx';
@@ -54,7 +54,7 @@ export async function executeEverydaySend(input: {
   });
 
   if (initialPlan.kind === 'ready') {
-    input.onStage?.(SURFACES.everyday.flows.pay.pending.text);
+    input.onStage?.(EVERYDAY_COPY.flows.pay.pending);
     await sendRuntimeInput(initialPlan.paymentInput);
     return;
   }
@@ -116,7 +116,7 @@ export async function executeEverydaySend(input: {
     );
     if (!readyPlan) throw new Error('Payment could not finish right now.');
     const confirmed: Extract<EverydaySendPlan, { kind: 'ready' }> = readyPlan;
-    input.onStage?.(SURFACES.everyday.flows.pay.pending.text);
+    input.onStage?.(EVERYDAY_COPY.flows.pay.pending);
     await sendRuntimeInput(confirmed.paymentInput);
   } finally {
     releaseFundingSubmission(key);

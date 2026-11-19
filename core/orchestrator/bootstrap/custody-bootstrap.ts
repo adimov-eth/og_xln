@@ -16,7 +16,7 @@ import {
   type ChildSecrets,
   writeInheritedChildSecrets,
 } from '../../support/process/child-secrets';
-import { sleep } from '../../support/boundary-guards';
+import { sleep, errorMessage } from '../../support/boundary-guards';
 
 const DEFAULT_CHILD_READY_TIMEOUT_MS = 120_000;
 const LOG_TAIL_LINES = 80;
@@ -308,12 +308,10 @@ export const stopManagedChild = async (
   }
   if (await waitForManagedChildExit(child, killTimeoutMs)) return;
 
-  const describeError = (error: unknown): string =>
-    error instanceof Error ? error.message : String(error);
-  throw new Error(
+    throw new Error(
     `MANAGED_CHILD_STOP_TIMEOUT name=${child.name} pid=${child.proc.pid ?? 'unknown'}\n` +
-    `SIGTERM=${terminateError === null ? 'delivered' : describeError(terminateError)}\n` +
-    `SIGKILL=${killError === null ? 'delivered' : describeError(killError)}\n` +
+    `SIGTERM=${terminateError === null ? 'delivered' : errorMessage(terminateError)}\n` +
+    `SIGKILL=${killError === null ? 'delivered' : errorMessage(killError)}\n` +
     `stdout:\n${tailLines(child.stdoutLines)}\n\nstderr:\n${tailLines(child.stderrLines)}`,
   );
 };

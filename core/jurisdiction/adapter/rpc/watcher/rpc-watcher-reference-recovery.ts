@@ -5,7 +5,7 @@ import { decodeJEventLog } from '../../j-event-log-decoder';
 import { isJEventRelevantToWatcher } from '../../events/event-observation';
 import { rememberDisputeReference, type DisputeReferenceState } from '../../events/dispute/reference-state';
 import { prepareAuthenticatedWatcherIngress } from '../../rpc-public';
-import type { AuthenticatedReceiptRange } from '../../receipt-root';
+import type { AuthenticatedReceiptRange } from '../../receipt/reader';
 
 const iface = Depository__factory.createInterface();
 

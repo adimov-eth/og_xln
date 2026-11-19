@@ -42,7 +42,6 @@ const E2E_TEST_ARTIFACT_DIRS = [
   'frontend/playwright-report',
   'tests/test-results',
   'e2e/test-results',
-  'debates/test-results',
   '.svelte-kit-e2e',
   'test-results',
   'playwright-report',
@@ -78,7 +77,6 @@ const UNIT_TEST_ARTIFACT_DIRS = [
   'tests/test-results',
   'frontend/test-results',
   'e2e/test-results',
-  'debates/test-results',
 ];
 
 const BUDGETED_WORKSPACE_PATHS = [
@@ -96,7 +94,6 @@ const BUDGETED_WORKSPACE_PATHS = [
   'frontend/playwright-report',
   'tests/test-results',
   'e2e/test-results',
-  'debates/test-results',
   '.tmp-tests',
   '.logs/soak',
   '.logs/system-tests',

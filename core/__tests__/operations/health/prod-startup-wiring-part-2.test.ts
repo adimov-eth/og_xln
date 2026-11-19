@@ -65,7 +65,7 @@ const readOrchestratorSource = (): string =>
     'bootstrap/native-h1-bootstrap.ts',
     'bootstrap/readiness-waits.ts',
     'process/supervisor/child-failure-records.ts',
-    'server/relay-socket.ts',
+    '../network/relay/socket-handlers.ts',
   ]
     .map(file => readFileSync(join(repoRoot, 'core/orchestrator', file), 'utf8'))
     .join('\n');
@@ -1546,9 +1546,9 @@ describe('production startup wiring', () => {
 
   test('orchestrator relay sockets never echo internal exception text to a peer', () => {
     const orchestrator = readFileSync(join(repoRoot, 'core/orchestrator/orchestrator.ts'), 'utf8');
-    const relaySocket = readFileSync(join(repoRoot, 'core/orchestrator/server/relay-socket.ts'), 'utf8');
-    expect(orchestrator).toContain('websocket: createOrchestratorRelaySocketHandlers({');
-    const socket = relaySocket.slice(relaySocket.indexOf('export const createOrchestratorRelaySocketHandlers'));
+    const relaySocket = readFileSync(join(repoRoot, 'core/network/relay/socket-handlers.ts'), 'utf8');
+    expect(orchestrator).toContain('websocket: createRelaySocketHandlers<OrchestratorWebSocket[');
+    const socket = relaySocket.slice(relaySocket.indexOf('export const createRelaySocketHandlers'));
     expect(socket).toContain("ws.send(encodeMarketWireMessage({ type: 'error', error: 'Market handler exception' }));");
     expect(socket).toContain("ws.send(serializeWsMessage({ type: 'error', error: 'Relay handler exception' }));");
     expect(socket).not.toContain("type: 'error', error: reason }");

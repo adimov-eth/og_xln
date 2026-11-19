@@ -20,26 +20,18 @@ import { copyAndWipe } from './encoding.ts';
 export interface BrainvaultKdfParams {
   algId?: string;
   shardMemoryKb?: number;
-  argonTimeCost?: number;
-  argonParallelism?: number;
-  shardOutputBytes?: number;
 }
 
 export function resolveKdfParams(params: BrainvaultKdfParams = {}) {
   const resolved = {
     algId: params.algId === undefined ? BRAINVAULT_V1.ALG_ID : params.algId,
     shardMemoryKb: params.shardMemoryKb === undefined ? BRAINVAULT_V1.SHARD_MEMORY_KB : params.shardMemoryKb,
-    argonTimeCost: params.argonTimeCost === undefined ? BRAINVAULT_V1.ARGON_TIME_COST : params.argonTimeCost,
-    argonParallelism: params.argonParallelism === undefined ? BRAINVAULT_V1.ARGON_PARALLELISM : params.argonParallelism,
-    shardOutputBytes: params.shardOutputBytes === undefined ? BRAINVAULT_V1.SHARD_OUTPUT_BYTES : params.shardOutputBytes,
   };
   if (typeof resolved.algId !== 'string' || resolved.algId.length === 0) {
     throw new Error('BRAINVAULT_ALG_ID_INVALID');
   }
-  for (const [name, value] of Object.entries(resolved).slice(1)) {
-    if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 0xffff_ffff) {
-      throw new Error(`BRAINVAULT_KDF_PARAMETER_INVALID:${name}`);
-    }
+  if (!Number.isSafeInteger(resolved.shardMemoryKb) || resolved.shardMemoryKb < 1 || resolved.shardMemoryKb > 0xffff_ffff) {
+    throw new Error('BRAINVAULT_KDF_PARAMETER_INVALID:shardMemoryKb');
   }
   return resolved;
 }
@@ -66,10 +58,10 @@ export async function deriveShardWithParams(
     const result = await argon2id({
       password,
       salt: shardSalt,
-      parallelism: kdf.argonParallelism,
-      iterations: kdf.argonTimeCost,
+      parallelism: BRAINVAULT_V1.ARGON_PARALLELISM,
+      iterations: BRAINVAULT_V1.ARGON_TIME_COST,
       memorySize: kdf.shardMemoryKb,
-      hashLength: kdf.shardOutputBytes,
+      hashLength: BRAINVAULT_V1.SHARD_OUTPUT_BYTES,
       outputType: 'binary',
     });
     return copyAndWipe(result);

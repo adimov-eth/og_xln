@@ -12,7 +12,7 @@ import {
 } from '../../scripts/operations/hlt/economy';
 
 const HLT_DASHBOARD_MODES = ['payments', 'same', 'mixed', 'cross'] as const;
-export type HltDashboardMode = (typeof HLT_DASHBOARD_MODES)[number];
+type HltDashboardMode = (typeof HLT_DASHBOARD_MODES)[number];
 
 export type HltDashboardConfig = Readonly<{
   users: number;
@@ -29,7 +29,7 @@ export type HltDashboardConfig = Readonly<{
   paymentAmountMax: bigint;
 }>;
 
-export const HLT_DASHBOARD_DEFAULTS: HltDashboardConfig = {
+const HLT_DASHBOARD_DEFAULTS: HltDashboardConfig = {
   users: 200,
   runtimesPerProcess: 200,
   ratePerUserPerSecond: 1,
@@ -310,68 +310,5 @@ export const previewHltDashboard = (config: HltDashboardConfig): HltDashboardPre
     hubShare: hubShareFor(config.mode, plan.economy.hubLabels.length),
     isolatedCommand: isolatedCommand({ ...config, mix }),
     warning: 'Smoke leases its own ports. It does not attach to the live hub-node on 8082.',
-  };
-};
-
-type HltChartLayout = Readonly<{
-  width: number;
-  height: number;
-  /** TS H1 payments series. */
-  payPath: string;
-  swapPath: string;
-  /** Rust H1 payments series, drawn in its own colour. */
-  rustPayPath: string;
-  payPoints: ReadonlyArray<{ x: number; y: number }>;
-  swapPoints: ReadonlyArray<{ x: number; y: number }>;
-  rustPayPoints: ReadonlyArray<{ x: number; y: number }>;
-  yTicks: ReadonlyArray<{ value: number; y: number; label: string }>;
-}>;
-
-const HLT_CHART_CEILING_TPS = 10_000;
-
-export const layoutHltTpsChart = (runs: readonly HltLedgerRun[]): HltChartLayout => {
-  const width = 720;
-  const height = 220;
-  const pad = { top: 16, right: 18, bottom: 28, left: 44 };
-  const plotWidth = width - pad.left - pad.right;
-  const plotHeight = height - pad.top - pad.bottom;
-  // Linear 0..ceiling: a run at 3 000/s sits a third of the way to 10 000/s,
-  // so the distance to the target reads directly off the picture.
-  const ceiling = HLT_CHART_CEILING_TPS;
-  const x = (index: number): number =>
-    runs.length <= 1 ? pad.left + plotWidth / 2 : pad.left + (index / (runs.length - 1)) * plotWidth;
-  const y = (value: number): number => {
-    const clamped = Math.max(0, Math.min(ceiling, value));
-    return pad.top + plotHeight - (clamped / ceiling) * plotHeight;
-  };
-  // Every engine shares the x axis (run order) but draws its own line, so a
-  // Rust point never bends the TS trend and vice versa.
-  const indexed = runs.map((run, index) => ({ run, index }));
-  const series = (
-    engine: HltLedgerEngine,
-    pick: (run: HltLedgerRun) => number,
-  ): Readonly<{ path: string; points: ReadonlyArray<{ x: number; y: number }> }> => {
-    const rows = indexed.filter(({ run }) => run.engine === engine && pick(run) > 0);
-    return {
-      path: rows
-        .map(({ run, index }, position) =>
-          `${position === 0 ? 'M' : 'L'}${x(index).toFixed(1)},${y(pick(run)).toFixed(1)}`)
-        .join(' '),
-      points: rows.map(({ run, index }) => ({ x: x(index), y: y(pick(run)) })),
-    };
-  };
-  const tsPay = series('ts', run => run.paymentsTps);
-  const tsSwap = series('ts', run => run.swapsTps);
-  const rustPay = series('rust', run => run.paymentsTps);
-  return {
-    width,
-    height,
-    payPath: tsPay.path,
-    swapPath: tsSwap.path,
-    rustPayPath: rustPay.path,
-    payPoints: tsPay.points,
-    swapPoints: tsSwap.points,
-    rustPayPoints: rustPay.points,
-    yTicks: [0, 2_000, 4_000, 6_000, 8_000, 10_000].map(value => ({ value, y: y(value), label: String(value) })),
   };
 };

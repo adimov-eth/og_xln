@@ -6,6 +6,7 @@
  */
 
 import type { Delta, RuntimeAdapterGraphFrame } from '@xln/core/api/public/runtime-module';
+import { formatDecimal } from '#lib/utils/format.ts';
 import type { TrailGraphDebt } from '../../../../../core/scenarios/network-trail';
 
 export type PresentationToken = { symbol: string; decimals: number };
@@ -143,12 +144,8 @@ export const presentationLegendKeys = (
 const groupThousands = (value: bigint): string => value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
 /** Exact amount for the ledger: every digit the chain holds, decimals trimmed. */
-export const formatLedgerAmount = (amount: bigint, token: PresentationToken): string => {
-  const scale = 10n ** BigInt(token.decimals);
-  const absolute = amount < 0n ? -amount : amount;
-  const fraction = (absolute % scale).toString().padStart(token.decimals, '0').replace(/0+$/, '');
-  return `${amount < 0n ? '−' : ''}${groupThousands(absolute / scale)}${fraction ? `.${fraction}` : ''}`;
-};
+export const formatLedgerAmount = (amount: bigint, token: PresentationToken): string =>
+  formatDecimal(amount, token.decimals, { max: token.decimals }).replace(/^-/, '−');
 
 const trimDecimals = (text: string): string => (text.includes('.') ? text.replace(/\.?0+$/, '') : text);
 

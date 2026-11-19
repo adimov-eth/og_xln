@@ -5,12 +5,7 @@ import type { CertifiedRegistrationEvidence } from '../../types/jurisdiction-run
 import type { EntityState, JurisdictionConfig } from '../../entity/types';
 import type { RuntimeReplica } from '../../runtime/types';
 import type { JurisdictionEvent } from '../../types/jurisdiction-events';
-import {
-  computeCanonicalReceiptsRoot,
-  createCanonicalReceiptProofs,
-  type AuthenticatedRpcLog,
-  type CanonicalRpcReceipt,
-} from '../../jurisdiction/adapter/receipt-root';
+import { computeCanonicalReceiptsRoot, createCanonicalReceiptProofs, type AuthenticatedRpcLog, type CanonicalRpcReceipt } from '../../jurisdiction/machine/receipt-codec';
 import {
   buildCertifiedRegistrationEvidence,
   markLocalJAuthorityRuntimeTx,

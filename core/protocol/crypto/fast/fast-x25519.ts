@@ -6,6 +6,7 @@
  * per hop, so this was ~4% of Hub CPU at 500 users. Browsers fall back to noble.
  */
 import { x25519 } from '@noble/curves/ed25519.js';
+import { bytesToHex } from '../../../support/bytes/hex-bytes';
 import { isBrowserRuntime } from '../../../support/platform-crypto';
 
 type NodeCrypto = typeof import('node:crypto');
@@ -80,19 +81,13 @@ try {
   nodeCrypto = null;
 }
 
-const hexOf = (bytes: Uint8Array): string => {
-  let hex = '';
-  for (const byte of bytes) hex += byte.toString(16).padStart(2, '0');
-  return hex;
-};
-
 // Entity/session private keys are few and reused for every layer; the KeyObject
 // import is memoized on the raw key. Ephemeral keys (one per encryption) miss.
 const privateKeyObjects = new Map<string, KeyObject>();
 const PRIVATE_KEY_OBJECT_MEMO_MAX = 256;
 
 const privateKeyObject = (crypto: NodeCrypto, privateKey: Uint8Array): KeyObject => {
-  const key = hexOf(privateKey);
+  const key = bytesToHex(privateKey);
   const memoized = privateKeyObjects.get(key);
   if (memoized) return memoized;
   const created = crypto.createPrivateKey({

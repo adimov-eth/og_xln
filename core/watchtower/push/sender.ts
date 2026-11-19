@@ -9,6 +9,7 @@
  *     native libraries out of the tower; the webhook is the integration seam.
  */
 
+import { errorMessage } from '../../support/boundary-guards';
 import type { PushNotificationV1, PushSendResult, PushSender } from './types';
 
 const DEFAULT_WEBHOOK_TIMEOUT_MS = 5_000;
@@ -52,32 +53,21 @@ export class WebhookPushSender implements PushSender {
   private readonly endpoint: string;
 
   async send(notification: PushNotificationV1): Promise<PushSendResult> {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | null = null;
     try {
-      const response = await Promise.race([
-        this.fetchImpl(this.endpoint, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(this.authToken ? { authorization: `Bearer ${this.authToken}` } : {}),
-          },
-          body: JSON.stringify(notification),
-          signal: controller.signal,
-        }),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => {
-            controller.abort();
-            reject(new Error(`PUSH_WEBHOOK_TIMEOUT:${this.timeoutMs}`));
-          }, this.timeoutMs);
-        }),
-      ]);
+      const response = await this.fetchImpl(this.endpoint, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(this.authToken ? { authorization: `Bearer ${this.authToken}` } : {}),
+        },
+        body: JSON.stringify(notification),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
       if (!response.ok) return { ok: false, error: `PUSH_WEBHOOK_HTTP_${response.status}` };
       return { ok: true };
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    } finally {
-      if (timer) clearTimeout(timer);
+      if ((error as Error)?.name === 'TimeoutError') return { ok: false, error: `PUSH_WEBHOOK_TIMEOUT:${this.timeoutMs}` };
+      return { ok: false, error: errorMessage(error) };
     }
   }
 }

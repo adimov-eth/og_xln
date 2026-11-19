@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { executeEverydaySavingsDeposit } from '../../components/everyday/everyday-actions';
 import { pickActiveSavingsOffer, type LendingState } from '../../runtime/financial/lending';
 import { fetchLendingState } from '../../runtime/financial/lending-http';
@@ -93,14 +93,14 @@ export function EverydaySavings() {
         decimals: meta.decimals,
         terms: offer.terms,
       });
-      const doneText = SURFACES.everyday.flows['save-in'].done.text;
+      const doneText = EVERYDAY_COPY.flows.saveIn.done;
       setStatus(doneText);
       setAmountText('');
       setAcceptRisk(false);
       toast(doneText);
       await loadState();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : SURFACES.everyday.flows['save-in'].failed.text);
+      setError(failure instanceof Error ? failure.message : EVERYDAY_COPY.flows.saveIn.failed);
     } finally {
       setBusy(false);
     }
@@ -115,12 +115,12 @@ export function EverydaySavings() {
       await sendEntityTxs(wallet.entityId, wallet.signerId, [
         { type: 'lendingClosePosition', data: { hubEntityId: positionHubId, positionId } },
       ]);
-      const doneText = SURFACES.everyday.flows['save-out'].done.text;
+      const doneText = EVERYDAY_COPY.flows.saveOut.done;
       setStatus(doneText);
       toast(doneText);
       await loadState();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : SURFACES.everyday.flows['save-out'].failed.text);
+      setError(failure instanceof Error ? failure.message : EVERYDAY_COPY.flows.saveOut.failed);
     } finally {
       setClosingId(null);
     }
@@ -129,11 +129,11 @@ export function EverydaySavings() {
   return (
     <div className="everyday-screen fade-in">
       <section className="everyday-hero-card" aria-label="Savings balance">
-        <span className="everyday-label">{SURFACES.everyday.terms.savings.text}</span>
+        <span className="everyday-label">{EVERYDAY_COPY.terms.savings.label}</span>
         <div className="everyday-cash-value" data-testid="everyday-savings-balance">
           {formatEverydayMoney(projection.primary.savings, tokenId)}
         </div>
-        <p className="everyday-note">{SURFACES.everyday.terms.savings.note}</p>
+        <p className="everyday-note">{EVERYDAY_COPY.terms.savings.note}</p>
         <span className="everyday-row-sub">
           Available Cash: {formatEverydayMoney(projection.primary.cash, tokenId)}
         </span>
@@ -141,7 +141,7 @@ export function EverydaySavings() {
 
       <section className="everyday-panel" aria-label="Add to Savings">
         <div className="everyday-panel-head">
-          <strong>{SURFACES.everyday.flows['save-in'].before.text}</strong>
+          <strong>{EVERYDAY_COPY.flows.saveIn.before}</strong>
           {offer?.kind === 'active' ? (
             <span className="everyday-row-sub">{(offer.terms.savingsInterestBps / 100).toFixed(2)}% per year</span>
           ) : null}
@@ -183,7 +183,7 @@ export function EverydaySavings() {
               onClick={() => void addToSavings()}
               data-testid="everyday-savings-add"
             >
-              {busy ? SURFACES.everyday.flows['save-in'].pending.text : SURFACES.everyday.flows['save-in'].before.text}
+              {busy ? EVERYDAY_COPY.flows.saveIn.pending : EVERYDAY_COPY.flows.saveIn.before}
             </button>
           </>
         )}
@@ -212,8 +212,8 @@ export function EverydaySavings() {
                   data-testid="everyday-savings-move"
                 >
                   {closingId === pool.positionId
-                    ? SURFACES.everyday.flows['save-out'].pending.text
-                    : SURFACES.everyday.flows['save-out'].before.text}
+                    ? EVERYDAY_COPY.flows.saveOut.pending
+                    : EVERYDAY_COPY.flows.saveOut.before}
                 </button>
               ) : null}
             </div>

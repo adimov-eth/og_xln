@@ -20,8 +20,6 @@ export type UntypedNonPayableMethod = {
   (...args: unknown[]): Promise<unknown>;
 };
 
-export const watcherErrorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
 export const watcherErrorDetails = (error: unknown): Record<string, unknown> => {
   if (!(error instanceof Error)) return { raw: String(error) };
   const details = error as Error & {

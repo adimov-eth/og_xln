@@ -2,7 +2,8 @@
  * Overlay-first Patricia node ops: own keys/values, path-copy, one-shot fold, lazy seal.
  * Hash work exists only at the root/storage boundary.
  */
-import { hexToBytes } from '../../support/bytes/hex-bytes';
+import { compareBytes } from '../../support/boundary-guards';
+import { hexToBytes, bytesToHex } from '../../support/bytes/hex-bytes';
 import {
   computeRadixMerkleBranchHashFromSlots,
   computeRadixMerkleEdgeHash,
@@ -39,14 +40,6 @@ type FoldResult<K, V> = Readonly<{
 export const radixPathSlots = (bytes: Uint8Array, radix: PersistentRadixValueMapOptions<unknown, unknown>['radix']): readonly number[] =>
   radixMerklePathSlots(bytes, radix);
 
-const HEX_BYTE = Array.from({ length: 256 }, (_, value) => value.toString(16).padStart(2, '0'));
-
-export const radixBytesKey = (bytes: Uint8Array): string => {
-  let output = '0x';
-  for (let index = 0; index < bytes.length; index += 1) output += HEX_BYTE[bytes[index]!];
-  return output;
-};
-
 export const radixBytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
   if (left.length !== right.length) return false;
   for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false;
@@ -67,16 +60,6 @@ export const radixPathStartsWith = (path: readonly number[], prefix: readonly nu
   }
   return true;
 };
-
-export const compareBytes = (left: Uint8Array, right: Uint8Array): number => {
-  const limit = Math.min(left.length, right.length);
-  for (let index = 0; index < limit; index += 1) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0);
-    if (difference !== 0) return difference;
-  }
-  return left.length - right.length;
-};
-
 
 const childSlot = <K, V>(parentPath: readonly number[], child: ValueNode<K, V>): number => {
   const slot = child.path[parentPath.length];
@@ -171,7 +154,7 @@ export const deleteRadixNode = <K, V>(
 ): Readonly<{ node: ValueNode<K, V> | null; deleted: boolean }> => {
   if (!node || !radixPathStartsWith(path, node.path)) return { node, deleted: false };
   if (node.kind === 'leaf') {
-    return radixBytesKey(node.keyBytes) === keyHex
+    return bytesToHex(node.keyBytes) === keyHex
       ? { node: null, deleted: true }
       : { node, deleted: false };
   }
@@ -252,7 +235,7 @@ const collapseFoldItems = <K, V>(
     const key = options.ownKey(mutation.key);
     const keyBytes = Uint8Array.from(options.keyBytes(key));
     if (keyBytes.length === 0) throw new Error('PERSISTENT_RADIX_KEY_EMPTY');
-    const hex = radixBytesKey(keyBytes);
+    const hex = bytesToHex(keyBytes);
     last.set(hex, {
       kind: mutation.kind,
       key,

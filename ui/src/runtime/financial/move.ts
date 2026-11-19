@@ -1,5 +1,5 @@
 import { isAddress } from 'ethers';
-import type { EntityTx, JBatch, RuntimeAdapterViewFrame } from '@xln/core/api/public/runtime-module';
+import type { EntityTx, RuntimeAdapterViewFrame } from '@xln/core/api/public/runtime-module';
 import {
 	buildBroadcastTx,
 	buildExternalToReserveTx,
@@ -27,10 +27,11 @@ import { normalizeExternalRecipient } from '@xln/frontend/lib/components/Entity/
 import { draftReserveDelta } from '@xln/frontend/lib/everyday/everyday-policy';
 import { getXLN } from '../xln-loader';
 import type { WalletView } from '../views';
+import { countBatchOps } from '@xln/frontend/lib/components/Entity/payments/pending-batch-preview';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
 
 export { MOVE_ENDPOINT_LABEL, MOVE_ENDPOINTS, buildMoveRouteSteps, getMoveRouteKey, isMoveRouteSupported, draftReserveDelta, type MoveEndpoint };
 
-const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 /** Same three places Home draws: the signer's on-chain wallet, the Depository reserve, bilateral accounts. */
 export type MoveIntent = {
@@ -81,23 +82,6 @@ export function awaitingCounterparty(frame: RuntimeAdapterViewFrame | null): boo
 export function hasSentBatch(frame: RuntimeAdapterViewFrame | null): boolean {
 	const sent = frame?.activeEntity?.core?.jBatchState?.sentBatch?.batch;
 	return Boolean(sent && countBatchOps(sent) > 0);
-}
-
-export function countBatchOps(batch: JBatch | null | undefined): number {
-	if (!batch) return 0;
-	return (
-		(batch.reserveToCollateral?.length || 0) +
-		(batch.collateralToReserve?.length || 0) +
-		(batch.settlements?.length || 0) +
-		(batch.reserveToReserve?.length || 0) +
-		(batch.disputeStarts?.length || 0) +
-		(batch.counterDisputes?.length || 0) +
-		(batch.disputeFinalizations?.length || 0) +
-		(batch.externalTokenToReserve?.length || 0) +
-		(batch.reserveToExternalToken?.length || 0) +
-		(batch.revealSecrets?.length || 0) +
-		(batch.hashLadderRegistrations?.length || 0)
-	);
 }
 
 export type MoveMode = 'draft' | 'now';

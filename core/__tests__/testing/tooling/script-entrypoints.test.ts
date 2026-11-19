@@ -49,12 +49,10 @@ describe('repository command surface', () => {
     }
     for (const alias of [
       'deploy:frontend',
-      'deploy:full',
       'deploy:fresh',
       'deploy:prod',
       'deploy:prod:frontend',
       'deploy:prod:runtime',
-      'deploy:prod:full',
       'deploy:prod:fresh',
     ]) {
       expect(packageJson.scripts[alias]?.startsWith(`${canonicalEntrypoints.deploy} `)).toBe(true);

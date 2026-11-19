@@ -12,7 +12,7 @@ import {
   stageSeenLogs,
 } from '../../watcher';
 import { prepareAuthenticatedWatcherIngress } from '../../rpc-public';
-import { readAuthenticatedReceiptRange } from '../../receipt-root';
+import { readAuthenticatedReceiptRange } from '../../receipt/reader';
 import { buildTrackedExternalOwners } from '../../rpc-watcher-inputs';
 import { decodeAuthenticatedWatcherEvents } from '../../rpc-watcher-events';
 import type {

@@ -999,7 +999,7 @@ textarea.input.boxed {
 
 /* ---------- entity switcher ---------- */
 
-/* The identity block on Home and Desk, opened as a picker over the runtime's entities. */
+/* The identity block on Home, opened as a picker over the runtime's entities. */
 .entity-switch {
 	display: flex;
 	align-items: center;
@@ -2083,93 +2083,6 @@ textarea.input.boxed {
 }
 .palette-item.active {
 	background: var(--surface-3);
-}
-
-/* Desk: the dense console */
-.desk-grid {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) 360px;
-	gap: 18px;
-	align-items: start;
-}
-.desk-table {
-	width: 100%;
-	border-collapse: collapse;
-	font-size: 13px;
-	font-variant-numeric: tabular-nums;
-}
-.desk-table th {
-	text-align: right;
-	font-weight: 600;
-	font-size: 12.5px;
-	color: var(--ink-2);
-	padding: 8px 10px;
-	border-bottom: 1px solid var(--line-2);
-	white-space: nowrap;
-}
-.desk-table th:first-child,
-.desk-table td:first-child {
-	text-align: left;
-}
-.desk-table td {
-	font-variant-numeric: tabular-nums;
-	text-align: right;
-	padding: 8px 10px;
-	border-bottom: 1px solid var(--line);
-	white-space: nowrap;
-	color: var(--ink);
-}
-.desk-table tr.tappable:hover td {
-	background: var(--surface-2);
-	cursor: pointer;
-}
-.desk-table td.bar-cell {
-	width: 220px;
-	padding-right: 0;
-}
-.desk-table tfoot td {
-	font-weight: 600;
-	border-top: 1px solid var(--line-2);
-	border-bottom: 0;
-}
-.desk-stat {
-	display: grid;
-	grid-template-columns: repeat(4, minmax(0, 1fr));
-	gap: 10px;
-	margin-bottom: 16px;
-}
-.desk-stat .card {
-	padding: 12px 14px;
-	margin: 0;
-}
-.desk-stat .k {
-	font-size: 12.5px;
-	font-weight: 500;
-	color: var(--ink-2);
-}
-.desk-stat .v {
-	font-size: 22px;
-	font-weight: 600;
-	margin-top: 2px;
-}
-.kbd {
-	font-family: var(--font-mono);
-	font-size: 11px;
-	padding: 1px 6px;
-	border: 1px solid var(--line-2);
-	border-radius: 5px;
-	color: var(--ink-2);
-}
-.desk-grid .card {
-	overflow: hidden;
-}
-.desk-grid .card + .card {
-	margin-top: 16px;
-}
-@media (max-width: 1200px) {
-	.desk-grid {
-		grid-template-columns: minmax(0, 1fr);
-	}
 }
 
 /* Settings: design sample + swatches inside segmented controls */

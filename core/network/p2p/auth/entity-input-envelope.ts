@@ -5,7 +5,7 @@ import {
   type ValidatedDeliverableEntityInput,
 } from '../../../runtime/delivery/topology/routing-validation';
 import { validateEntityTx } from '../../../entity/tx-validation';
-import { decodeRuntimeId } from './runtime-id';
+import { decodeRuntimeId } from '../../../protocol/identity/runtime-id';
 import type { RuntimeId } from '../../../protocol/identity';
 import {
   toRuntimeHeight,

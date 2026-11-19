@@ -18,6 +18,7 @@ import { mkdirSync, createWriteStream, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { scheduler } from 'node:timers/promises';
+import { parseArgs } from 'node:util';
 import { cleanupTestArtifactsBeforeRun, TEST_ARTIFACT_CLEANUP_DONE_ENV } from '../harness/test-artifact-cleanup';
 import { sanitizeChildProcessEnv } from '../../../api/server/child-process-env';
 import { assertBroadRunHasNoUnresolvedReruns } from '../harness/selective-rerun/ledger';
@@ -49,12 +50,27 @@ type CliArgs = {
   failFast: boolean;
 };
 
-export function parseArgs(args = process.argv.slice(2)): CliArgs {
-  const getFlag = (name: string): string | undefined => {
-    const arg = args.find(a => a.startsWith(`--${name}=`));
-    return arg?.split('=')[1];
+export function readSystemCliArgs(args = process.argv.slice(2)): CliArgs {
+  const { values } = parseArgs({
+    args,
+    strict: true,
+    allowPositionals: true,
+    options: {
+      scenarios: { type: 'string' },
+      workers: { type: 'string' },
+      'base-port': { type: 'string' },
+      'timeout-ms': { type: 'string' },
+      'anvil-timeout-ms': { type: 'string' },
+      'anvil-bin': { type: 'string' },
+      stream: { type: 'boolean' },
+      'no-fail-fast': { type: 'boolean' },
+    },
+  });
+  const getFlag = (name: keyof typeof values): string | undefined => {
+    const value = values[name];
+    return typeof value === 'string' ? value : undefined;
   };
-  const hasFlag = (name: string): boolean => args.includes(`--${name}`);
+  const hasFlag = (name: keyof typeof values): boolean => values[name] === true;
 
   const scenarios = (getFlag('scenarios') || DEFAULT_SCENARIOS.join(','))
     .split(',')
@@ -308,7 +324,7 @@ async function main(): Promise<void> {
     console.log('Usage: bun core/scripts/e2e/runners/run-system-tests-parallel.ts [--scenarios=a,b] [--workers=N]');
     return;
   }
-  const args = parseArgs();
+  const args = readSystemCliArgs();
   assertBroadRunHasNoUnresolvedReruns(undefined, { kind: 'scenario', targets: args.scenarios });
   cleanupTestArtifactsBeforeRun({ reason: 'system-tests' });
   process.env[TEST_ARTIFACT_CLEANUP_DONE_ENV] = '1';

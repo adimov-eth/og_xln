@@ -1,5 +1,5 @@
 import type { TokenDecimals } from '@xln/core/account/tx/units';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { explainWalletError } from '@xln/frontend/lib/utils/ui/walletError';
 import { HOME, PageHead } from '../components/PageHead';
@@ -42,13 +42,10 @@ import { counterpartyFeePolicy } from '../runtime/financial/manage';
 import { getAdapter } from '../runtime/adapter';
 import { TOUR_STEPS } from '../tour/steps';
 import { useTutorialTrade } from '../tour/trade';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
 
 type Mode = 'same' | 'cross';
 
-const normalizeId = (value: unknown): string =>
-  String(value || '')
-    .trim()
-    .toLowerCase();
 
 export function Swap() {
   const [params] = useSearchParams();
@@ -226,33 +223,6 @@ export function Swap() {
     setWantTextState(amountInputText(picked.want, wantDecimals));
     setPickedPriceTicks(mode === 'same' ? level.priceTicks : null);
   };
-
-  // A level picked on the Desk arrives as query parameters, because the Desk
-  // renders the book of a hub the Swap screen has not chosen yet. It is applied
-  // once, so it can never fight what the person types afterwards.
-  const deskPick = useRef(false);
-  useEffect(() => {
-    if (deskPick.current || !hub || !assetsReady) return;
-    const side = params.get('side');
-    const price = params.get('price');
-    const size = params.get('size');
-    if (side === null && price === null && size === null) return;
-    deskPick.current = true;
-    // A shared Desk URL is untrusted input, not an admitted market level.
-    // Reject malformed or nonpositive quotes before BigInt can crash the wallet.
-    if (
-      (side !== 'ask' && side !== 'bid') ||
-      !price ||
-      !size ||
-      !/^[1-9]\d*$/.test(price) ||
-      !/^[1-9]\d*$/.test(size)
-    ) {
-      toast('Invalid swap link. Choose a price from the order book.', 'danger');
-      return;
-    }
-    pickLevel(side, { priceTicks: BigInt(price), size: BigInt(size) });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hub, params, assetsReady]);
 
   const giveToken = hub?.tokens.find(token => token.tokenId === giveTokenId) ?? null;
   const giveSpendable = giveToken?.derived.outCapacity ?? 0n;

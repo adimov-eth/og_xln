@@ -1,6 +1,7 @@
 // Pure-JS entry: the bare Bun/Node entry loads msgpackr-extract, whose
 // per-isolate NAPI init clears a process-global token table that a racing
 // main-thread decode reads (binary-codec-native-extractor.test.ts).
+import { compareBytes } from '../../support/boundary-guards';
 import { Packr, addExtension } from 'msgpackr/pack';
 import { countOp, OP_COUNTERS_ENABLED } from '../../support/performance/op-counters';
 import { getPerfMs } from '../../support/time';
@@ -197,15 +198,6 @@ type BinaryPayloadValidator<T> = (value: unknown) => T;
 
 const asBytes = (value: Uint8Array | ArrayBuffer): Uint8Array =>
   value instanceof Uint8Array ? value : new Uint8Array(value);
-
-const compareBytes = (left: Uint8Array, right: Uint8Array): number => {
-  const limit = Math.min(left.byteLength, right.byteLength);
-  for (let index = 0; index < limit; index += 1) {
-    const difference = Number(left[index]) - Number(right[index]);
-    if (difference !== 0) return difference;
-  }
-  return left.byteLength - right.byteLength;
-};
 
 const unsupported = (path: string, detail: string): never => {
   throw new Error(`XLN_BINARY_CODEC_UNSUPPORTED:path=${path}:detail=${detail}`);

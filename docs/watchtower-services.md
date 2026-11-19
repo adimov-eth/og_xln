@@ -81,7 +81,6 @@ POST /api/tower/restore
 GET  /api/tower/receipt/:lookupKey
 POST /api/recovery/discover
 POST /api/recovery/state
-POST /api/recovery/complaint
 ```
 
 Operator endpoints:
@@ -96,7 +95,6 @@ Rules:
 - Operator API is disabled unless `--enable-operator-api` or
   `XLN_WATCHTOWER_OPERATOR_API=1` is set.
 - Public bind with operator API requires `XLN_WATCHTOWER_OPERATOR_TOKEN`.
-- Complaint intake is disabled unless `XLN_WATCHTOWER_ACCEPT_COMPLAINTS=1`.
 - Last-resort scheduler is disabled unless `--enable-last-resort-agent` or
   `XLN_WATCHTOWER_ENABLE_LAST_RESORT=1` is set.
 - Last-resort scheduler and sweep require `XLN_WATCHTOWER_PRIVATE_KEY`.

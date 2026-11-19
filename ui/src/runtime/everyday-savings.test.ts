@@ -3,7 +3,7 @@ import { createDefaultDelta } from '@xln/core/account/state/delta';
 import { asTokenDecimals } from '@xln/core/account/tx/units';
 import { deriveDelta } from '@xln/core/account/utils';
 import type { RuntimeAdapterEntitySummary, RuntimeAdapterViewFrame } from '@xln/core/api/public/runtime-module';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import type { AccountView, WalletView } from './views';
 
 const restoreGlobals: Array<() => void> = [];
@@ -386,7 +386,7 @@ test('quoteEverydaySettleTabRoute rethrows non-E_NOT_FOUND errors and fails on e
       { wallet: { entityId: SELF, frame: null }, targetEntityId: FRIEND, tokenId: 1, amount: 10_000_000n, primaryHubId: HUB },
       async () => [],
     ),
-  ).rejects.toThrow(SURFACES.everyday.flows['settle-tab'].failed.text);
+  ).rejects.toThrow(EVERYDAY_COPY.flows.settleTab.failed);
 
   let gossip = 0;
   let reads = 0;

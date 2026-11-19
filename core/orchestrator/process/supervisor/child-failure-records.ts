@@ -12,6 +12,7 @@ import {
   type ChildFailureDecision,
   type ChildFailureObservation,
 } from '../child-recovery-policy';
+import { errorMessage } from '../../../support/boundary-guards';
 
 type RecoverableChild = HubChild | MarketMakerChild;
 
@@ -26,7 +27,6 @@ type ChildFailureRecordDeps = Readonly<{
 }>;
 
 const meshLog = createStructuredLogger('mesh.orchestrator');
-const serializeError = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 const persistManagedChildFailure = (
   deps: ChildFailureRecordDeps,
@@ -193,7 +193,7 @@ const observeManagedRuntimeHalt = (
 const persistOrchestratorFailure = (deps: ChildFailureRecordDeps, error: unknown): string => {
   const { resetState, orchestratorCodeFingerprint, childDiagnosticsDir } = deps;
   const exitedAt = Date.now();
-  const reason = serializeError(error);
+  const reason = errorMessage(error);
   const observation: ChildFailureObservation = {
     role: 'orchestrator',
     name: 'mesh-orchestrator',

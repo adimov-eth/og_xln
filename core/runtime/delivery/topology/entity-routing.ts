@@ -5,7 +5,7 @@ import type { RuntimeReplica, RoutedEntityInput, RuntimeEntityInputsEnvelope, Ru
 import type { JInput } from '../../../jurisdiction/machine/input';
 import type { EntityTx } from '../../../types/entity-tx';
 import type { Profile } from '../../../entity/profile';
-import type { RuntimeOutputRoutingDeps } from './output-routing';
+import type { RuntimeOutputRoutingDeps } from '../pending';
 import { extractCrossJurisdictionRouteFromTx } from '../../../extensions/cross-j/boundary';
 import { getEffectiveEntityInputTxs } from '../../../entity/consensus/output/envelope';
 import { normalizeRuntimeId } from '../../../protocol/identity/runtime-id';

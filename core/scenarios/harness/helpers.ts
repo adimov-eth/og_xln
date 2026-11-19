@@ -8,11 +8,10 @@ import type { RuntimeReplica, RoutedEntityInput, RuntimeInput } from '../../runt
 import type { EntityInput, EntityReplica } from '../../entity/types';
 import type { Delta } from '../../types/account';
 import { formatRuntime } from '../../qa/runtime-ascii';
-import { setFailFastErrors } from '../../support/logger';
 import { deriveSignerAddressSync, getSignerPrivateKey } from '../../account/crypto';
 import { getTokenInfo } from '../../account/utils';
 import { createGossipLayer } from '../../network/p2p/gossip';
-import { normalizeRuntimeId } from '../../network/p2p/auth/runtime-id';
+import { normalizeRuntimeId } from '../../protocol/identity/runtime-id';
 import { drainJWatcherBacklog } from '../../jurisdiction/adapter/operations/backlog-drain';
 import { accountHasProposableMempool } from '../../entity/consensus/account/mempool-eligibility';
 import type { JAdapter } from '../../jurisdiction/adapter/types';
@@ -241,7 +240,6 @@ export function enableStrictScenario(env: RuntimeReplica, label: string): () => 
     env.scenarioLogLevel = env.quietRuntimeLogs ? 'warn' : 'info';
   }
   strictScenarioLogLevel = env.scenarioLogLevel;
-  setFailFastErrors(true);
 
   if (strictScenarioDepth === 0) {
     strictScenarioOriginalLog = console.log;
@@ -325,7 +323,6 @@ export function enableStrictScenario(env: RuntimeReplica, label: string): () => 
         console.error = strictScenarioOriginalError;
         strictScenarioOriginalError = null;
       }
-      setFailFastErrors(false);
     }
   };
 }

@@ -241,28 +241,6 @@ export const TOKENS = {
 } as const;
 
 // ═══════════════════════════════════════════════════════════════
-// PERFORMANCE & OPTIMIZATION
-// ═══════════════════════════════════════════════════════════════
-
-export const PERFORMANCE = {
-  /** Enable debug logging (disable in production) */
-  DEBUG_LOGGING: false,
-
-  /** Enable consensus debug logs */
-  DEBUG_CONSENSUS: false,
-
-  /** Enable account debug logs */
-  DEBUG_ACCOUNTS: false,
-
-  /** Enable routing debug logs */
-  DEBUG_ROUTING: false,
-
-  /** Always log blockchain errors */
-  LOG_BLOCKCHAIN_ERRORS: true,
-
-} as const;
-
-// ═══════════════════════════════════════════════════════════════
 // OPERATOR UI / DEBUG DISPLAY
 // ═══════════════════════════════════════════════════════════════
 

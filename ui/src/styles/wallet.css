@@ -1260,12 +1260,6 @@ details[open] > summary::before {
 	background: var(--dispute);
 }
 
-.desk-frame {
-	margin-left: 6px;
-	font-size: 11.5px;
-	font-variant-numeric: tabular-nums;
-}
-
 .hero-pair {
 	display: flex;
 	flex-wrap: wrap;
@@ -1308,19 +1302,6 @@ details[open] > summary::before {
 	padding: 6px;
 	border-radius: 8px;
 	background: var(--accent-dim);
-}
-
-/* Desk: the lane table takes the full width; recent activity and the book share the row below. */
-.desk-stack {
-	display: flex;
-	flex-direction: column;
-	gap: 16px;
-	min-width: 0;
-}
-
-.desk-stack .desk-grid {
-	grid-template-columns: minmax(0, 1fr) 360px;
-	gap: 16px;
 }
 
 /* A standing warning at the top of a screen: amber, one line of action. */
@@ -1497,11 +1478,6 @@ details[open] > summary::before {
 
 .crumb.static {
 	color: var(--ink-2);
-}
-
-.desk-actions {
-	margin: 0;
-	align-items: center;
 }
 
 .dispute-figures {

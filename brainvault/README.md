@@ -47,7 +47,7 @@ Before funding, close BrainVault, start a fresh process, enter everything again,
 and compare the **complete first receiving address**. Same-process confirmation
 only authorizes disclosure; it is not a recovery test.
 
-## Auditor entrance: five files, 603 lines
+## Auditor entrance: five files, 565 lines
 
 Do not read the repository alphabetically. Read the ownership chain:
 
@@ -62,17 +62,17 @@ src/core/canonical.ts           indexed validation + ordered BLAKE3 fold
 src/core/index.ts               mnemonics, keys, addresses
 ```
 
-The executable root in `spec.ts + kdf.ts + canonical.ts` is **294 physical
+The executable root in `spec.ts + kdf.ts + canonical.ts` is **286 physical
 lines**. Adding strict encoding and all wallet projection code makes the complete
-portable wallet meaning **603 physical lines**. Neither number includes tests,
+portable wallet meaning **565 physical lines**. Neither number includes tests,
 blank-line discounts, or generated code.
 
 | What you want to trust | Additional review | Physical lines | Useful skills |
 | --- | --- | ---: | --- |
-| Same 32-byte root | `src/core/primitives/spec.ts`, `kdf.ts`, `src/core/canonical.ts` | 294 | TypeScript, UTF-8/NFKD, Argon2id, BLAKE3 |
-| Same wallets and addresses | add `encoding.ts`, `src/core/index.ts` | 603 total | BIP-39, BIP-32, Ethereum derivation |
-| Terminal never reveals by accident | `src/cli/` | 2,296 | Bun, TTY/readline, Unix signals |
-| Scheduling cannot change the root | `src/native/` except `source/` and `prebuilds/` | 1,010 | workers, subprocesses, fail-closed validation |
+| Same 32-byte root | `src/core/primitives/spec.ts`, `kdf.ts`, `src/core/canonical.ts` | 286 | TypeScript, UTF-8/NFKD, Argon2id, BLAKE3 |
+| Same wallets and addresses | add `encoding.ts`, `src/core/index.ts` | 565 total | BIP-39, BIP-32, Ethereum derivation |
+| Terminal never reveals by accident | `src/cli/` | 1,970 | Bun, TTY/readline, Unix signals |
+| Scheduling cannot change the root | `src/native/` except `source/` and `prebuilds/` | 921 | workers, subprocesses, fail-closed validation |
 | npm and binary integrity | `src/packaging/` | 137 | tar, SHA-256, Mach-O reproducibility |
 | M3 Ultra Metal work | `src/native/source/metal/` host + kernel | 1,358 | Objective-C, Metal, GPU memory model |
 | Apple C/NEON work | first-party C bridge | 192 | C11, process I/O, memory wiping |
@@ -148,7 +148,6 @@ compatibility alias and never bypasses the final password confirmation.
 CLI creation and recovery accept Unicode using the frozen V1 NFKD/UTF-8 rule.
 Capitalization and every space remain exact; canonically or compatibility-
 equivalent Unicode spellings intentionally normalize to the same bytes.
-`--unicode-recovery` is a legacy no-op retained for old recovery instructions.
 The CLI requires eight password characters as input hygiene; it is not a safety
 claim. Existing short-password wallets remain recoverable with
 `--allow-short-password`.
@@ -215,7 +214,7 @@ bun add --exact --ignore-scripts brainvault@2.2.0
 Nothing in BrainVault has run. Read `node_modules/brainvault/README.md`, then:
 
 1. Authenticate the exact source commit or signed release through another channel.
-2. Audit `docs/spec-v1.md`, `tests/data/vectors-v1.json`, and the 603-line path.
+2. Audit `docs/spec-v1.md`, `tests/data/vectors-v1.json`, and the 565-line path.
 3. Audit exact dependencies in `docs/dependency-lock.audit` and `package.json`.
 4. Run `bun run verify:source` in the package. On Apple Silicon it builds every
    native artifact twice from vendored source and requires byte equality with
@@ -240,7 +239,6 @@ For a source checkout, the maximum-assurance sequence is:
 
 ```bash
 bun install --offline --frozen-lockfile --ignore-scripts
-bun test tests/historical.test.ts
 bun run verify:source
 bun run check
 bun run test:matrix
@@ -276,8 +274,8 @@ brainvault/               independently packable boundary
 
 Nothing above this directory is needed after installation. `docs/manifest.sha256`
 covers every shipped file except itself. `docs/dependency-lock.audit` is the
-manifest-covered copy of `bun.lock`, because npm omits lockfiles. Historical
-archives and raw benchmark/audit evidence are source-only and never nested in the
+manifest-covered copy of `bun.lock`, because npm omits lockfiles. Raw
+benchmark/audit evidence is source-only and never nested in the
 npm tarball.
 
 ## Release evidence
@@ -314,6 +312,4 @@ normalization, encoding, salt/domain strings, Argon2 parameters, factor math,
 shard order, final BLAKE3 fold, multiplier separation, mnemonic projection, or
 wallet paths in place. The normative definition is [`docs/spec-v1.md`](docs/spec-v1.md).
 
-The core and CLI are MIT. The optional OpenCL experiment is conservatively
-distributed as GPL-2.0-or-later with retained notices, so aggregate package
-metadata declares `MIT AND GPL-2.0-or-later`.
+BrainVault is MIT.

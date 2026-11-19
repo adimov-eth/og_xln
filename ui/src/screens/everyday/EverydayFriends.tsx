@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { planFriendSplitTxs } from '@xln/frontend/lib/everyday/everyday-cashout';
 import type { FriendTabRow } from '@xln/frontend/lib/everyday/everyday-projection';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import {
   quoteEverydaySettleTabRoute,
   resolveCounterpartySummaries,
@@ -88,7 +88,7 @@ export function EverydayFriends() {
         summaries,
       });
       await sendEntityTxs(wallet.entityId, wallet.signerId, txs);
-      const doneText = SURFACES.everyday.flows['split-tab'].done.text;
+      const doneText = EVERYDAY_COPY.flows.splitTab.done;
       setStatus(doneText);
       setAmountText('');
       toast(doneText);
@@ -96,7 +96,7 @@ export function EverydayFriends() {
       setError(
         failure instanceof Error
           ? failure.message
-          : SURFACES.everyday.flows['split-tab'].failed.text,
+          : EVERYDAY_COPY.flows.splitTab.failed,
       );
     } finally {
       setBusySplit(false);
@@ -127,14 +127,14 @@ export function EverydayFriends() {
         description: 'Settled tab',
         route,
       });
-      const doneText = SURFACES.everyday.flows['settle-tab'].done.text;
+      const doneText = EVERYDAY_COPY.flows.settleTab.done;
       setStatus(doneText);
       toast(doneText);
     } catch (failure) {
       setError(
         failure instanceof Error
           ? failure.message
-          : SURFACES.everyday.flows['settle-tab'].failed.text,
+          : EVERYDAY_COPY.flows.settleTab.failed,
       );
     } finally {
       setSettlingKey(null);
@@ -144,8 +144,8 @@ export function EverydayFriends() {
   return (
     <div className="everyday-screen fade-in">
       <div className="stack" style={{ gap: 6 }}>
-        <h1 className="page-title">{SURFACES.everyday.terms.people.text}</h1>
-        <p className="everyday-note">{SURFACES.everyday.terms.people.note}</p>
+        <h1 className="page-title">{EVERYDAY_COPY.terms.people.label}</h1>
+        <p className="everyday-note">{EVERYDAY_COPY.terms.people.note}</p>
         {projection.primary.friendsOweYou > 0n || projection.primary.youOweFriends > 0n ? (
           <div className="actions">
             {projection.primary.friendsOweYou > 0n ? (
@@ -155,7 +155,7 @@ export function EverydayFriends() {
             ) : null}
             {projection.primary.youOweFriends > 0n ? (
               <span className="everyday-note">
-                {SURFACES.everyday.terms.owed.text}:{' '}
+                {EVERYDAY_COPY.terms.owed.label}:{' '}
                 <strong>{formatEverydayMoney(projection.primary.youOweFriends, tokenId)}</strong>
               </span>
             ) : null}
@@ -164,7 +164,7 @@ export function EverydayFriends() {
       </div>
 
       <section className="everyday-panel" aria-label="Split a bill">
-        <strong>{SURFACES.everyday.flows['split-tab'].before.text}</strong>
+        <strong>{EVERYDAY_COPY.flows.splitTab.before}</strong>
         {knownPeople.length > 0 ? (
           <div className="chips">
             {knownPeople.slice(0, 6).map(person => (
@@ -227,8 +227,8 @@ export function EverydayFriends() {
           data-testid="everyday-split-btn"
         >
           {busySplit
-            ? SURFACES.everyday.flows['split-tab'].pending.text
-            : SURFACES.everyday.flows['split-tab'].before.text}
+            ? EVERYDAY_COPY.flows.splitTab.pending
+            : EVERYDAY_COPY.flows.splitTab.before}
         </button>
       </section>
 
@@ -267,8 +267,8 @@ export function EverydayFriends() {
                     data-testid="everyday-settle-btn"
                   >
                     {settlingKey === key
-                      ? SURFACES.everyday.flows['settle-tab'].pending.text
-                      : SURFACES.everyday.flows['settle-tab'].before.text}
+                      ? EVERYDAY_COPY.flows.settleTab.pending
+                      : EVERYDAY_COPY.flows.settleTab.before}
                   </button>
                 ) : null}
               </div>

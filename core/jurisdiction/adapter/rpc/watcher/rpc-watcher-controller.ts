@@ -7,8 +7,9 @@ import {
   watcherPollWindowLimit,
 } from '../../watcher/observe/watcher-poll-policy';
 import { isDebugEventEmitter } from '../../rpc-utils';
-import { haltProcessForFatalWatcherError, watcherErrorDetails, watcherErrorMessage } from '../rpc-boundary';
+import { haltProcessForFatalWatcherError, watcherErrorDetails } from '../rpc-boundary';
 import { rpcLog } from '../../rpc-public';
+import { errorMessage } from '../../../../support/boundary-guards';
 import { getMinimumScannedSignerJHeight, getWatcherStartBlock } from '../../watcher';
 import { requireWatcherJurisdictionReplica } from '../../watcher/observe/watcher-replica';
 import { runWatcherPoll } from './rpc-watcher-poll';
@@ -146,7 +147,7 @@ const handlePollFailure = (
   trace: RpcWatcherTrace,
   error: unknown,
 ): void => {
-  const message = watcherErrorMessage(error);
+  const message = errorMessage(error);
   if (state.session !== session || state.generation !== session.generation) {
     emitWatcherDebug(session, {
       event: 'j_watch_shutdown_poll_aborted',

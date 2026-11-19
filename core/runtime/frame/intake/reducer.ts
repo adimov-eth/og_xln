@@ -27,6 +27,8 @@ import type { RuntimeInputLimitOptions } from '../../mempool/input-validation';
 import type { RejectedEntityIngressEvidence } from './discard';
 import { advanceAppliedRuntimeFrame, buildAppliedRuntimeInput } from './finalize';
 import { safeStringify } from '../../../protocol/serialization';
+import { failfastAssert, readRuntimeMetadata, ENV_APPLY_ALLOWED_KEY, ENV_REPLAY_MODE_KEY } from '../../loop/loop-environment';
+import { runtimeRouting } from '../../loop/loop-routing';
 import { nodeProcess } from '../../../support/process/runtime-process';
 import type { EntityInfraContext } from '../../../types/entity/infra-context';
 
@@ -34,7 +36,7 @@ const runtimeLog = createStructuredLogger('runtime');
 const APPLY_PROFILE_ENABLED = nodeProcess?.env?.['XLN_RUNTIME_APPLY_PROFILE'] === '1';
 const APPLY_SLOW_MS = Math.max(0, Number(nodeProcess?.env?.['XLN_RUNTIME_APPLY_SLOW_MS'] || '500'));
 
-export type RuntimeInputReducerDeps = RuntimeInputAdmissionDeps & {
+type RuntimeInputReducerDeps = RuntimeInputAdmissionDeps & {
   assertApplyAllowed(env: RuntimeReplica): void;
   isReplay(env: RuntimeReplica): boolean;
   getRoutingDeps(): RuntimeEntityRoutingDeps;
@@ -254,65 +256,77 @@ const applyRuntimeInputPhases = async (
   return { result, profiledRuntimeTxs: ingress.runtimeTxs };
 };
 
-export const createRuntimeInputReducer = (
-  deps: RuntimeInputReducerDeps,
-): RuntimeInputReducer => {
-  let preparedIngress:
-    | { env: RuntimeReplica; runtimeInput: RuntimeInput; prepared: PreparedRuntimeIngress }
-    | null = null;
+const reducerDeps: RuntimeInputReducerDeps = {
+  assertApplyAllowed: env => {
+    failfastAssert(
+      env.scenarioMode === true || readRuntimeMetadata(env, ENV_APPLY_ALLOWED_KEY) === true,
+      'RUNTIME_APPLY_DIRECT_CALL',
+      'applyRuntimeInput must be invoked via process()/WAL replay (non-scenario)',
+      { runtimeId: env.runtimeId, height: env.state.height },
+    );
+  },
+  isReplay: env => readRuntimeMetadata(env, ENV_REPLAY_MODE_KEY) === true,
+  normalizeEntityInput: runtimeRouting.normalizeRuntimeEntityInput,
+  getRoutingDeps: runtimeRouting.getRuntimeEntityRoutingDeps,
+};
 
-  const takePreparedIngress = (
-    env: RuntimeReplica,
-    runtimeInput: RuntimeInput,
-    isReplay: boolean,
-  ): PreparedRuntimeIngress => {
-    const cached = preparedIngress;
-    preparedIngress = null;
-    if (cached && cached.env === env && cached.runtimeInput === runtimeInput) {
-      return cached.prepared;
-    }
-    return validateRuntimeInputIngress(env, runtimeInput, isReplay, deps);
-  };
+let preparedIngress:
+  | { env: RuntimeReplica; runtimeInput: RuntimeInput; prepared: PreparedRuntimeIngress }
+  | null = null;
 
-  const reducer: RuntimeInputReducer = async (env, runtimeInput) => {
-    deps.assertApplyAllowed(env);
-    if (!env.emit) attachEventEmitters(env);
-    const profile = createApplyProfiler();
-    const isReplay = deps.isReplay(env);
+const takePreparedIngress = (
+  env: RuntimeReplica,
+  runtimeInput: RuntimeInput,
+  isReplay: boolean,
+): PreparedRuntimeIngress => {
+  const cached = preparedIngress;
+  preparedIngress = null;
+  if (cached && cached.env === env && cached.runtimeInput === runtimeInput) {
+    return cached.prepared;
+  }
+  return validateRuntimeInputIngress(env, runtimeInput, isReplay, reducerDeps);
+};
 
-    try {
-      if (isReplay) {
-        runtimeLog.debug('input.replay.apply', {
-          runtimeTxs: runtimeInput.runtimeTxs.length,
-          entityInputs: runtimeInput.entityInputs.length,
-        });
-      }
-      const { result, profiledRuntimeTxs } = await applyRuntimeInputPhases(
-        env,
-        runtimeInput,
-        deps,
-        profile,
-        isReplay,
-        takePreparedIngress(env, runtimeInput, isReplay),
-      );
-      profile.finish(env, result, profiledRuntimeTxs);
-      return result;
-    } catch (error) {
-      preparedIngress = null;
-      if (env.strictScenario) throw error;
-      runtimeLog.error('apply_input.failed', {
-        error: error instanceof Error ? error.message : String(error),
-        ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+const reducer = async (env: RuntimeReplica, runtimeInput: RuntimeInput): Promise<AppliedRuntimeInput> => {
+  reducerDeps.assertApplyAllowed(env);
+  if (!env.emit) attachEventEmitters(env);
+  const profile = createApplyProfiler();
+  const isReplay = reducerDeps.isReplay(env);
+
+  try {
+    if (isReplay) {
+      runtimeLog.debug('input.replay.apply', {
+        runtimeTxs: runtimeInput.runtimeTxs.length,
+        entityInputs: runtimeInput.entityInputs.length,
       });
-      throw error;
     }
-  };
-  reducer.validate = (env, runtimeInput, options): void => {
+    const { result, profiledRuntimeTxs } = await applyRuntimeInputPhases(
+      env,
+      runtimeInput,
+      reducerDeps,
+      profile,
+      isReplay,
+      takePreparedIngress(env, runtimeInput, isReplay),
+    );
+    profile.finish(env, result, profiledRuntimeTxs);
+    return result;
+  } catch (error) {
+    preparedIngress = null;
+    if (env.strictScenario) throw error;
+    runtimeLog.error('apply_input.failed', {
+      error: error instanceof Error ? error.message : String(error),
+      ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+    });
+    throw error;
+  }
+};
+
+export const applyRuntimeInput: RuntimeInputReducer = Object.assign(reducer, {
+  validate: (env: RuntimeReplica, runtimeInput: RuntimeInput, options?: RuntimeInputLimitOptions): void => {
     preparedIngress = {
       env,
       runtimeInput,
-      prepared: validateRuntimeInputIngress(env, runtimeInput, deps.isReplay(env), deps, options),
+      prepared: validateRuntimeInputIngress(env, runtimeInput, reducerDeps.isReplay(env), reducerDeps, options),
     };
-  };
-  return reducer;
-};
+  },
+});

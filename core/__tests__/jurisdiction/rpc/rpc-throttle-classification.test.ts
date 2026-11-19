@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 
 import { isTransientRpcUnavailableError } from '../../../jurisdiction/adapter/rpc-public';
 import { isRpcWatcherTransientError } from '../../../jurisdiction/adapter/rpc/rpc-adapter';
-import { ReceiptAvailabilityError } from '../../../jurisdiction/adapter/receipt-root';
+import { ReceiptAvailabilityError } from '../../../jurisdiction/adapter/receipt/reader';
 import { RpcTransportUnavailableError } from '../../../jurisdiction/adapter/kernel/failure';
 import { createRpcChainIo } from '../../../jurisdiction/adapter/rpc/rpc-chain-io';
 import type { JAdapterConfig } from '../../../jurisdiction/adapter/types';

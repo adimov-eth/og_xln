@@ -1,5 +1,6 @@
 import {
   FinancialDataCorruptionError,
+  rejectUnexpectedKeys,
   validateArray,
   validateMapInstance,
   validateNumber,
@@ -35,20 +36,6 @@ export type DecodedEntityFrame = EntityFrame & Readonly<{
   hash: FrameHash;
   entityContext: DecodedEntityInfraContext;
 }>;
-
-const rejectUnexpectedKeys = (
-  value: Record<string, unknown>,
-  allowed: readonly string[],
-  context: string,
-): void => {
-  for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) {
-      throw new FinancialDataCorruptionError(
-        `${context} has unexpected key "${key}"`,
-      );
-    }
-  }
-};
 
 const validateLeaderVoteBody = (
   value: unknown,

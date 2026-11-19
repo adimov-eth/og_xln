@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { cpus } from 'node:os';
 import { combineShardsWithParams, bytesToHex, factorForShardCount } from '../../../core/index.ts';
 import { BRAINVAULT_V1, BRAINVAULT_V1_SPEC_ID, createShardSalt } from '../../../core/primitives/spec.ts';
+import { encodeNativeInput } from '../../hybrid.ts';
 
 type Mode = 'cpu' | 'metal' | 'hybrid' | 'parity';
 
@@ -83,18 +84,7 @@ const salts = await Promise.all(
 );
 
 function makeInput(first: number, count: number, workers: number): Buffer {
-  const input = Buffer.alloc(24 + password.length + count * 32);
-  input.writeUInt32LE(0x32435642, 0);
-  input.writeUInt32LE(count, 4);
-  input.writeUInt32LE(Math.min(workers, count), 8);
-  input.writeUInt32LE(password.length, 12);
-  input.writeUInt32LE(0, 16);
-  input.writeUInt32LE(BRAINVAULT_V1.SHARD_MEMORY_KB, 20);
-  input.set(password, 24);
-  for (let offset = 0; offset < count; offset += 1) {
-    input.set(salts[first + offset]!, 24 + password.length + offset * 32);
-  }
-  return input;
+  return encodeNativeInput(password, salts.slice(first, first + count), workers, BRAINVAULT_V1.SHARD_MEMORY_KB);
 }
 
 type Run = Readonly<{ output: Buffer; timeMs: number; profile?: string }>;

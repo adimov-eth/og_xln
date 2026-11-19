@@ -4,24 +4,14 @@ import type { JTokenInfo } from '../../../jurisdiction/adapter/types';
 import { defaultTokensForJurisdiction } from '../../../jurisdiction/machine/config/default-tokens';
 import { deployMissingDefaultTokens } from '../../../jurisdiction/adapter/operations/dev-token-deployment';
 import { createStructuredLogger } from '../../../support/logger';
+import { raceTimeout } from '../../../support/time';
 import { readPositiveIntegerEnv } from '../../../config/environment';
 import { HUB_REQUIRED_TOKEN_COUNT } from '../health/hub';
 
 const serverLog = createStructuredLogger('server');
 const TOKEN_CATALOG_TIMEOUT_MS = Math.max(1000, readPositiveIntegerEnv('TOKEN_CATALOG_TIMEOUT_MS', 6_000));
-const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race<T>([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timeout after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-};
+const withTimeout = <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> =>
+  raceTimeout(promise, timeoutMs, () => new Error(`${label} timeout after ${timeoutMs}ms`));
 
 const desiredTokenSymbols = (adapter: JAdapter): string[] =>
   defaultTokensForJurisdiction({ chainId: Number(adapter.chainId) })

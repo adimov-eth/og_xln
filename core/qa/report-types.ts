@@ -5,7 +5,7 @@ export type QaSlowStep = {
   endMs?: number;
 };
 
-export type QaAuthoredScenarioStep = {
+type QaAuthoredScenarioStep = {
   title: string;
   text: string;
   ms?: number;
@@ -68,24 +68,6 @@ export const QA_PHASE_WATERFALL_ORDER = [
   'viteBoot',
   'playwright',
 ] as const satisfies readonly QaPhaseKey[];
-
-export const QA_PHASE_WATERFALL_LABELS: Record<QaPhaseKey, string> = {
-  preflight: 'preflight',
-  anvilBoot: 'anvil',
-  apiBoot: 'api boot',
-  apiHealthy: 'health',
-  viteBoot: 'vite',
-  playwright: 'playwright',
-};
-
-export const QA_PHASE_WATERFALL_BUDGET_MS: Record<QaPhaseKey, number> = {
-  preflight: 1_000,
-  anvilBoot: 5_000,
-  apiBoot: 5_000,
-  apiHealthy: 5_000,
-  viteBoot: 5_000,
-  playwright: 5_000,
-};
 
 export type QaCodeFingerprint = {
   gitHead: string | null;
@@ -426,8 +408,6 @@ export type QaShardFailureInput = Pick<QaShardManifest, 'status' | 'error' | 'lo
 const QA_EVIDENCE_ROOT = process.env['QA_EVIDENCE_ROOT']
   ? resolve(process.env['QA_EVIDENCE_ROOT'])
   : resolve(process.cwd(), '.logs');
-export const QA_LOGS_ROOT = resolve(QA_EVIDENCE_ROOT, 'e2e-parallel');
-export const QA_STORY_SCREENSHOTS_ROOT = resolve(process.cwd(), 'tests', 'e2e', 'screenshots');
 export const QA_HISTORY_DB_PATH = resolve(QA_EVIDENCE_ROOT, 'qa-history.sqlite');
 
 export type QaHistoryEntry = {
@@ -480,7 +460,7 @@ export type QaRetentionPurgeResult = {
   deletedHistoryRows: number;
 };
 
-export type QaStorySource = 'e2e-screenshots' | 'qa-run';
+type QaStorySource = 'e2e-screenshots' | 'qa-run';
 
 export type QaStoryScreenshot = {
   id: string;
@@ -501,22 +481,6 @@ export type QaStoryScreenshot = {
   status?: QaShardManifest['status'];
 };
 
-export const QA_UX_RELEASE_PACK_MIN_SCREENS = 30;
-export const QA_UX_RELEASE_REQUIRED_GROUPS = [
-  'Onboarding',
-  'Portfolio',
-  'Accounts',
-  'Payments',
-  'Swap',
-  'On-chain Batch',
-  'Disputes',
-  'History',
-  'Settings',
-  'QA Cockpit',
-  'Health',
-  'Remote Runtime Import',
-  'Time Machine',
-] as const;
 
 export type QaUxReleasePackAudit = {
   status: 'ready' | 'missing';

@@ -1,5 +1,6 @@
 import type { NavigationSelection } from '#lib/stores/appStateStore.ts';
 import type { Runtime as VaultRuntime } from '#lib/stores/vault/vaultStore.ts';
+import { normalizeId } from '../../utils/primitives';
 
 export type NavigationItem = {
   id: string;
@@ -53,7 +54,6 @@ export type HierarchicalNavigationView = {
   accountItems: NavigationItem[];
 };
 
-const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 const runtimeMatchesView = (runtimeId: string, runtimeView: RuntimeNavigationViewProjection | null | undefined): boolean =>
   normalizeId(runtimeId) === normalizeId(runtimeView?.runtimeId);

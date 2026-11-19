@@ -7,7 +7,7 @@ import type { Signer } from 'ethers';
 import { ethers } from 'ethers';
 import { normalizeReceiptHash, parseReceiptQuantity } from '../../machine/receipt-codec';
 import { applyJBlockHeadersIngressTransform } from '../watcher';
-import type { RpcBatchCall } from '../receipt-root';
+import type { RpcBatchCall } from '../receipt/reader';
 import {
   applyGasHeadroom,
   decodeRpcReceipt,
@@ -45,16 +45,13 @@ type ChainIoSettings = {
   txWaitTimeoutMs: number;
 };
 
+const GAS_HEADROOM_BPS = 12_000;
+const MAX_FEE_GWEI = 200;
+
 const readSettings = (config: JAdapterConfig): ChainIoSettings => ({
-  gasHeadroomBps: Math.max(10_000, Math.floor(Number(process.env['JADAPTER_GAS_HEADROOM_BPS'] ?? '12000'))),
-  maxFeePerGasWei: ethers.parseUnits(
-    String(Math.max(1, Math.floor(Number(process.env['JADAPTER_MAX_FEE_GWEI'] ?? '200')))),
-    'gwei',
-  ),
-  txWaitConfirms: Math.max(
-    1,
-    Math.floor(Number(process.env['JADAPTER_TX_WAIT_CONFIRMS'] ?? config.txWaitConfirms ?? 1)),
-  ),
+  gasHeadroomBps: GAS_HEADROOM_BPS,
+  maxFeePerGasWei: ethers.parseUnits(String(MAX_FEE_GWEI), 'gwei'),
+  txWaitConfirms: Math.max(1, Math.floor(Number(config.txWaitConfirms ?? 1))),
   txWaitTimeoutMs: Math.max(
     10_000,
     Math.floor(Number(process.env['JADAPTER_TX_WAIT_TIMEOUT_MS'] ?? config.txWaitTimeoutMs ?? 300_000)),
@@ -150,38 +147,32 @@ const fetchTronJson = async (
   request: Readonly<{ body: string; label: string; detail?: string }>,
 ): Promise<unknown> => {
   const { body, label, detail = '' } = request;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TRON_FETCH_TIMEOUT_MS);
+  let response: Response;
   try {
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(config.tronApiKey ? { 'TRON-PRO-API-KEY': config.tronApiKey } : {}),
-        },
-        body,
-        signal: controller.signal,
-      });
-    } catch (error) {
-      const timedOut = error instanceof Error && error.name === 'AbortError';
-      throw new RpcTransportUnavailableError(`${label}_${timedOut ? 'TIMEOUT' : 'UNREACHABLE'}${detail}`, { cause: error });
-    }
-    if (!response.ok) {
-      const message = `${label}_HTTP${detail}:${response.status}`;
-      if (TRANSIENT_RPC_HTTP_STATUSES.has(response.status)) throw new RpcTransportUnavailableError(message);
-      throw new Error(message);
-    }
-    try {
-      return await response.json();
-    } catch (error) {
-      const timedOut = error instanceof Error && error.name === 'AbortError';
-      if (timedOut) throw new RpcTransportUnavailableError(`${label}_TIMEOUT${detail}`, { cause: error });
-      throw new Error(`${label}_RESPONSE_INVALID${detail}`, { cause: error });
-    }
-  } finally {
-    clearTimeout(timeout);
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(config.tronApiKey ? { 'TRON-PRO-API-KEY': config.tronApiKey } : {}),
+      },
+      body,
+      signal: AbortSignal.timeout(TRON_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === 'TimeoutError';
+    throw new RpcTransportUnavailableError(`${label}_${timedOut ? 'TIMEOUT' : 'UNREACHABLE'}${detail}`, { cause: error });
+  }
+  if (!response.ok) {
+    const message = `${label}_HTTP${detail}:${response.status}`;
+    if (TRANSIENT_RPC_HTTP_STATUSES.has(response.status)) throw new RpcTransportUnavailableError(message);
+    throw new Error(message);
+  }
+  try {
+    return await response.json();
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === 'TimeoutError';
+    if (timedOut) throw new RpcTransportUnavailableError(`${label}_TIMEOUT${detail}`, { cause: error });
+    throw new Error(`${label}_RESPONSE_INVALID${detail}`, { cause: error });
   }
 };
 

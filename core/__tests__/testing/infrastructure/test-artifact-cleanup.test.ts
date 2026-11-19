@@ -664,8 +664,6 @@ describe('test artifact cleanup', () => {
 
     expect(rootPackage).toContain('run-with-test-cleanup.ts --reason=e2e-prod-payment --scope=e2e');
     expect(rootPackage).toContain('run-with-test-cleanup.ts --reason=contracts --child-cwd=jurisdictions');
-    expect(rootPackage).toContain('run-with-test-cleanup.ts --reason=governance --child-cwd=jurisdictions');
-    expect(rootPackage).toContain('run-with-test-cleanup.ts --reason=entity --child-cwd=jurisdictions');
     expect(rootPackage).toContain('run-with-test-cleanup.ts --reason=persistence-cli -- bun core/scripts/operations/persistence/persistence-wal-smoke.ts');
     expect(rootPackage).toContain('run-with-test-cleanup.ts --reason=watchtower-smoke -- bun core/scripts/operations/production/watchtower-smoke.ts');
     expect(rootPackage).toContain('run-with-test-cleanup.ts --reason=rpc-settlement -- bun core/scripts/operations/settlement/rpc-settlement-parity.ts');

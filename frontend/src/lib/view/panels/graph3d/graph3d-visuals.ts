@@ -238,7 +238,6 @@ function drawPresentationLabel(context: CanvasRenderingContext2D, content: Entit
 export function createEntityLabel(
   content: EntityLabelContent,
   labelScale: number,
-  isVrActive: boolean,
 ): THREE.Sprite {
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
@@ -281,7 +280,7 @@ export function createEntityLabel(
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: true }),
   );
-  sprite.userData['worldHeight'] = 2.2 * labelScale * (isVrActive ? 3 : 1);
+  sprite.userData['worldHeight'] = 2.2 * labelScale;
   sprite.userData['contentKey'] = content.key;
   // Focus dimming greys this label out by redrawing it; it must not also fade it.
   sprite.userData['focusKeepsOpacity'] = true;
@@ -461,7 +460,6 @@ export function createGraphEntityNode(options: {
   getEntitySize(entityId: string, tokenId: number): number;
   labelContent: { flag: string; labelText: string; key: string };
   labelScale: number;
-  isVrActive: boolean;
 }): GraphEntityData {
   const position = (() => {
     if (options.userPosition) return options.userPosition;
@@ -517,7 +515,7 @@ export function createGraphEntityNode(options: {
   mesh.userData['isHub'] = options.isHub;
   mesh.userData['isFed'] = isFed;
   mesh.userData['baseMaterial'] = material;
-  const label = createEntityLabel(options.labelContent, options.labelScale, options.isVrActive);
+  const label = createEntityLabel(options.labelContent, options.labelScale);
   positionEntityLabel(label, entitySize);
   mesh.add(label);
   return {

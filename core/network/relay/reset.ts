@@ -1,12 +1,12 @@
 import { createStructuredLogger } from '../../support/logger';
 import type { RelayStore } from './store';
+import { errorMessage } from '../../support/boundary-guards';
 
 type RelayResetLogger = {
   warn(event: string, details: Record<string, unknown>): void;
 };
 
 const relayResetLog = createStructuredLogger('relay.reset');
-const formatError = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 export const closeRelayClientsForReset = (
   store: RelayStore,
@@ -22,7 +22,7 @@ export const closeRelayClientsForReset = (
     } catch (closeError) {
       log.warn('client.graceful_close_failed', {
         runtimeId,
-        error: formatError(closeError),
+        error: errorMessage(closeError),
       });
     }
 
@@ -32,7 +32,7 @@ export const closeRelayClientsForReset = (
       store.clients.delete(runtimeId);
       log.warn('client.force_terminated', { runtimeId });
     } catch (terminateError) {
-      const error = formatError(terminateError);
+      const error = errorMessage(terminateError);
       log.warn('client.force_terminate_failed', { runtimeId, error });
       failures.push({ runtimeId, error });
     }

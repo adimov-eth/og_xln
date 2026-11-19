@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { sleep } from '../../../utils/primitives';
   import { browser } from '$app/env';
   import { onMount } from 'svelte';
   import type {
@@ -149,9 +150,6 @@
     return normalizeActivityHistoryPage(await runtimeQueryClient.readActivity(query), query);
   }
 
-  function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
 
   async function readActivitySourcesWithRetry(beforeHeight: number | null): Promise<ActivityResponse> {
     let lastError: unknown;

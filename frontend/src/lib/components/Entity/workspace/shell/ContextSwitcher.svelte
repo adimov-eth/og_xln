@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { normalizeId } from '../../../../utils/primitives';
   import { createEventDispatcher, onMount } from 'svelte';
   import Dropdown from '#lib/components/UI/Dropdown.svelte';
   import { allRuntimes, activeRuntime, vaultOperations } from '#lib/stores/vault/vaultStore.ts';
@@ -398,9 +399,6 @@
       : currentGroup.derivedEntities.find((entity) => normalizeId(entity.entityId) === currentEntityId) || currentGroup.selfEntity;
   }
 
-  function normalizeId(value: string | null | undefined): string {
-    return String(value || '').trim().toLowerCase();
-  }
 
   function truncateMiddle(value: string | null | undefined, head = 6, tail = 4): string {
     const text = String(value || '').trim();
@@ -531,7 +529,6 @@
   bind:open
   minWidth={300}
   maxWidth={620}
-  local={true}
   ariaLabel={currentTitle}
   triggerTestId="context-current"
   triggerRuntimeId={currentRuntimeId}

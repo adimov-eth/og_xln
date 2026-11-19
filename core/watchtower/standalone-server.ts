@@ -7,7 +7,6 @@
 import {
   handlePushRegister,
   handlePushUnregister,
-  handleRecoveryComplaint,
   handleRecoveryDiscover,
   handleRecoveryState,
   handleTowerAppointment,
@@ -23,6 +22,7 @@ import { createWatchtowerStore, type WatchtowerStore } from './store';
 import { createPushStore, type PushStore } from './push/store';
 import { createPushSender, type PushSenderConfig } from './push/sender';
 import { createStructuredLogger } from '../support/logger';
+import { hasCliFlag, readCliOption } from '../config/cli';
 import {
   createSerialLock,
   disabledIntervalSweep,
@@ -30,6 +30,9 @@ import {
   type IntervalSweep,
   type SerialLock,
 } from './sweep-health';
+
+const DEFAULT_MAX_TOTAL_STORED_BYTES = 1024 * 1024 * 1024;
+const DEFAULT_MAX_LOOKUP_KEYS = 10_000;
 
 export type StandaloneWatchtowerOptions = {
   host?: string;
@@ -246,9 +249,6 @@ const handlePublicTowerRoute = async (
   if (pathname === '/api/recovery/state' && request.method === 'POST') {
     return withCors(await handleRecoveryState(request, store));
   }
-  if (pathname === '/api/recovery/complaint' && request.method === 'POST') {
-    return withCors(await handleRecoveryComplaint(request, store));
-  }
   return null;
 };
 
@@ -393,43 +393,18 @@ export const startStandaloneWatchtowerServer = (options: StandaloneWatchtowerOpt
 
 if (import.meta.main) {
   const args = process.argv;
-  const portArgIdx = args.indexOf('--port');
-  const hostArgIdx = args.indexOf('--host');
-  const dbArgIdx = args.indexOf('--db');
-  const quotaArgIdx = args.indexOf('--quota-bytes');
-  const totalQuotaArgIdx = args.indexOf('--max-total-bytes');
-  const lookupKeysArgIdx = args.indexOf('--max-lookup-keys');
-  const bundlesArgIdx = args.indexOf('--max-bundles');
-  const sweepIntervalArgIdx = args.indexOf('--sweep-interval-ms');
-
-  const port = portArgIdx !== -1 && args[portArgIdx + 1]
-    ? Number(args[portArgIdx + 1])
-    : Number(process.env['XLN_WATCHTOWER_PORT'] || 9100);
-  const host = hostArgIdx !== -1 && args[hostArgIdx + 1]
-    ? String(args[hostArgIdx + 1])
-    : process.env['XLN_WATCHTOWER_HOST'] || '0.0.0.0';
-  const dbPath = dbArgIdx !== -1 && args[dbArgIdx + 1]
-    ? String(args[dbArgIdx + 1])
-    : process.env['XLN_WATCHTOWER_DB_PATH'];
-  const maxStoredBytesPerLookupKey = quotaArgIdx !== -1 && args[quotaArgIdx + 1]
-    ? Number(args[quotaArgIdx + 1])
-    : Number(process.env['XLN_WATCHTOWER_MAX_BYTES'] || 4 * 1024 * 1024);
-  const maxTotalStoredBytes = totalQuotaArgIdx !== -1 && args[totalQuotaArgIdx + 1]
-    ? Number(args[totalQuotaArgIdx + 1])
-    : Number(process.env['XLN_WATCHTOWER_MAX_TOTAL_BYTES'] || 1024 * 1024 * 1024);
-  const maxLookupKeys = lookupKeysArgIdx !== -1 && args[lookupKeysArgIdx + 1]
-    ? Number(args[lookupKeysArgIdx + 1])
-    : Number(process.env['XLN_WATCHTOWER_MAX_LOOKUP_KEYS'] || 10_000);
-  const maxBundlesPerLookupKey = bundlesArgIdx !== -1 && args[bundlesArgIdx + 1]
-    ? Number(args[bundlesArgIdx + 1])
-    : Number(process.env['XLN_WATCHTOWER_MAX_BUNDLES'] || 3);
+  const port = Number(readCliOption(args, '--port', process.env['XLN_WATCHTOWER_PORT'] || '9100'));
+  const host = readCliOption(args, '--host', process.env['XLN_WATCHTOWER_HOST'] || '0.0.0.0');
+  const dbPath = readCliOption(args, '--db') ?? process.env['XLN_WATCHTOWER_DB_PATH'];
+  const maxStoredBytesPerLookupKey = Number(readCliOption(args, '--quota-bytes', process.env['XLN_WATCHTOWER_MAX_BYTES'] || String(4 * 1024 * 1024)));
+  const maxTotalStoredBytes = Number(readCliOption(args, '--max-total-bytes', String(DEFAULT_MAX_TOTAL_STORED_BYTES)));
+  const maxLookupKeys = Number(readCliOption(args, '--max-lookup-keys', String(DEFAULT_MAX_LOOKUP_KEYS)));
+  const maxBundlesPerLookupKey = Number(readCliOption(args, '--max-bundles', process.env['XLN_WATCHTOWER_MAX_BUNDLES'] || '3'));
   const towerId = process.env['XLN_WATCHTOWER_ID'] || 'watchtower';
-  const sweepIntervalMs = sweepIntervalArgIdx !== -1 && args[sweepIntervalArgIdx + 1]
-    ? Number(args[sweepIntervalArgIdx + 1])
-    : Number(process.env['XLN_WATCHTOWER_SWEEP_INTERVAL_MS'] || 30_000);
-  const enableLastResortAgent = args.includes('--enable-last-resort-agent')
+  const sweepIntervalMs = Number(readCliOption(args, '--sweep-interval-ms', process.env['XLN_WATCHTOWER_SWEEP_INTERVAL_MS'] || '30000'));
+  const enableLastResortAgent = hasCliFlag(args, '--enable-last-resort-agent')
     || process.env['XLN_WATCHTOWER_ENABLE_LAST_RESORT'] === '1';
-  const enableOperatorApi = args.includes('--enable-operator-api')
+  const enableOperatorApi = hasCliFlag(args, '--enable-operator-api')
     || process.env['XLN_WATCHTOWER_OPERATOR_API'] === '1';
   const operatorToken = process.env['XLN_WATCHTOWER_OPERATOR_TOKEN'];
   const allowedRpcUrls = String(process.env['XLN_WATCHTOWER_ALLOWED_RPC_URLS'] || '')
@@ -437,7 +412,7 @@ if (import.meta.main) {
     .map(value => value.trim())
     .filter(Boolean);
 
-  const enablePushWake = args.includes('--enable-push-wake')
+  const enablePushWake = hasCliFlag(args, '--enable-push-wake')
     || process.env['XLN_PUSH_ENABLE'] === '1';
   const pushDbPath = process.env['XLN_PUSH_DB_PATH'];
   const pushSweepIntervalMs = Number(process.env['XLN_PUSH_SWEEP_INTERVAL_MS'] || 15_000);

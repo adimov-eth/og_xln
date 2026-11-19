@@ -1,39 +1,28 @@
-import { createDefaultDelta } from '@xln/core/account/state/delta';
 import { deriveDelta } from '@xln/core/account/utils';
 import type { TokenDecimals } from '@xln/core/account/tx/units';
 import type {
-  EntityTx,
   PaymentDeliveryMode,
   RuntimeAdapterEntitySummary,
   RuntimeAdapterViewFrame,
 } from '@xln/core/api/public/runtime-module';
 import type { LendingBankTerms } from '@xln/core/types/finance/lending';
-import {
-  isAccountDisputed,
-  planEverydayCapacityFunding,
-  type EverydaySendRoute,
-} from '@xln/frontend/lib/everyday/everyday-autopilot';
+import type { EverydaySendRoute } from '@xln/frontend/lib/everyday/everyday-autopilot';
 import {
   quoteEverydayRoutes,
   quoteSettleTabRoute,
   type EverydayRouteQuery,
 } from '@xln/frontend/lib/everyday/everyday-routes';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { submitSavingsDeposit } from '@xln/frontend/lib/everyday/everyday-savings';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { nativeInvoiceJurisdictionKeys } from '../../native/payment-request';
 import { getEmbeddedEnv, requireAdapter } from '../../runtime/adapter';
 import { toEverydayExternalRows } from '../../runtime/everyday';
 import type { ExternalWallet } from '../../runtime/financial/external';
-import {
-  claimFundingSubmission,
-  fundingSubmissionKey,
-  releaseFundingSubmission,
-} from '../../runtime/financial/funding-submission';
-import { buildLendingOfferTx, previewSavingsRisk } from '../../runtime/financial/lending';
 import { approveDepository } from '../../runtime/financial/move';
 import { quotePaymentRoutes } from '../../runtime/financial/payments';
 import { loadStackJurisdictions, type StackJurisdiction } from '../../runtime/hosted';
-import { sendEntityTxs, waitFor } from '../../runtime/tx';
-import { VIEW_FRAME_QUERY, type AccountView, type WalletView } from '../../runtime/views';
+import { sendEntityTxs } from '../../runtime/tx';
+import { VIEW_FRAME_QUERY, type WalletView } from '../../runtime/views';
 import { peekXLN } from '../../runtime/xln-loader';
 
 declare const __XLN_STACK_ORIGIN__: string;
@@ -83,7 +72,7 @@ export async function quoteEverydaySettleTabRoute(
     primaryHubId: input.primaryHubId,
     deriveDeltaFn: peekXLN()?.deriveDelta ?? deriveDelta,
     fetchRoutes: quoteFn,
-    noPathMessage: SURFACES.everyday.flows['settle-tab'].failed.text,
+    noPathMessage: EVERYDAY_COPY.flows.settleTab.failed,
   });
 }
 
@@ -147,108 +136,33 @@ type SavingsDepositInput = {
 export async function executeEverydaySavingsDeposit(input: SavingsDepositInput): Promise<void> {
   const xln = peekXLN();
   if (!xln) throw new Error('Wallet runtime is still starting.');
-  if (input.amount <= 0n) throw new Error('Enter an amount greater than zero.');
   const selfId = input.wallet.entityId.toLowerCase();
-  const hubId = input.hubId.toLowerCase();
-  const hub = input.wallet.accounts.find(account => account.counterpartyId.toLowerCase() === hubId);
-  if (!hubId || !hub) throw new Error('Savings is unavailable right now.');
-
-  const key = fundingSubmissionKey(selfId, hubId, input.tokenId);
-  claimFundingSubmission(key);
-  try {
-    await depositToSavings(xln, hub, selfId, hubId, input);
-  } finally {
-    releaseFundingSubmission(key);
+  const signerId = input.wallet.signerId;
+  if (!input.wallet.accounts.some(account => account.counterpartyId.toLowerCase() === input.hubId.toLowerCase())) {
+    throw new Error('Savings is unavailable right now.');
   }
-}
-
-async function depositToSavings(
-  xln: NonNullable<ReturnType<typeof peekXLN>>,
-  hub: AccountView,
-  selfId: string,
-  hubId: string,
-  input: SavingsDepositInput,
-): Promise<void> {
-  const plan = planEverydayCapacityFunding({
-    frame: input.wallet.frame,
-    entityId: selfId,
-    counterpartyId: hubId,
-    tokenId: input.tokenId,
-    amount: input.amount,
-    externalRows: toEverydayExternalRows(input.externalWallet?.rows),
-    nativeBalance: input.externalWallet?.native ?? null,
-    deriveDeltaFn: xln.deriveDelta,
-  });
-
-  let activeHub: Pick<AccountView, 'doc' | 'isLeft'> = hub;
-  switch (plan.kind) {
-    case 'ready':
-      break;
-    case 'disputed':
-      throw new Error('Savings is paused while your hub account is in recovery.');
-    case 'insufficient':
-      throw new Error('Not enough Cash available to add this amount to Savings.');
-    case 'needs-gas':
-      throw new Error('Add a small amount of network gas before adding to Savings.');
-    case 'pending-funding':
-      if (plan.reason === 'sent-batch') {
-        throw new Error('A deposit is already finishing. Try again in a moment.');
-      }
-      // A queued batch that already funds this hub is reused: only wait for it.
-      break;
-    case 'fund':
-      if (plan.needsApprovalAmount > 0n) {
+  await submitSavingsDeposit(
+    {
+      frame: input.wallet.frame,
+      entityId: selfId,
+      hubId: input.hubId,
+      tokenId: input.tokenId,
+      amount: input.amount,
+      amountText: input.amountText,
+      decimals: input.decimals,
+      externalRows: toEverydayExternalRows(input.externalWallet?.rows),
+      nativeBalance: input.externalWallet?.native ?? null,
+    },
+    {
+      deriveDelta: xln.deriveDelta,
+      readViewFrame: entityId => requireAdapter().read<RuntimeAdapterViewFrame>('view-frame', { entityId, ...VIEW_FRAME_QUERY }),
+      sendEntityTxs: txs => sendEntityTxs(selfId, signerId, txs),
+      approveDepository: async ({ tokenAddress, amount }) => {
         input.onStage?.('Approving token...');
-        await approveDepository(
-          selfId,
-          input.wallet.signerId,
-          plan.tokenAddress,
-          plan.needsApprovalAmount,
-          input.tokenId,
-        );
-      }
-      input.onStage?.('Moving from your Cash...');
-      await sendEntityTxs(selfId, input.wallet.signerId, plan.fundingTxs);
-      break;
-  }
-
-  if (plan.kind === 'fund' || plan.kind === 'pending-funding') {
-    input.onStage?.('Confirming deposit...');
-    await waitFor(
-      async () => {
-        const frame = await requireAdapter().read<RuntimeAdapterViewFrame>('view-frame', {
-          entityId: selfId,
-          ...VIEW_FRAME_QUERY,
-        });
-        const nextHub = frame.activeEntity?.accounts.items.find(
-          item => item.state.leftEntity.toLowerCase() === hubId || item.state.rightEntity.toLowerCase() === hubId,
-        );
-        if (!nextHub) return false;
-        if (isAccountDisputed(nextHub)) {
-          throw new Error('Savings is paused while your hub account is in recovery.');
-        }
-        const nextIsLeft = nextHub.state.leftEntity.toLowerCase() === selfId;
-        const nextDerived = xln.deriveDelta(
-          nextHub.state.deltas.get(input.tokenId) ?? createDefaultDelta(input.tokenId),
-          nextIsLeft,
-        );
-        if (nextDerived.outCapacity < input.amount) return false;
-        activeHub = { doc: nextHub, isLeft: nextIsLeft };
-        return true;
+        await approveDepository(selfId, signerId, tokenAddress, amount, input.tokenId);
       },
-      'savings funding confirmation',
-      60_000,
-      250,
-    );
-  }
-
-  input.onStage?.('Moving to Savings...');
-  const risk = previewSavingsRisk(activeHub, input.tokenId, input.amountText, String(input.terms.savingsInterestBps), input.decimals);
-  if (!risk?.ok) throw new Error(risk?.error ?? 'Savings terms are unavailable right now.');
-  const txs: EntityTx[] = [];
-  if (risk.requiredLimit > risk.currentLimit) {
-    txs.push({ type: 'extendCredit', data: { counterpartyEntityId: hubId, tokenId: input.tokenId, amount: risk.requiredLimit } });
-  }
-  txs.push(buildLendingOfferTx({ hubEntityId: hubId, tokenId: input.tokenId, amount: input.amount, termId: input.terms.termId, interestBps: input.terms.savingsInterestBps }));
-  await sendEntityTxs(selfId, input.wallet.signerId, txs);
+      resolveTerms: async () => input.terms,
+      ...(input.onStage ? { onStage: input.onStage } : {}),
+    },
+  );
 }

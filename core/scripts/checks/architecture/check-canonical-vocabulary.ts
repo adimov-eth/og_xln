@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { Glob } from 'bun';
+import { readFileSync } from 'node:fs';
 
 import ts from 'typescript';
 
@@ -51,13 +51,8 @@ const retiredAccountInputPhrases = [
   ['account', 'peer', 'message'].join(' '),
 ] as const;
 
-const listFiles = (directory: string, extension: string): string[] => readdirSync(directory, {
-  withFileTypes: true,
-}).flatMap(entry => {
-  const path = join(directory, entry.name);
-  if (entry.isDirectory()) return listFiles(path, extension);
-  return entry.isFile() && path.endsWith(extension) ? [path] : [];
-});
+const listFiles = (directory: string, extension: string): string[] =>
+  [...new Glob(`${directory}/**/*${extension}`).scanSync({ dot: true, onlyFiles: true })];
 
 const checkRetiredAccountInputVocabulary = (path: string, source: string): void => {
   for (const token of retiredAccountInputTokens) {

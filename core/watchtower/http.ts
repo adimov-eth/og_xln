@@ -410,29 +410,6 @@ export const handleRecoveryDiscover = async (req: Request, store: WatchtowerStor
 export const handleRecoveryState = async (req: Request, store: WatchtowerStore): Promise<Response> =>
   handleTowerRestore(req, store);
 
-export const handleRecoveryComplaint = async (req: Request, store: WatchtowerStore): Promise<Response> => {
-  try {
-    if (process.env['XLN_WATCHTOWER_ACCEPT_COMPLAINTS'] !== '1') {
-      return new Response(serializeTaggedJson({ ok: false, error: 'TOWER_COMPLAINTS_DISABLED' }), {
-        status: 404,
-        headers: { 'content-type': 'application/json' },
-      });
-    }
-    const body = decodeTowerRecord(await parseJsonBody(req, SMALL_MAX_JSON_BODY_BYTES), 'TOWER_COMPLAINT_BODY_INVALID');
-    await store.appendComplaint({
-      type: 'recovery_complaint',
-      lookupKey: typeof body['lookupKey'] === 'string' ? body['lookupKey'] : undefined,
-      reason: typeof body['reason'] === 'string' ? body['reason'] : 'unspecified',
-      details: body['details'] && typeof body['details'] === 'object' ? body['details'] as Record<string, unknown> : undefined,
-    });
-    return new Response(serializeTaggedJson({ ok: true }), {
-      headers: { 'content-type': 'application/json' },
-    });
-  } catch (error) {
-    return errorResponse(error);
-  }
-};
-
 /** The caller owns the sweep: its key, RPC allowlist and single-flight lock. */
 export const handleWatchtowerSweep = async (
   req: Request,

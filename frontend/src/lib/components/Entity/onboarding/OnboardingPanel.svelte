@@ -5,6 +5,7 @@
   belongs here. Do not derive, rehydrate, or create wallet state in this component.
 -->
 <script lang="ts">
+  import { sleep } from '../../../utils/primitives';
 import { asTokenId } from "@xln/core/protocol/units";
   import { onMount } from 'svelte';
   import { createEventDispatcher } from 'svelte';
@@ -124,7 +125,6 @@ import { asTokenId } from "@xln/core/protocol/units";
   const parseJoinCount = (pref: HubJoinPreference): number =>
     pref === 'manual' ? 0 : Number(pref);
 
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   type PublicHubResponse = {
     ok: true;

@@ -4,7 +4,6 @@ import { createOrderbookExtState, spreadDistributionTotal, validateSpreadDistrib
 import type { EntityInput, EntityState, Proposal } from '../../../types';
 import type { EntityRuntimeContext } from '../../../runtime-context';
 import type { EntityTx } from '../../../../types/entity-tx';
-import { log } from '../../../../support/diagnostics';
 import {
   isProfileEntityKind,
   isProfileEntitySector,
@@ -31,11 +30,11 @@ const basicLog = createStructuredLogger('entity.basic');
 
 const validateMessage = (message: string): boolean => {
   if (message.length > 1000) {
-    log.error(`❌ Message too long: ${message.length} > 1000 chars`);
+    basicLog.warn(`❌ Message too long: ${message.length} > 1000 chars`);
     return false;
   }
   if (message.length === 0) {
-    log.error('❌ Empty message not allowed');
+    basicLog.warn('❌ Empty message not allowed');
     return false;
   }
   return true;
@@ -57,7 +56,7 @@ export const handleChatEntityTx = (
   const { from, message } = entityTx.data;
 
   if (!validateMessage(message)) {
-    log.error(`❌ Invalid chat message from ${from}`);
+    basicLog.warn(`❌ Invalid chat message from ${from}`);
     return { newState: entityState, outputs: [] };
   }
 

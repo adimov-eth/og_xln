@@ -21,6 +21,18 @@ export const normalizeEntityRef = (value: unknown): string =>
     .trim()
     .toLowerCase();
 
+export const hasText = (value: string | undefined): value is string =>
+  typeof value === 'string' && value.length > 0;
+
+export const compareBytes = (left: Uint8Array, right: Uint8Array): number => {
+  const limit = Math.min(left.byteLength, right.byteLength);
+  for (let index = 0; index < limit; index += 1) {
+    const difference = Number(left[index]) - Number(right[index]);
+    if (difference !== 0) return difference;
+  }
+  return left.byteLength - right.byteLength;
+};
+
 export const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 export const errorMessage = (error: unknown): string =>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { CopyId } from '../components/CopyId';
 import { EverydaySettingsPanel } from '../components/everyday/EverydaySettingsPanel';
 import { Networks } from '../components/Networks';
@@ -31,7 +31,7 @@ export function SettingsScreen() {
     setResetting(true);
     void resetReactRetiredTestnetState().catch(failure => {
       setResetting(false);
-      toast(failure instanceof Error ? failure.message : SURFACES.everyday.flows['reset-demo'].failed.text, 'danger');
+      toast(failure instanceof Error ? failure.message : EVERYDAY_COPY.flows.resetDemo.failed, 'danger');
     });
   };
 
@@ -138,8 +138,8 @@ export function SettingsScreen() {
                 data-testid="settings-clear-test-data"
               >
                 {resetting
-                  ? SURFACES.everyday.flows['reset-demo'].pending.text
-                  : SURFACES.everyday.flows['reset-demo'].before.text}
+                  ? EVERYDAY_COPY.flows.resetDemo.pending
+                  : EVERYDAY_COPY.flows.resetDemo.before}
               </button>
             </div>
             <Profile />

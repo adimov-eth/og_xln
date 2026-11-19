@@ -106,7 +106,9 @@ describe('direct Hanko ABI codec', () => {
     // Trailing bytes and oversized uint32 words decode like AbiCoder (the
     // canonical re-encode in hanko/codec is what rejects them).
     expect(decodeHankoAbi(`${encoded}00`)).toEqual(normalize(CODER.decode([HANKO_TYPE], `${encoded}00`)));
-    const wide = encodeHankoAbi([[], '0x', [[randHex(32), [0n], [1n], 1n, (1n << 32n) | 7n, 0n, 0n]], []]);
+    const narrow = encodeHankoAbi([[], '0x', [[randHex(32), [0n], [1n], 1n, 7n, 0n, 0n]], []]);
+    const word = (value: bigint): string => value.toString(16).padStart(64, '0');
+    const wide = narrow.replace(word(7n), word((1n << 32n) | 7n));
     expect(decodeHankoAbi(wide)).toEqual(normalize(CODER.decode([HANKO_TYPE], wide)));
     expect(encodeHankoAbi(decodeHankoAbi(wide))).not.toBe(wide);
   });

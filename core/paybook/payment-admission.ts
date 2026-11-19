@@ -1,3 +1,4 @@
+import { bytesToHex } from '../support/bytes/hex-bytes';
 import { getAccountPerspective } from '../account/state/perspective';
 import { sameAccountStateDomain } from '../account/commitment/state-root';
 import { canProcessAccountTxForDisputeStatus } from '../account/consensus/dispute/policy';
@@ -137,7 +138,7 @@ export const hashRawHtlcPaymentTx = (tx: HtlcPaymentTx): string =>
 
 const secureRandomBytes32Hex = (): string => {
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
-  return `0x${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+  return bytesToHex(bytes);
 };
 
 /**
@@ -159,7 +160,7 @@ const generateHtlcEphemeralPrivateKey = (deterministicTestSeed?: string): string
   // RFC 7748 clamping internally.
   bytes[0] = bytes[0]! & 248;
   bytes[31] = (bytes[31]! & 127) | 64;
-  return `0x${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+  return bytesToHex(bytes);
 };
 
 export type MaterializeOriginatedHtlcPaymentsInput = Readonly<{

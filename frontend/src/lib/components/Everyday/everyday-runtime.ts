@@ -10,6 +10,7 @@ import { createExternalTokenCatalogLoader, fetchExternalTokenCatalog, readExtern
 import { parseTokenAmountInput } from '../Entity/assets/token-amount-input';
 import type { EverydaySendRoute, EverydayExternalRow } from '#lib/everyday/everyday-autopilot.ts';
 import type { EverydayExternalBalanceRow } from '#lib/everyday/everyday-projection.ts';
+import { formatDecimal } from '#lib/utils/format.ts';
 import type { RecoveryShieldStatusInput } from '#lib/everyday/everyday-recovery.ts';
 import {
   findDirectBilateralRoute,
@@ -27,14 +28,10 @@ export type EverydayExternalSnapshot = { externalRows: EverydayExternalRow[]; ba
 const catalogLoader = createExternalTokenCatalogLoader(() => fetchExternalTokenCatalog(resolveEverydayApiBase()));
 
 export function formatUsd(raw: bigint, decimals = 6): string {
-  const neg = raw < 0n;
-  const abs = neg ? -raw : raw;
-  const base = 10n ** BigInt(decimals);
-  const whole = abs / base;
-  const fracStr = (abs % base).toString().padStart(decimals, '0');
-  const cents = decimals >= 2 ? fracStr.slice(0, 2) : fracStr.padEnd(2, '0');
-  const extra = abs > 0n && abs < base / 100n ? fracStr.slice(0, Math.min(decimals, 4)).replace(/0+$/, '') : '';
-  return `${neg ? '−' : ''}$${whole.toLocaleString('en-US')}.${extra || cents}`;
+  const abs = raw < 0n ? -raw : raw;
+  const subCent = abs > 0n && abs < 10n ** BigInt(decimals) / 100n;
+  const text = subCent ? formatDecimal(abs, decimals, { max: 4 }) : formatDecimal(abs, decimals, { min: 2, max: 2 });
+  return `${raw < 0n ? '−' : ''}$${text.includes('.') ? text : `${text}.00`}`;
 }
 
 export function formatSignedUsd(raw: bigint, decimals = 6): string {

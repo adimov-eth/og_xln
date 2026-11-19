@@ -14,18 +14,14 @@ import type { RuntimeReplica } from '../types';
 import {
   createRuntimeConfig,
   ENV_REPLAY_MODE_KEY,
+  ensureRuntimeConfig,
   readRuntimeMetadata,
 } from '../loop/loop-environment';
+import { infraGossipDbAccess, trackInfraDbWrite } from '../loop/loop-envelope';
 
 const runtimeLog = createStructuredLogger('runtime');
 
-export type RuntimeStateCreateDeps = {
-  ensureRuntimeConfig(env: RuntimeReplica): NonNullable<RuntimeReplica['runtimeConfig']>;
-  infraGossipDbAccess: Parameters<typeof persistGossipProfileToInfraDb>[1];
-  trackInfraDbWrite(env: RuntimeReplica, promise: Promise<void>): void;
-};
-
-const prewarmRuntimeSignerCache = (seedText: string, count = 20): string[] => {
+export const prewarmRuntimeSignerCache = (seedText: string, count = 20): string[] => {
   try {
     return prewarmSignerKeyCache(seedText, count);
   } catch (error) {
@@ -36,93 +32,89 @@ const prewarmRuntimeSignerCache = (seedText: string, count = 20): string[] => {
   }
 };
 
-export const createRuntimeStateApi = (deps: RuntimeStateCreateDeps) => {
-  const createEmptyEnv = (
-    seed?: Uint8Array | string | null,
-    numericSignerPrewarmCount = 20,
-  ): RuntimeReplica => {
-    assertTypeScriptAccountExecution();
-    const normalizedSeed = Array.isArray(seed) ? new Uint8Array(seed) : seed;
-    const seedText =
-      normalizedSeed !== undefined && normalizedSeed !== null
-        ? typeof normalizedSeed === 'string'
-          ? normalizedSeed
-          : new TextDecoder().decode(normalizedSeed)
-        : '';
-    // Numeric signer 1 is the Runtime identity. Prewarm it once and reuse its
-    // address instead of repeating the same BIP-39 derivation for runtimeId.
-    const prewarmedSignerIds = seedText
-      ? prewarmRuntimeSignerCache(seedText, numericSignerPrewarmCount)
-      : [];
-    const derivedRuntimeId = prewarmedSignerIds[0] ?? null;
-    const resolvedRuntimeId = derivedRuntimeId?.toLowerCase() ?? null;
-    const dbNamespace = resolvedRuntimeId ? normalizeDbNamespace(resolvedRuntimeId) : undefined;
+export const createEmptyEnv = (
+  seed?: Uint8Array | string | null,
+  numericSignerPrewarmCount = 20,
+): RuntimeReplica => {
+  assertTypeScriptAccountExecution();
+  const normalizedSeed = Array.isArray(seed) ? new Uint8Array(seed) : seed;
+  const seedText =
+    normalizedSeed !== undefined && normalizedSeed !== null
+      ? typeof normalizedSeed === 'string'
+        ? normalizedSeed
+        : new TextDecoder().decode(normalizedSeed)
+      : '';
+  // Numeric signer 1 is the Runtime identity. Prewarm it once and reuse its
+  // address instead of repeating the same BIP-39 derivation for runtimeId.
+  const prewarmedSignerIds = seedText
+    ? prewarmRuntimeSignerCache(seedText, numericSignerPrewarmCount)
+    : [];
+  const derivedRuntimeId = prewarmedSignerIds[0] ?? null;
+  const resolvedRuntimeId = derivedRuntimeId?.toLowerCase() ?? null;
+  const dbNamespace = resolvedRuntimeId ? normalizeDbNamespace(resolvedRuntimeId) : undefined;
 
-    let env!: RuntimeReplica;
-    const gossip = createGossipLayer({
-      onAnnounce: profile => {
+  let env!: RuntimeReplica;
+  const gossip = createGossipLayer({
+    onAnnounce: profile => {
+      if (
+        !env ||
+        env.infrastructure?.infraDbClosing ||
+        readRuntimeMetadata(env, ENV_REPLAY_MODE_KEY) === true
+      ) return;
+      const write = persistGossipProfileToInfraDb(env, infraGossipDbAccess, profile);
+      trackInfraDbWrite(env, write);
+    },
+    getLiveProfiles: () => {
+      if (!env?.state.eReplicas?.size) return [];
+      const profiles = new Map<string, Profile>();
+      for (const [replicaKey, replica] of env.state.eReplicas) {
+        const entityId = extractEntityId(replicaKey);
+        const signerId = extractSignerId(replicaKey);
         if (
-          !env ||
-          env.infrastructure?.infraDbClosing ||
-          readRuntimeMetadata(env, ENV_REPLAY_MODE_KEY) === true
-        ) return;
-        const write = persistGossipProfileToInfraDb(env, deps.infraGossipDbAccess, profile);
-        deps.trackInfraDbWrite(env, write);
-      },
-      getLiveProfiles: () => {
-        if (!env?.state.eReplicas?.size) return [];
-        const profiles = new Map<string, Profile>();
-        for (const [replicaKey, replica] of env.state.eReplicas) {
-          const entityId = extractEntityId(replicaKey);
-          const signerId = extractSignerId(replicaKey);
-          if (
-            !entityId ||
-            !signerId ||
-            getSignerPrivateKeyIfAvailable(env, signerId) === null ||
-            profiles.has(entityId)
-          ) {
-            continue;
-          }
-          const existingTimestamp =
-            env.gossip?.getProfiles?.().find(profile => profile.entityId === entityId)?.lastUpdated ?? 0;
-          profiles.set(
-            entityId,
-            buildLocalEntityProfile(env, replica.state, Math.max(existingTimestamp + 1, env.state.timestamp || 1)),
-          );
+          !entityId ||
+          !signerId ||
+          getSignerPrivateKeyIfAvailable(env, signerId) === null ||
+          profiles.has(entityId)
+        ) {
+          continue;
         }
-        return [...profiles.values()];
-      },
-    });
+        const existingTimestamp =
+          env.gossip?.getProfiles?.().find(profile => profile.entityId === entityId)?.lastUpdated ?? 0;
+        profiles.set(
+          entityId,
+          buildLocalEntityProfile(env, replica.state, Math.max(existingTimestamp + 1, env.state.timestamp || 1)),
+        );
+      }
+      return [...profiles.values()];
+    },
+  });
 
-    env = {
-      state: {
-        eReplicas: new Map(),
-        jReplicas: new Map(),
-        height: 0,
-        timestamp: 0,
-      },
-      runtimeSeed: seedText,
-      ...(resolvedRuntimeId ? { runtimeId: resolvedRuntimeId } : {}),
-      ...(dbNamespace ? { dbNamespace } : {}),
-      runtimeMempool: { runtimeTxs: [], entityInputs: [] },
-      runtimeConfig: createRuntimeConfig(),
-      infrastructure: undefined,
-      gossip,
-      networkInbox: [],
-      pendingNetworkOutputs: [],
-      log: () => {},
-      info: () => {},
-      warn: () => {},
-      error: () => {},
-      emit: () => {},
-    };
-
-    attachEventEmitters(env);
-    requireRuntimeMempool(env);
-    deps.ensureRuntimeConfig(env);
-    ensureRuntimeInfrastructure(env);
-    return env;
+  env = {
+    state: {
+      eReplicas: new Map(),
+      jReplicas: new Map(),
+      height: 0,
+      timestamp: 0,
+    },
+    runtimeSeed: seedText,
+    ...(resolvedRuntimeId ? { runtimeId: resolvedRuntimeId } : {}),
+    ...(dbNamespace ? { dbNamespace } : {}),
+    runtimeMempool: { runtimeTxs: [], entityInputs: [] },
+    runtimeConfig: createRuntimeConfig(),
+    infrastructure: undefined,
+    gossip,
+    networkInbox: [],
+    pendingNetworkOutputs: [],
+    log: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    emit: () => {},
   };
 
-  return { createEmptyEnv, prewarmRuntimeSignerCache };
+  attachEventEmitters(env);
+  requireRuntimeMempool(env);
+  ensureRuntimeConfig(env);
+  ensureRuntimeInfrastructure(env);
+  return env;
 };

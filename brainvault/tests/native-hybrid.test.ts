@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { bytesToHex, combineShards } from '../src/core/index.ts';
 import { BRAINVAULT_V1, createShardSalt } from '../src/core/primitives/spec.ts';
-import { acceleratorPlan, deriveHybridNativeShards, type AcceleratorEngine } from '../src/native/hybrid.ts';
+import { acceleratorPlan, deriveHybridNativeShards } from '../src/native/hybrid.ts';
 
 const PACKAGE_ROOT = `${import.meta.dir}/..`;
 
@@ -44,26 +44,13 @@ function singleShardInput(password: Uint8Array, salt: Uint8Array, memoryKiB: num
   return input;
 }
 
-test('Rust native input uses fixed validated allocations so secret bytes are not reallocated', async () => {
-  const source = await Bun.file(`${PACKAGE_ROOT}/src/native/source/rust/src/main.rs`).text();
-  expect(source).not.toContain('read_to_end');
-  expect(source).toContain('read_exact(&mut header)');
-  expect(source).toContain('SecretVec(vec![0u8; password_len])');
-  expect(source).toContain('SecretVec(vec![0u8; salt_len])');
-});
-
 test('every bundled native executable rejects malformed wire input', () => {
   if (process.platform !== 'darwin' || process.arch !== 'arm64') return;
   const prebuildRoot = `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64`;
   const engines = [
     ['c-portable', `${prebuildRoot}/brainvault-argon2`, 8],
     ['c-native', `${prebuildRoot}/brainvault-argon2-m3`, 8],
-    ['rust-secure', `${prebuildRoot}/brainvault-argon2-rust`, 8],
-    ['rust-secure-m3', `${prebuildRoot}/brainvault-argon2-rust-m3`, 8],
-    ['rust-no-wipe', `${prebuildRoot}/brainvault-argon2-rust-no-wipe`, 8],
-    ['rust-no-wipe-m3', `${prebuildRoot}/brainvault-argon2-rust-no-wipe-m3`, 8],
     ['metal', `${prebuildRoot}/brainvault-argon2-metal`, 8],
-    ['opencl', `${prebuildRoot}/brainvault-argon2-opencl`, BRAINVAULT_V1.SHARD_MEMORY_KB],
   ] as const;
   const accepted: string[] = [];
   for (const [label, executable, memoryKiB] of engines) {
@@ -73,10 +60,7 @@ test('every bundled native executable rejects malformed wire input', () => {
       try {
         const result = Bun.spawnSync({
           cmd: [executable],
-          env: label === 'opencl' ? {
-            ...process.env,
-            BRAINVAULT_OPENCL_KERNEL_DIR: `${PACKAGE_ROOT}/src/native/source/opencl/data/kernels`,
-          } : process.env,
+          env: process.env,
           stdin: input,
           stdout: 'pipe',
           stderr: 'pipe',
@@ -98,10 +82,6 @@ test('native engines do not impose a non-V1 password length cap', () => {
   for (const executable of [
     `${prebuildRoot}/brainvault-argon2`,
     `${prebuildRoot}/brainvault-argon2-m3`,
-    `${prebuildRoot}/brainvault-argon2-rust`,
-    `${prebuildRoot}/brainvault-argon2-rust-m3`,
-    `${prebuildRoot}/brainvault-argon2-rust-no-wipe`,
-    `${prebuildRoot}/brainvault-argon2-rust-no-wipe-m3`,
     `${prebuildRoot}/brainvault-argon2-metal`,
   ]) {
     const input = longPasswordInput();
@@ -131,10 +111,6 @@ test('Apple M1 and M3 CPU prebuilds reproduce the frozen V1 shard', async () => 
     for (const executable of [
       `${prebuildRoot}/brainvault-argon2`,
       `${prebuildRoot}/brainvault-argon2-m3`,
-      `${prebuildRoot}/brainvault-argon2-rust`,
-      `${prebuildRoot}/brainvault-argon2-rust-m3`,
-      `${prebuildRoot}/brainvault-argon2-rust-no-wipe`,
-      `${prebuildRoot}/brainvault-argon2-rust-no-wipe-m3`,
     ]) {
       const input = singleShardInput(password, salt, BRAINVAULT_V1.SHARD_MEMORY_KB);
       try {
@@ -418,44 +394,37 @@ test('every accelerator reproduces frozen ASCII, Unicode/NUL, and ordered smoke 
     'benchmark-smoke-2',
   ].includes(vector.id));
   const cpuExecutable = `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/brainvault-argon2`;
-  for (const engine of ['metal', 'metal-generic', 'opencl'] satisfies AcceleratorEngine[]) {
-    for (const vector of vectors) {
-      const password = new TextEncoder().encode(vector.input.passphrase.normalize('NFKD'));
-      const salts = await Promise.all(Array.from(
-        { length: vector.input.shardCount },
-        (_, index) => createShardSalt(vector.input.name, index, vector.input.shardCount),
-      ));
-      let shards: Uint8Array[] = [];
-      const progress: number[] = [];
-      try {
-        const result = await deriveHybridNativeShards({
-          engine,
-          password,
-          salts,
-          memoryKiB: 262144,
-          requestedCpuWorkers: 2,
-          onProgress: completed => progress.push(completed),
-          paths: {
-            packageRoot: PACKAGE_ROOT,
-            cpuExecutable,
-            acceleratorExecutable: engine === 'opencl'
-              ? `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/brainvault-argon2-opencl`
-              : `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/brainvault-argon2-metal`,
-            metalLibrary: engine === 'opencl'
-              ? undefined : `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/argon2.metallib`,
-            openclKernel: engine === 'opencl'
-              ? `${PACKAGE_ROOT}/src/native/source/opencl/data/kernels/argon2_kernel.cl` : undefined,
-          },
-        });
-        shards = result.shards as Uint8Array[];
-        expect(progress.at(-1)).toBe(vector.input.shardCount);
-        expect(progress.every((completed, index) => index === 0 || completed > progress[index - 1]!)).toBe(true);
-        expect(bytesToHex(await combineShards(shards, vector.input.factor))).toBe(vector.expected.root);
-      } finally {
-        password.fill(0);
-        for (const salt of salts) salt.fill(0);
-        for (const shard of shards) shard.fill(0);
-      }
+  for (const vector of vectors) {
+    const password = new TextEncoder().encode(vector.input.passphrase.normalize('NFKD'));
+    const salts = await Promise.all(Array.from(
+      { length: vector.input.shardCount },
+      (_, index) => createShardSalt(vector.input.name, index, vector.input.shardCount),
+    ));
+    let shards: Uint8Array[] = [];
+    const progress: number[] = [];
+    try {
+      const result = await deriveHybridNativeShards({
+        engine: 'metal',
+        password,
+        salts,
+        memoryKiB: 262144,
+        requestedCpuWorkers: 2,
+        onProgress: completed => progress.push(completed),
+        paths: {
+          packageRoot: PACKAGE_ROOT,
+          cpuExecutable,
+          acceleratorExecutable: `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/brainvault-argon2-metal`,
+          metalLibrary: `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/argon2.metallib`,
+        },
+      });
+      shards = result.shards as Uint8Array[];
+      expect(progress.at(-1)).toBe(vector.input.shardCount);
+      expect(progress.every((completed, index) => index === 0 || completed > progress[index - 1]!)).toBe(true);
+      expect(bytesToHex(await combineShards(shards, vector.input.factor))).toBe(vector.expected.root);
+    } finally {
+      password.fill(0);
+      for (const salt of salts) salt.fill(0);
+      for (const shard of shards) shard.fill(0);
     }
   }
 }, 20_000);

@@ -2,7 +2,7 @@ import { afterEach, expect, spyOn, test } from 'bun:test';
 import { createDefaultDelta } from '@xln/core/account/state/delta';
 import { deriveDelta } from '@xln/core/account/utils';
 import type { RuntimeAdapterViewFrame } from '@xln/core/api/public/runtime-module';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import * as adapterMod from '../../runtime/adapter';
 import * as commandsMod from '../../runtime/commands';
 import * as moveMod from '../../runtime/financial/move';
@@ -106,7 +106,7 @@ test('executeEverydaySend throws when runtime is starting, sends ready directly,
     route,
     onStage: s => stages.push(s),
   });
-  expect(stages).toEqual([SURFACES.everyday.flows.pay.pending.text]);
+  expect(stages).toEqual([EVERYDAY_COPY.flows.pay.pending]);
   expect(sendSpy).toHaveBeenCalledTimes(1);
   expect(approveSpy).toHaveBeenCalledTimes(0);
 

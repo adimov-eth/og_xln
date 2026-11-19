@@ -50,7 +50,6 @@
         },
       )
     : null;
-  $: progress = steps.length > 1 && selectedIndex >= 0 ? (selectedIndex / (steps.length - 1)) * 100 : 0;
   // Presentation stage facts, read from the frames on screen.
   $: ledger = $networkMachinePresentation && selected
     ? depositoryLedger($networkMachineRuntime.frames, $networkMachineRuntime.previousFrames)
@@ -214,7 +213,6 @@
     max={Math.max(0, steps.length - 1)}
     value={Math.max(0, selectedIndex)}
     disabled={steps.length === 0 || $networkMachineRuntime.loading}
-    style={`--xln-slider-progress:${progress}%`}
     on:input={(event) => void selectStep(Number(event.currentTarget.value))}
   />
 

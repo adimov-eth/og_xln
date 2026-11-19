@@ -1,5 +1,6 @@
 import {
   FinancialDataCorruptionError,
+  rejectUnexpectedKeys,
   validateArray,
   validateMapInstance,
   validateNumber,
@@ -16,20 +17,6 @@ const CLAIM_KEYS = [
   'rangeHash',
   'blocks',
 ] as const;
-
-const rejectUnexpectedKeys = (
-  value: Record<string, unknown>,
-  allowed: readonly string[],
-  context: string,
-): void => {
-  for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) {
-      throw new FinancialDataCorruptionError(
-        `${context} has unexpected key "${key}"`,
-      );
-    }
-  }
-};
 
 const validateClaim = (
   value: unknown,

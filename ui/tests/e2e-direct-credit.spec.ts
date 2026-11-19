@@ -3,7 +3,7 @@
  * 1. Fresh Alice and Bob open on the same stack without funding through a hub.
  * 2. Bob opens a direct bilateral Account with Alice and extends a 50 USDC credit line through the visible UI.
  * 3. Alice pays Bob 20 USDC directly over that credit line (zero routing fee, zero hub intermediary).
- * 4. Both sides verify exact bilateral balances (-20 USDC / +20 USDC), Desk MML exposure ($10.00 = 0.5 * $20 unsecured), and survive reload.
+ * 4. Both sides verify exact bilateral balances (-20 USDC / +20 USDC), and survive reload.
  */
 import { expect, test, type Page } from '@playwright/test';
 import type { RuntimeAdapterViewFrame, XLNModule } from '../../core/api/public/runtime-module';
@@ -147,12 +147,6 @@ test(
       };
       await expect.poll(() => directAccountBalance(a, alice.entityId, bob.entityId), WAIT).toEqual(aliceAfterPayment);
       await expect.poll(() => directAccountBalance(b, bob.entityId, alice.entityId), WAIT).toEqual(bobAfterPayment);
-
-      // Check Desk MML exposure ($10.00 = 0.5 * $20 unsecured commercial obligation).
-      await b.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
-      await b.getByTestId('palette-input').fill('desk');
-      await b.getByRole('option', { name: 'Desk dense console', exact: true }).click();
-      await expect(b.getByTestId('desk-revenue')).toContainText('$10.00', WAIT);
 
       // Reload both wallets and confirm the direct commercial obligation persists.
       await Promise.all([a.reload(), b.reload()]);

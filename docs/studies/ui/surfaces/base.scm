@@ -120,7 +120,7 @@
 (verb 'export-backup        :layer 'local :tx "localExportBackup"            :summary (from-code "ui/src/runtime/recovery.ts" "Export encrypted recovery state and tower coverage bundle."))
 (verb 'reset-testnet        :layer 'local :tx "localResetRetiredTestnet"     :summary (from-code "todo.md" "Reset retired testnet state while keeping user keys."))
 
-;; ── 3. Exhaustive 16-Screen Disposition Map (checked against ui/src/screens/*.tsx on disk) ────────
+;; ── 3. Exhaustive 15-Screen Disposition Map (checked against ui/src/screens/*.tsx on disk) ────────
 (legacy-screen "Gate.tsx"            :disposition 'shared-shell :into ['everyday/home 'personal/home 'pro/desk]       :why (from-code "ui/src/screens/Gate.tsx" "Onboarding and key unlock precede surface entry.") :sources ["ui/src/screens/Gate.tsx"])
 (legacy-screen "Home.tsx"            :disposition 'split        :into ['everyday/home 'personal/home 'pro/desk]       :why (guess "Everyday shows one calm Cash number (Venmo); Pro shows dense multi-account desk.") :sources ["ui/src/screens/Home.tsx" "fork:f10-everyday-autopilot-vs-bucket-bars"])
 (legacy-screen "Pay.tsx"             :disposition 'keep         :into ['everyday/home 'personal/pay 'pro/desk]        :why (from-code "ui/src/screens/Pay.tsx" "One-tap inline Pay on Everyday; operator route controls in Pro.") :sources ["ui/src/screens/Pay.tsx"])
@@ -130,7 +130,6 @@
 (legacy-screen "Activity.tsx"        :disposition 'keep         :into ['everyday/activity 'personal/activity 'pro/desk] :why (from-code "ui/src/screens/Activity.tsx" "Plain human payment and split feed.") :sources ["ui/src/screens/Activity.tsx"])
 (legacy-screen "Settings.tsx"        :disposition 'keep         :into ['everyday/activity 'personal/settings 'pro/watchtower] :why (from-code "ui/src/screens/Settings.tsx" "Account settings and key-preserving testnet reset.") :sources ["ui/src/screens/Settings.tsx" "todo.md"])
 (legacy-screen "Sovereignty.tsx"     :disposition 'split        :into ['everyday/activity 'personal/safety 'pro/watchtower] :why (from-code "ui/src/screens/Sovereignty.tsx" "Automatic background recovery on Everyday; manual tower/proof admin in Pro.") :sources ["ui/src/screens/Sovereignty.tsx" "fork:f10-everyday-autopilot-vs-bucket-bars"])
-(legacy-screen "Desk.tsx"            :disposition 'move         :into ['pro/desk]                      :why (from-code "ui/src/screens/Desk.tsx" "Dense multi-lane operator matrix, hidden from regular users.") :sources ["ui/src/screens/Desk.tsx"])
 (legacy-screen "Move.tsx"            :disposition 'move         :into ['pro/move]                      :why (from-code "ui/src/screens/Move.tsx" "Explicit r2c/r2r/r2e plumbing replaced by Cash out + autopilot on Everyday.") :sources ["ui/src/screens/Move.tsx"])
 (legacy-screen "Manage.tsx"          :disposition 'move         :into ['everyday/people 'pro/credit-lanes] :why (from-code "ui/src/screens/Manage.tsx" "Human Splitwise friend tabs on Everyday; hub credit/rebalance knobs in Pro.") :sources ["ui/src/screens/Manage.tsx"])
 (legacy-screen "AccountDetail.tsx"   :disposition 'split        :into ['everyday/people 'personal/home 'pro/credit-lanes] :why (guess "Friend tab history on Everyday; autopilot replaces manual Cover it button.") :sources ["ui/src/screens/AccountDetail.tsx"])

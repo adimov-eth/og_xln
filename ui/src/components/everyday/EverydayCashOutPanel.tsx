@@ -4,7 +4,7 @@ import {
   planEverydayCashOut,
 } from '@xln/frontend/lib/everyday/everyday-cashout';
 import type { EverydayWalletProjection } from '@xln/frontend/lib/everyday/everyday-projection';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { formatEverydayMoney } from '../../runtime/use-everyday-wallet';
 import { parseAmount } from '../../runtime/format';
 import { useApp } from '../../runtime/store';
@@ -88,7 +88,7 @@ export function EverydayCashOutPanel({
     setDone('');
     try {
       await sendEntityTxs(wallet.entityId, wallet.signerId, plan.entityTxs);
-      const message = SURFACES.everyday.flows['cash-out'].done.text;
+      const message = EVERYDAY_COPY.flows.cashOut.done;
       setDone(message);
       setAmountText('');
       toast(message);
@@ -96,7 +96,7 @@ export function EverydayCashOutPanel({
       setError(
         failure instanceof Error
           ? failure.message
-          : SURFACES.everyday.flows['cash-out'].failed.text,
+          : EVERYDAY_COPY.flows.cashOut.failed,
       );
     } finally {
       setBusy(false);
@@ -106,7 +106,7 @@ export function EverydayCashOutPanel({
   return (
     <section className="everyday-panel" aria-label="Cash out">
       <div className="everyday-panel-head">
-        <strong>{SURFACES.everyday.flows['cash-out'].before.text}</strong>
+        <strong>{EVERYDAY_COPY.flows.cashOut.before}</strong>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Close cash out panel">
           <Icon name="close" size={18} />
         </button>
@@ -151,10 +151,10 @@ export function EverydayCashOutPanel({
         data-testid="everyday-cashout-submit"
       >
         {busy
-          ? SURFACES.everyday.flows['cash-out'].pending.text
+          ? EVERYDAY_COPY.flows.cashOut.pending
           : parsedAmount > 0n
-            ? `${SURFACES.everyday.flows['cash-out'].before.text} ${formatEverydayMoney(parsedAmount, tokenId)}`
-            : SURFACES.everyday.flows['cash-out'].before.text}
+            ? `${EVERYDAY_COPY.flows.cashOut.before} ${formatEverydayMoney(parsedAmount, tokenId)}`
+            : EVERYDAY_COPY.flows.cashOut.before}
       </button>
     </section>
   );

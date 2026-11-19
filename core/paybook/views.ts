@@ -1,3 +1,4 @@
+import { hasText } from '../support/boundary-guards';
 import type { PaybookEntry } from '../entity/types';
 
 type InboundPayment = PaybookEntry & Required<Pick<PaybookEntry, 'inboundEntity'>>;
@@ -11,9 +12,6 @@ export type SecretAckPendingPayment = InboundPayment & {
   secretAckStartedAt: number;
   secretAckDeadlineAt: number;
 };
-
-const hasText = (value: string | undefined): value is string =>
-  typeof value === 'string' && value.length > 0;
 
 export const hasInboundPayment = (entry: PaybookEntry): entry is InboundPayment =>
   hasText(entry.inboundEntity);

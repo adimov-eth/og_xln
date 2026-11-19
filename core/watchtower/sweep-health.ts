@@ -1,4 +1,5 @@
 import type { createStructuredLogger } from '../support/logger';
+import { errorMessage } from '../support/boundary-guards';
 
 type SweepHealthSnapshot = {
   healthy: boolean;
@@ -80,8 +81,6 @@ type IntervalSweepOptions = {
 
 const SWEEP_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
-const formatError = (error: unknown): string => error instanceof Error ? error.message : String(error);
-
 export const disabledIntervalSweep = (intervalMs: number): IntervalSweep => ({
   enabled: false,
   intervalMs,
@@ -123,7 +122,7 @@ export const startIntervalSweep = (options: IntervalSweepOptions): IntervalSweep
     try {
       await options.lock(sweepOnce);
     } catch (error) {
-      const message = formatError(error);
+      const message = errorMessage(error);
       health.failure(message);
       log.error(events.failed, { error: message });
     } finally {

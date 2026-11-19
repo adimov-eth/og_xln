@@ -2,19 +2,14 @@
  * Standalone relay process backed by the same relay router as core/api/server/index.ts.
  */
 
-import { createRelayStore, removeClient, type RelayStore } from './store';
-import { isRelaySocketAuthenticated, forgetRelaySocketRuntimeId, relayRoute, type RelayRouterConfig } from './router';
-import {
-  canonicalizeRuntimeWsAudience,
-  deserializeWsMessage,
-  resolveRuntimeWsMaxMessageBytes,
-  serializeWsMessage,
-  toRuntimeWsBytes,
-  type RuntimeWsMessage,
-} from '../p2p/ws-protocol';
-import { normalizeRuntimeId } from '../p2p/auth/runtime-id';
+import { createRelayStore, type RelayStore } from './store';
+import type { RelayRouterConfig } from './router';
+import { createRelaySocketHandlers } from './socket-handlers';
+import { canonicalizeRuntimeWsAudience } from '../p2p/ws-protocol';
+import { normalizeRuntimeId } from '../../protocol/identity/runtime-id';
 import { createStructuredLogger } from '../../support/logger';
 import { createHelloChallengeRegistry } from '../p2p/auth/hello-challenge';
+import { readCliOption } from '../../config/cli';
 
 type StandaloneRelayOptions = {
   host?: string;
@@ -31,9 +26,6 @@ export type StandaloneRelayServer = {
 };
 
 const relayStandaloneLog = createStructuredLogger('relay.standalone');
-
-const normalizeMessage = (ws: unknown, raw: string | Buffer | ArrayBuffer): RuntimeWsMessage =>
-  deserializeWsMessage(raw, { authenticated: isRelaySocketAuthenticated(ws) });
 
 export const startStandaloneRelayServer = (options: StandaloneRelayOptions): StandaloneRelayServer => {
   const store = createRelayStore(options.serverId);
@@ -60,30 +52,13 @@ export const startStandaloneRelayServer = (options: StandaloneRelayOptions): Sta
       if (serverRef?.upgrade(request)) return undefined;
       return new Response('WebSocket upgrade failed', { status: 400 });
     },
-    websocket: {
-      maxPayloadLength: resolveRuntimeWsMaxMessageBytes(),
-      open(ws) {
-        store.wsCounter += 1;
-        helloChallenges.issue(ws, relayAudience);
-      },
-      message(ws, message) {
-        let msg: RuntimeWsMessage;
-        try {
-          msg = normalizeMessage(ws, message as string | Buffer | ArrayBuffer);
-        } catch (error) {
-          ws.send(serializeWsMessage({ type: 'error', error: `Invalid relay message: ${(error as Error).message}` }));
-          return;
-        }
-        Promise.resolve(relayRoute(routerConfig, ws, msg, typeof message === 'string' ? undefined : toRuntimeWsBytes(message as Buffer | ArrayBuffer))).catch(error => {
-          ws.send(serializeWsMessage({ type: 'error', error: `Relay handler failed: ${(error as Error).message}` }));
-        });
-      },
-      close(ws) {
-        helloChallenges.forget(ws);
-        forgetRelaySocketRuntimeId(ws);
-        removeClient(store, ws);
-      },
-    },
+    websocket: createRelaySocketHandlers<undefined>({
+      relayStore: store,
+      relayHelloChallenges: helloChallenges,
+      getRouterConfig: () => routerConfig,
+      wsType: () => 'relay',
+      helloAudience: () => relayAudience,
+    }),
   });
 
   serverRef = server;
@@ -108,14 +83,8 @@ export const startStandaloneRelayServer = (options: StandaloneRelayOptions): Sta
 
 if (import.meta.main) {
   const args = process.argv;
-  const portArgIdx = args.indexOf('--port');
-  const hostArgIdx = args.indexOf('--host');
-  const port = portArgIdx !== -1 && args[portArgIdx + 1]
-    ? Number(args[portArgIdx + 1])
-    : Number(process.env['WS_PORT'] || 8787);
-  const host = hostArgIdx !== -1 && args[hostArgIdx + 1]
-    ? String(args[hostArgIdx + 1])
-    : process.env['WS_HOST'] || '0.0.0.0';
+  const port = Number(readCliOption(args, '--port', process.env['WS_PORT'] || '8787'));
+  const host = readCliOption(args, '--host', process.env['WS_HOST'] || '0.0.0.0');
   const serverId = process.env['WS_SERVER_ID'] || 'relay';
   startStandaloneRelayServer({
     host,

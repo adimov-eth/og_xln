@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import type { EntityTx, RuntimeAdapterViewFrame, RuntimeReplica, XLNModule } from '@xln/core/api/public/runtime-module';
   import { submitEntityInputs } from '#lib/stores/xlnStore.ts';
-  import { SURFACES } from '../../../../../docs/studies/ui/surfaces/surfaces.generated';
+  import { EVERYDAY_COPY } from '#lib/everyday/wallet-posture.ts';
   import type { EverydayWalletProjection } from '#lib/everyday/everyday-projection.ts';
   import type { EverydayExternalRow } from '#lib/everyday/everyday-autopilot.ts';
   import { pickActiveSavingsOffer, type LendingState } from '../../../../../ui/src/runtime/financial/lending';
@@ -21,8 +21,8 @@
   let lendingError = $state('');
   let busy = $state(false); let statusMsg = $state(''); let errorMsg = $state('');
 
-  const termsCopy = SURFACES.everyday.terms.savings;
-  const flows = SURFACES.everyday.flows;
+  const termsCopy = EVERYDAY_COPY.terms.savings;
+  const flows = EVERYDAY_COPY.flows;
   const hubId = $derived(projection.primaryHubId);
   const hubDoc = $derived(hubId ? frame?.activeEntity?.accounts.items.find(a => a.state.leftEntity.toLowerCase() === hubId || a.state.rightEntity.toLowerCase() === hubId) : undefined);
   const activeOffer = $derived(
@@ -56,33 +56,33 @@
   async function addToSavings(event: Event): Promise<void> {
     event.preventDefault();
     if (!canAdd || !projection.signerId || !hubId || !xln) return;
-    busy = true; errorMsg = ''; statusMsg = flows['save-in'].pending.text;
+    busy = true; errorMsg = ''; statusMsg = flows.saveIn.pending;
     try {
       await submitEverydaySavingsDeposit({
         frame, entityId: projection.entityId, signerId: projection.signerId, hubId, tokenId: projection.primaryTokenId,
         amountText: amount.trim(), principal: parsedPrincipal, decimals, lendingState, externalRows, nativeBalance,
         liveEnv, xln, onStage: msg => { statusMsg = msg; },
       });
-      statusMsg = flows['save-in'].done.text; amount = ''; consentChecked = false; await loadSavings(); onRefresh();
-    } catch (err) { errorMsg = err instanceof Error ? err.message : flows['save-in'].failed.text; statusMsg = ''; }
+      statusMsg = flows.saveIn.done; amount = ''; consentChecked = false; await loadSavings(); onRefresh();
+    } catch (err) { errorMsg = err instanceof Error ? err.message : flows.saveIn.failed; statusMsg = ''; }
     finally { busy = false; }
   }
 
   async function moveToCash(positionId: string, positionHubId: string): Promise<void> {
     const targetHubId = (positionHubId || hubId || '').toLowerCase();
     if (busy || !isLive || !commandReady || !projection.signerId || !targetHubId) return;
-    busy = true; errorMsg = ''; statusMsg = flows['save-out'].pending.text;
+    busy = true; errorMsg = ''; statusMsg = flows.saveOut.pending;
     try {
       const tx: EntityTx = { type: 'lendingClosePosition', data: { hubEntityId: targetHubId, positionId } };
       await submitEntityInputs([{ entityId: projection.entityId, signerId: projection.signerId, entityTxs: [tx] }]);
-      statusMsg = flows['save-out'].done.text; await loadSavings(); onRefresh();
-    } catch (err) { errorMsg = err instanceof Error ? err.message : flows['save-out'].failed.text; statusMsg = ''; }
+      statusMsg = flows.saveOut.done; await loadSavings(); onRefresh();
+    } catch (err) { errorMsg = err instanceof Error ? err.message : flows.saveOut.failed; statusMsg = ''; }
     finally { busy = false; }
   }
 </script>
 
 <section class="ev-card">
-  <p class="ev-muted">{termsCopy.text}</p>
+  <p class="ev-muted">{termsCopy.label}</p>
   <h2 class="ev-hero" data-testid="everyday-savings-balance">{formatUsd(projection.primary.savings, decimals)}</h2>
   <p class="ev-muted">{termsCopy.note}</p>
   {#if bankTerms}
@@ -99,7 +99,7 @@
     <span style="flex:1;font-size:0.92rem;color:#d0d0da;">I understand Savings is lent out to earn interest and is not protected like Cash.</span>
   </label>
   <button type="submit" class="ev-btn primary" data-testid="everyday-savings-add" disabled={!canAdd}>
-    {busy ? flows['save-in'].pending.text : flows['save-in'].before.text}
+    {busy ? flows.saveIn.pending : flows.saveIn.before}
   </button>
 </form>
 
@@ -112,7 +112,7 @@
           <p class="ev-muted">{pool.status === 'queued' ? 'Waiting to move back to Cash' : 'Earning interest'}</p>
         </div>
         <button type="button" class="ev-btn" data-testid="everyday-savings-move" disabled={busy || !isLive || !commandReady || pool.status !== 'open'} onclick={() => void moveToCash(pool.positionId, pool.hubEntityId)}>
-          {flows['save-out'].before.text}
+          {flows.saveOut.before}
         </button>
       </div>
     {/each}

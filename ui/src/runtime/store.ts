@@ -16,9 +16,6 @@ import { applyDesign, readDesign, saveDesign, type DesignPrefs } from './design'
 
 export type ThemeName = 'dark' | 'light';
 
-/** Comfort = the phone-first screens; Desk = the dense desktop console on wide viewports. */
-export type Density = 'comfort' | 'desk';
-
 export type VaultKind = 'brainvault' | 'mnemonic' | 'sandbox' | 'remote' | 'test';
 
 export type VaultMeta = {
@@ -45,7 +42,6 @@ export type PlaceVisibility = Record<PlaceKey, boolean>;
 const VAULTS_KEY = 'xln-ui-vaults';
 const ACTIVE_VAULT_KEY = 'xln-ui-active-vault';
 const THEME_KEY = 'xln-ui-theme';
-const DENSITY_KEY = 'xln-ui-density';
 const TOUR_KEY = 'xln-ui-tour';
 const GUIDE_VISIBLE_KEY = 'xln-ui-guide-visible';
 const GUIDE_DOCK_KEY = 'xln-ui-guide-dock';
@@ -158,8 +154,6 @@ type AppState = {
   theme: ThemeName;
   setTheme: (theme: ThemeName) => void;
 
-  density: Density;
-  setDensity: (density: Density) => void;
 
   /** Material, accent, number font, risk color: the brand axes anyone can set. */
   design: DesignPrefs;
@@ -276,12 +270,6 @@ export const useApp = create<AppState>((set, get) => ({
     const tour = { ...get().tour, ...patch };
     localStorage.setItem(TOUR_KEY, JSON.stringify({ index: tour.index, completed: tour.completed }));
     set({ tour });
-  },
-
-  density: (localStorage.getItem(DENSITY_KEY) === 'desk' ? 'desk' : 'comfort') as Density,
-  setDensity: density => {
-    localStorage.setItem(DENSITY_KEY, density);
-    set({ density });
   },
 
   usdPerPx: readInitialUsdPerPx(),

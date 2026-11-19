@@ -32,7 +32,7 @@ const injectedNodeEnv = (): string | undefined => {
 const ensureBrowserProcessShim = (): void => {
   if (!runtimeIsBrowser || typeof globalThis.process !== 'undefined') return;
 
-  const nowMs = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+  const nowMs = () => performance.now();
   const hrtime = (prev?: [number, number]) => {
     const ms = nowMs();
     const sec = Math.floor(ms / 1000);

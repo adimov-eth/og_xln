@@ -5,15 +5,13 @@ import { decodeBuffer, encodeBuffer } from '../../../storage/codec/codec';
 import { validateDeliverableEntityInput } from '../../../runtime/delivery/topology/routing-validation';
 
 import { routeInboundP2PEntityInput, resolveRuntimeIdForEntity } from '../../../runtime/delivery/topology/entity-routing';
+import { buildRouteOutputKey, carriesEntityCommitNotification } from '../../../runtime/delivery/identity';
+import { buildPendingNetworkOutputs, mergeRoutedEntityOutput } from '../../../runtime/delivery/pending';
+import { planEntityOutputs } from '../../../runtime/delivery/plan';
 import {
-  buildPendingNetworkOutputs,
-  buildRouteOutputKey,
-  carriesEntityCommitNotification,
   dispatchEntityOutputs as dispatchEntityOutputsRaw,
-  mergeRoutedEntityOutput,
-  planEntityOutputs,
   sendEntityInputWithRouting as sendEntityInputWithRoutingRaw,
-} from '../../../runtime/delivery/topology/output-routing';
+} from '../../../runtime/delivery/dispatch';
 import { deliveryAccepted, deliveryDeferred, deliveryFailure } from '../../../protocol/payments/delivery-result';
 import { LIMITS } from '../../../config/constants';
 import type { DeliverableEntityInput, RuntimeReplica, RoutedEntityInput, RuntimeEntityInputsEnvelope } from '../../../runtime/types';

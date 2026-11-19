@@ -184,26 +184,6 @@ export const resolveAccountAuthorityEntityStageOptions = (
   };
 };
 
-/**
- * Process-wide tally of who executed the Account layer.
- *
- * A cutover is only a cutover if TypeScript stopped executing, and the only
- * proof of that is a count nobody can argue with.
- */
-const executionLedger = {
-  typescriptApplyAccountInput: 0,
-  typescriptProposeAccountFrame: 0,
-  authoritativeOperations: 0,
-};
-
-export const accountAuthorityExecutionLedger = (): Readonly<typeof executionLedger> =>
-  ({ ...executionLedger });
-
-export const printAccountAuthorityExecutionLedger = (): void => {
-  console.error(`RSCORE_ACCOUNT_EXECUTION ${safeStringify(executionLedger)}`);
-};
-
-
 const assertOccurrence = (occurrence: AccountAuthorityEntityOccurrence): void => {
   const value = occurrence.kind === 'runtime-input'
     ? occurrence.inputIndex
@@ -391,7 +371,6 @@ class AccountAuthorityEntityStageImpl implements AccountAuthorityEntityStage {
       return materializeResult(expected);
     });
     countFrameApplyPhase('inbound.materialize', materializeStartedAt);
-    executionLedger.authoritativeOperations += this.inboundRequests.length;
   }
 
   async executeEntityBooks(request: AccountAuthorityFrameBooksRequest): Promise<void> {
@@ -472,11 +451,7 @@ class AccountAuthorityEntityStageImpl implements AccountAuthorityEntityStage {
         `ACCOUNT_AUTHORITY_PROPOSAL_ORDER_MISMATCH:${safeStringify(expectedRetainedOrder)}:${safeStringify(retainedOriginalOrder)}`,
       );
     }
-    const executed = this.admissionRequests.length
-      + this.generatedAdmissions.length
-      + this.proposalResults.length;
     countFrameApplyPhase('outbound.materialize', materializeStartedAt);
-    executionLedger.authoritativeOperations += executed;
   }
 
   hasPreparedAccountProposal(accountId: string): boolean {
@@ -555,10 +530,8 @@ class AccountAuthorityEntityStageImpl implements AccountAuthorityEntityStage {
     }
     if (kind === 'applyAccountInput') {
       this.applyAccountInputCount += 1;
-      executionLedger.typescriptApplyAccountInput += 1;
     } else {
       this.proposeAccountFrameCount += 1;
-      executionLedger.typescriptProposeAccountFrame += 1;
     }
     assertNoTypeScriptAccountExecution(this);
   }

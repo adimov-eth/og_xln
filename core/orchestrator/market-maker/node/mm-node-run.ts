@@ -65,6 +65,7 @@ import {
   getAccountReplica,
   getEntityOutCapacity,
   getEntityReplicaById,
+  HUB_REQUIRED_TOKEN_COUNT,
   isAccountWriteLaneIdle,
   planMarketMakerIdentityLabels,
   serializeAccountDelta,
@@ -140,9 +141,9 @@ import {
   resolvedArgs,
   sameJurisdiction,
   waitForJurisdictionAdapter,
-  waitForTokenCatalog,
   yieldMarketMakerApi,
 } from './mm-node-core';
+import { waitForTokenCatalog } from '../../hub/node/token-catalog';
 import { readBooleanEnv } from '../../../config/environment';
 import {
   assertMarketMakerBootstrapFinalized,
@@ -940,7 +941,7 @@ const initializeMarketMakerContexts = async (
   const jadapter = await waitForJurisdictionAdapter(env, jurisdiction);
   ensureJurisdictionReplica(env, jadapter, resolveImportedJurisdictionRpc(jurisdiction));
   setStartupPhase('token-catalog');
-  await waitForTokenCatalog(jadapter);
+  await waitForTokenCatalog(jadapter, HUB_REQUIRED_TOKEN_COUNT);
   const appendPairShards = async (
     base: MarketMakerEntityContext,
     targetJurisdiction: Parameters<typeof createMarketMakerEntityContext>[1],

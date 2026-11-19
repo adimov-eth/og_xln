@@ -41,14 +41,8 @@ type HubTextResponse = Readonly<{ ok: boolean; status: number; text: string }>;
 // The deadline covers the body too: a hub that stalls after its headers must
 // not hang market-cap refresh or snapshot fan-out.
 const fetchTextWithTimeout = async (url: string): Promise<HubTextResponse> => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HUB_MARKET_FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    return { ok: response.ok, status: response.status, text: await response.text() };
-  } finally {
-    clearTimeout(timer);
-  }
+  const response = await fetch(url, { signal: AbortSignal.timeout(HUB_MARKET_FETCH_TIMEOUT_MS) });
+  return { ok: response.ok, status: response.status, text: await response.text() };
 };
 
 export const fetchMarketSnapshotsFromHub = async (

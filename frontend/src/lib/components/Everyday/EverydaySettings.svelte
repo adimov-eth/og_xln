@@ -2,7 +2,7 @@
   import { vaultOperations, type Runtime } from '#lib/stores/vault/vaultStore.ts';
   import { setWalletPosture } from '#lib/stores/everyday/walletPostureStore.ts';
   import { resetRetiredTestnetState } from '#lib/utils/control/resetEverything.ts';
-  import { SURFACES } from '../../../../../docs/studies/ui/surfaces/surfaces.generated';
+  import { EVERYDAY_COPY } from '#lib/everyday/wallet-posture.ts';
   import type { EverydayWalletProjection } from '#lib/everyday/everyday-projection.ts';
   import { classifyRecoveryShieldState } from '#lib/everyday/everyday-recovery.ts';
   import { resolveRecoveryShieldInput } from './everyday-runtime';
@@ -16,7 +16,7 @@
   let statusMsg = $state('');
   let errorMsg = $state('');
 
-  const resetCopy = SURFACES.everyday.flows['reset-demo'];
+  const resetCopy = EVERYDAY_COPY.flows.resetDemo;
   const shield = $derived(classifyRecoveryShieldState({
     shieldStatus: resolveRecoveryShieldInput(runtime),
     disputes: projection.disputes,
@@ -39,9 +39,9 @@
 
   async function clearTestData(): Promise<void> {
     if (resetting) return;
-    resetting = true; errorMsg = ''; statusMsg = resetCopy.pending.text;
-    try { await resetRetiredTestnetState('/app'); statusMsg = resetCopy.done.text; }
-    catch (err) { errorMsg = err instanceof Error ? err.message : resetCopy.failed.text; statusMsg = ''; resetting = false; }
+    resetting = true; errorMsg = ''; statusMsg = resetCopy.pending;
+    try { await resetRetiredTestnetState('/app'); statusMsg = resetCopy.done; }
+    catch (err) { errorMsg = err instanceof Error ? err.message : resetCopy.failed; statusMsg = ''; resetting = false; }
   }
 </script>
 
@@ -76,7 +76,7 @@
   <h2 style="margin:0;font-size:1.15rem;">Test network</h2>
   <p class="ev-muted">Clear local test state while keeping your wallet login.</p>
   <button type="button" class="ev-btn danger" data-testid="settings-clear-test-data" disabled={resetting} onclick={() => void clearTestData()}>
-    {resetting ? resetCopy.pending.text : resetCopy.before.text}
+    {resetting ? resetCopy.pending : resetCopy.before}
   </button>
 </section>
 

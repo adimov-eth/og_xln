@@ -14,6 +14,7 @@
 
 import { assertCheckEnvironment } from '../../../../tools/checks/check-environment';
 import { createHash } from 'node:crypto';
+import { parseArgs } from 'node:util';
 
 // React specs use their owning Playwright package and the same isolated J stand.
 const REACT_UI = process.argv.includes('--react-ui');
@@ -409,28 +410,61 @@ export const parsePlaywrightFilesFlag = (raw: string): string[] => {
     .filter(Boolean);
 };
 
-const parseArgs = (): CliArgs => {
-  const args = process.argv.slice(2);
+const STRING_FLAGS = [
+  'shards',
+  'stack-timeout-ms',
+  'test-timeout-ms',
+  'phase-warn-ms',
+  'max-failures',
+  'max-mm-concurrency',
+  'max-reset-concurrency',
+  'workers-per-shard',
+  'start-at',
+  'video',
+  'trace',
+  'screenshot',
+  'reporter',
+  'pw-files',
+  'pw-grep',
+  'pw-project',
+  'qa-category',
+  'prewait-health',
+  'anvil-bin',
+  'base-port',
+] as const;
+
+const BOOLEAN_FLAGS = [
+  'all',
+  'exclude-market-maker',
+  'market-maker-only',
+  'strict-browser-health',
+  'skip-build',
+  'preserve-artifacts',
+  'react-ui',
+  'keep-test-artifacts',
+] as const;
+
+const readCliArgs = (): CliArgs => {
   const longMode = process.env['E2E_LONG'] === '1';
   const cpu = Math.max(1, availableParallelism());
   const defaultShards = Math.max(2, Math.min(16, Math.floor(cpu / 2)));
-  const getFlag = (name: string): string | undefined => {
-    const prefix = `--${name}=`;
-    const eq = args.find(a => a.startsWith(prefix));
-    if (eq) return eq.slice(prefix.length);
-    const i = args.findIndex(a => a === `--${name}`);
-    if (i >= 0 && i + 1 < args.length) {
-      const next = args[i + 1];
-      if (next && !next.startsWith('--')) return next;
-    }
-    return undefined;
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    strict: true,
+    allowPositionals: true,
+    options: {
+      ...Object.fromEntries(STRING_FLAGS.map(name => [name, { type: 'string', multiple: true }] as const)),
+      ...Object.fromEntries(BOOLEAN_FLAGS.map(name => [name, { type: 'boolean' }] as const)),
+    },
+  });
+  const getFlag = (name: (typeof STRING_FLAGS)[number]): string | undefined => {
+    const value = values[name];
+    return Array.isArray(value) ? value[0] : undefined;
   };
-  const hasFlag = (name: string): boolean => args.includes(`--${name}`);
+  const hasFlag = (name: (typeof BOOLEAN_FLAGS)[number]): boolean => values[name] === true;
 
   const shardsRaw = Number(getFlag('shards') || String(defaultShards));
-  if (args.some(arg => arg === '--base-port' || arg.startsWith('--base-port='))) {
-    throw new Error('E2E_BASE_PORT_OVERRIDE_FORBIDDEN');
-  }
+  if (getFlag('base-port') !== undefined) throw new Error('E2E_BASE_PORT_OVERRIDE_FORBIDDEN');
   const defaultStackTimeoutMs = Math.min(420000, 180000 + Math.max(0, shardsRaw - 8) * 15000);
   const stackTimeoutRaw = Number(getFlag('stack-timeout-ms') || String(defaultStackTimeoutMs));
   const testTimeoutRaw = Number(
@@ -495,11 +529,11 @@ const parseArgs = (): CliArgs => {
     pwGrep,
     pwProject,
     pwFiles,
-    includeAllSpecs: hasFlag('all') || hasFlag('include-all') || process.env['E2E_ALL'] === '1',
-    excludeMarketMaker: hasFlag('exclude-market-maker') || hasFlag('no-market-maker-heavy'),
-    marketMakerOnly: hasFlag('market-maker-only') || hasFlag('only-market-maker-heavy'),
+    includeAllSpecs: hasFlag('all'),
+    excludeMarketMaker: hasFlag('exclude-market-maker'),
+    marketMakerOnly: hasFlag('market-maker-only'),
     strictBrowserHealth: hasFlag('strict-browser-health'),
-    skipBuild: args.includes('--skip-build'),
+    skipBuild: hasFlag('skip-build'),
     startAt: Number.isSafeInteger(startAtRaw) && startAtRaw >= 0 ? startAtRaw : 0,
     preserveArtifacts: hasFlag('preserve-artifacts'),
     prewaitHealth:
@@ -2295,7 +2329,7 @@ async function main(): Promise<void> {
   }
   assertCheckEnvironment();
   canonicalHubEngine('H1');
-  const args = parseArgs();
+  const args = readCliArgs();
   const exactRequestedTarget = args.pwFiles.length === 1 && /^.+\.spec\.ts::.+$/.test(args.pwFiles[0] ?? '');
   assertE2ESelectionMayStart(args.pwFiles);
   // Artifact retention changes only deletion policy. Every top-level run must

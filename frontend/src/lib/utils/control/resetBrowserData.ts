@@ -1,3 +1,4 @@
+import { sleep } from '../primitives';
 export const RESET_CONFIRMATION = 'DELETE XLN DATA';
 export const RESET_WARNING = `This permanently deletes all local XLN data, including encrypted vaults and recovery keys. Make sure you have a working backup. Type ${RESET_CONFIRMATION} to continue.`;
 export const RETIRED_TESTNET_REBOOTSTRAP_KEY = 'xln-retired-testnet-rebootstrap';
@@ -120,7 +121,6 @@ export async function clearBrowserRuntimeData(confirmation: string): Promise<voi
 }
 
 const RESET_TAB_SETTLE_MS = 300;
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function runRetiredTestnetReset(options: {
   redirectPath?: string;

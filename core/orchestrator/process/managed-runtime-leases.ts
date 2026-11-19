@@ -10,6 +10,7 @@ import {
 } from '../../protocol/boundary-validation';
 import { safeStringify } from '../../protocol/serialization';
 import type { ManagedRuntimeLease, ManagedRuntimeSpec } from '../orchestrator-types';
+import { errorMessage } from '../../support/boundary-guards';
 
 export type ManagedProcessTableEntry = { pid: number; processStartedAt: number; command: string };
 
@@ -23,8 +24,6 @@ type ManagedRuntimeLeaseManagerConfig = {
   ownerId: string;
   processOps?: ManagedProcessOps;
 };
-
-const formatError = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 const managedLeaseLog = createStructuredLogger('orchestrator.managed_leases');
 
@@ -75,7 +74,7 @@ const isPidAlive = (pid: number, ops: ManagedProcessOps = defaultProcessOps): bo
     const code = (error as NodeJS.ErrnoException)?.code;
     if (code === 'ESRCH') return false;
     if (code === 'EPERM') return true;
-    throw new Error(`MANAGED_RUNTIME_PID_PROBE_FAILED:pid=${pid}:error=${formatError(error)}`, {
+    throw new Error(`MANAGED_RUNTIME_PID_PROBE_FAILED:pid=${pid}:error=${errorMessage(error)}`, {
       cause: error,
     });
   }
@@ -126,7 +125,7 @@ export const killManagedProcessIds = async (
     try {
       ops.kill(pid, 'SIGTERM');
     } catch (error) {
-      managedLeaseLog.warn('stale_process.sigterm_failed', { label, pid, error: formatError(error) });
+      managedLeaseLog.warn('stale_process.sigterm_failed', { label, pid, error: errorMessage(error) });
     }
   }
   await ops.sleep(1_000);
@@ -135,7 +134,7 @@ export const killManagedProcessIds = async (
     try {
       ops.kill(pid, 'SIGKILL');
     } catch (error) {
-      managedLeaseLog.warn('stale_process.sigkill_failed', { label, pid, error: formatError(error) });
+      managedLeaseLog.warn('stale_process.sigkill_failed', { label, pid, error: errorMessage(error) });
     }
   }
   await ops.sleep(200);
@@ -174,7 +173,7 @@ export const readManagedProcessTable = async (
     child.on('error', error => {
       if (settled) return;
       settled = true;
-      reject(new Error(`MANAGED_PROCESS_TABLE_SPAWN_FAILED:${formatError(error)}`, { cause: error }));
+      reject(new Error(`MANAGED_PROCESS_TABLE_SPAWN_FAILED:${errorMessage(error)}`, { cause: error }));
     });
     child.on('close', (code, signal) => {
       if (settled) return;
@@ -233,7 +232,7 @@ export const createManagedRuntimeLeaseManager = (config: ManagedRuntimeLeaseMana
       }
       return null;
     } catch (error) {
-      throw new Error(`MANAGED_RUNTIME_LEASE_INVALID:path=${path}:error=${formatError(error)}`, { cause: error });
+      throw new Error(`MANAGED_RUNTIME_LEASE_INVALID:path=${path}:error=${errorMessage(error)}`, { cause: error });
     }
   };
 

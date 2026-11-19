@@ -41,7 +41,6 @@ import {
   emptyGraphGestureState,
   endGraphGesture,
 } from '../../../frontend/src/lib/network3d/graphSelectionGesture';
-import { immersiveWalletActionAt } from '../../../frontend/src/lib/network3d/ImmersiveWalletSurface';
 
 const source = (runtimeId: string, height: number, timestamp: number): RuntimeGraphSource => ({
   runtimeId,
@@ -577,13 +576,5 @@ describe('Graph selection gesture', () => {
     expect(endGraphGesture(state, { sourceId: 'xr:left', entityId: 'h1', at: 220, moved: false }).outcome).toBe('select');
     state = beginGraphGesture(state, { sourceId: 'touch', entityId: 'h2', at: 250 });
     expect(endGraphGesture(state, { sourceId: 'touch', entityId: 'h2', at: 270, moved: false }).outcome).toBe('select');
-  });
-
-  test('immersive wallet hit targets route to real wallet operations', () => {
-    expect(immersiveWalletActionAt(100, 520)).toBe('pay');
-    expect(immersiveWalletActionAt(350, 520)).toBe('swap');
-    expect(immersiveWalletActionAt(600, 520)).toBe('dispute');
-    expect(immersiveWalletActionAt(900, 520)).toBe('close');
-    expect(immersiveWalletActionAt(10, 10)).toBeNull();
   });
 });

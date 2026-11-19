@@ -1,5 +1,5 @@
 import { buildQuorumHanko } from '../../../hanko/signing';
-import { logError, shortHash, shortId } from '../../../support/logger';
+import { shortHash, shortId } from '../../../support/logger';
 import { removeCommittedTxsFromMempool } from '../../../protocol/state/tx-multiset';
 import type { EntityFrame, EntityCandidate } from '../../types';
 import type { HankoString } from '../../../types/hanko';
@@ -77,8 +77,7 @@ const buildCommitHankos = async (
     frame.hashesToSign,
   );
   if (manifestMismatch) {
-    logError(
-      'FRAME_CONSENSUS',
+    entityLog.error(
       `❌ BYZANTINE: Commit secondary hash manifest mismatch: ${manifestMismatch}`,
       {
         frame: frame.hash,
@@ -100,8 +99,7 @@ const buildCommitHankos = async (
     ) {
       continue;
     }
-    logError(
-      'FRAME_CONSENSUS',
+    entityLog.error(
       `❌ BYZANTINE: Invalid hash signature bundle from ${signerId}`,
       { frame: frame.hash },
     );

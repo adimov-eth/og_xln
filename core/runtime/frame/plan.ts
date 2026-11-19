@@ -1,9 +1,6 @@
 import { createStructuredLogger } from '../../support/logger';
 import type { RuntimeReplica, RoutedEntityInput } from '../types';
-import type {
-  PlannedRemoteOutput,
-  RuntimeOutputRoutingDeps,
-} from '../delivery/topology/output-routing';
+import type { PlannedRemoteOutput, RuntimeOutputRoutingDeps } from '../delivery/pending';
 import { applyRecoveryRuntimeOutputPlan } from '../delivery/recovery-output';
 import { enqueueRuntimeContinuation } from '../loop/loop-envelope';
 import { generateHookPings } from '../loop/loop-work';

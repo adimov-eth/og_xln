@@ -105,7 +105,6 @@ test('consensus logging has no raw payload escape hatch', () => {
     'core/entity/tx/handlers/dispute/finalize-admission.ts',
     'core/entity/tx/handlers/dispute/finalize-proof.ts',
     'core/support/logger.ts',
-    'core/qa/api.ts',
     'package.json',
   ].map(path => readFileSync(join(repoRoot, path), 'utf8')).join('\n');
 

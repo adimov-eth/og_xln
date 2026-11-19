@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { VALUELESS_CHAIN_IDS } from '@xln/core/jurisdiction/adapter/chain-ids';
 import { formatEverydayArrivingNote } from '@xln/frontend/lib/everyday/everyday-policy';
-import { SURFACES } from '@xln/surfaces/surfaces.generated';
+import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { EverydayCashOutPanel } from '../../components/everyday/EverydayCashOutPanel';
 import { EverydayPayPanel } from '../../components/everyday/EverydayPayPanel';
 import { EverydayRequestPanel } from '../../components/everyday/EverydayRequestPanel';
@@ -40,7 +40,7 @@ export function EverydayHome({
 
   const arrivingNote = formatEverydayArrivingNote(
     hubRebalance,
-    SURFACES.everyday.terms.arriving.note,
+    EVERYDAY_COPY.terms.arriving.note,
   );
 
   const requestTestCash = async (): Promise<void> => {
@@ -60,11 +60,11 @@ export function EverydayHome({
   return (
     <div className="everyday-screen fade-in">
       <section className="everyday-hero-card" aria-label="Cash balance">
-        <span className="everyday-label">{SURFACES.everyday.terms.cash.text}</span>
+        <span className="everyday-label">{EVERYDAY_COPY.terms.cash.label}</span>
         <div className="everyday-cash-value" data-testid="everyday-cash">
           {formatEverydayMoney(projection.primary.cash, tokenId)}
         </div>
-        <p className="everyday-note">{SURFACES.everyday.terms.cash.note}</p>
+        <p className="everyday-note">{EVERYDAY_COPY.terms.cash.note}</p>
 
         {projection.primary.arriving > 0n ? (
           <div className="stack" style={{ gap: 6 }}>
@@ -99,7 +99,7 @@ export function EverydayHome({
           data-testid="everyday-pay-btn"
         >
           <Icon name="pay" size={18} />
-          {SURFACES.everyday.flows.pay.before.text}
+          {EVERYDAY_COPY.flows.pay.before}
         </button>
         <button
           type="button"
@@ -108,7 +108,7 @@ export function EverydayHome({
           data-testid="everyday-request-btn"
         >
           <Icon name="receive" size={18} />
-          {SURFACES.everyday.flows['request-link'].before.text}
+          {EVERYDAY_COPY.flows.requestLink.before}
         </button>
         <button
           type="button"
@@ -117,7 +117,7 @@ export function EverydayHome({
           data-testid="everyday-cashout-btn"
         >
           <Icon name="arrow" size={18} />
-          {SURFACES.everyday.flows['cash-out'].before.text}
+          {EVERYDAY_COPY.flows.cashOut.before}
         </button>
         <button
           type="button"

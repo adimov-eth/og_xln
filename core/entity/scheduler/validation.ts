@@ -1,5 +1,6 @@
 import {
   FinancialDataCorruptionError,
+  rejectUnexpectedKeys,
   validateMapInstance,
   validateNumber,
   validateObject,
@@ -28,20 +29,6 @@ const isHookType = (value: unknown): value is ScheduledHookType =>
   value === 'board_hanko_refresh' ||
   value === 'counterparty_board_hanko_refresh_deadline' ||
   value === 'cross_j_orderbook_sweep';
-
-const rejectUnexpectedKeys = (
-  value: Record<string, unknown>,
-  allowed: readonly string[],
-  context: string,
-): void => {
-  for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) {
-      throw new FinancialDataCorruptionError(
-        `${context} has unexpected key "${key}"`,
-      );
-    }
-  }
-};
 
 const validateTask = (value: unknown, context: string): CrontabTaskState => {
   const task = validateObject(value, context);

@@ -30,14 +30,14 @@
   ]
   :screens [
     (screen 'desk
-      :purpose   (from-code "ui/src/screens/Desk.tsx" "Dense lane matrix showing bilateral capacities, signed frames, and net exposure.")
+      :purpose   (guess "Dense lane matrix showing bilateral capacities, signed frames, and net exposure.")
       :headline  'net-position
       :figures   ['net-position 'secured-receivable 'unbacked-exposure 'owed-payable 'account-lanes]
       :bars      ['secured-receivable 'unbacked-exposure 'onchain-cash 'reserve-cash]
       :actions   ['pro-pay 'pro-direct 'pro-open-account 'pro-cover]
       :max-words 60
-      :why       (from-code "ui/src/screens/Desk.tsx" "Primary cockpit for multi-counterparty operators.")
-      :sources   ["ui/src/screens/Desk.tsx" "todo.md"])
+      :why       (guess "Planned operator cockpit for multi-counterparty desks (retired monolithic Desk.tsx).")
+      :sources   ["todo.md"])
     (screen 'book
       :purpose   (as-is "ui/src/screens/Swap.tsx" "Book")
       :headline  'orderbook-frame
@@ -130,7 +130,7 @@
   ]
   :doors   []
   :why     (canon "todo.md" "Preserve complete operator, market-maker, cross-J, and hub lending controls with zero capability loss.")
-  :sources ["todo.md" "ui/src/screens/Desk.tsx" "ui/src/screens/Swap.tsx" "ui/src/screens/Manage.tsx"])
+  :sources ["todo.md" "ui/src/screens/Swap.tsx" "ui/src/screens/Manage.tsx"])
 
 ;; ── Commercial XLN Program Seed ───────────────────────────────────────────────────────────────────
 (xln-app 'otc-deal-room

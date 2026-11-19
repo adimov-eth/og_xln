@@ -95,6 +95,7 @@ import type {
   Profile as GossipProfile,
 } from '@xln/core/api/public/runtime-module';
 import { REMOTE_RUNTIME } from '@xln/core/config/constants';
+import { sleep } from '../utils/primitives';
 
 let unregisterEnvChange: (() => void) | null = null;
 let unregisterRuntimeControllerChange: (() => void) | null = null;
@@ -1353,7 +1354,6 @@ export async function refreshPaymentRuntimeGossip(options: {
   return { profiles: Array.from(mergedProfiles.values()), announced };
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const publishLocalRuntimeEnvIfActive = (env: RuntimeReplica): void => {
   const runtimeId = normalizeRuntimeIdentifier(env.runtimeId);

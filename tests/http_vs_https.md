@@ -12,7 +12,7 @@ The local xln frontend is HTTPS-first when development certificates are present.
 ## Why HTTPS
 
 - Web crypto and secure-context APIs behave like production.
-- WebXR, service workers, and browser storage paths are tested under secure-context rules.
+- Service workers and browser storage paths are tested under secure-context rules.
 - Playwright can ignore the local self-signed certificate through config.
 
 ## E2E Defaults

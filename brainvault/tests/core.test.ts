@@ -23,13 +23,12 @@ import {
   deriveEthereumPrivateKeyAtPath, bytesToHex,
   deriveSitePassword, factorForShardCount, getShardCount, hexToBytes, validateInputs, rootDomain,
 } from '../src/core/index.ts';
-import { BIP39_ENGLISH } from '../src/core/bip39-english.ts';
 import { resolveKdfParams } from '../src/core/primitives/kdf.ts';
 import { copyAndWipe } from '../src/core/primitives/encoding.ts';
 import { BRAINVAULT_V1, BRAINVAULT_V1_SPEC_ID, shardRequestFingerprint } from '../src/core/primitives/spec.ts';
 import { acceptShard, createShardSlots, finalizeShards } from '../src/native/shard-collector.ts';
 import {
-  cliCreationCharacterError, cliDomainError, cliPasswordError, cliProgressStatusLine,
+  cliDomainError, cliPasswordError, cliProgressStatusLine,
   publicErrorCode, publicErrorMessage,
 } from '../src/cli/policy.ts';
 import { deriveBrainVaultNative } from '../src/native/index.ts';
@@ -92,17 +91,11 @@ const VECTORS = VECTOR_FILE.vectors.map(vector => ({
   },
 }));
 
-test('embedded BIP39 English wordlist is canonical', () => {
-  const canonicalFile = `${BIP39_ENGLISH.join('\n')}\n`;
-  const hash = new Bun.CryptoHasher('sha256').update(canonicalFile).digest('hex');
-  expect(BIP39_ENGLISH).toHaveLength(2048);
-  expect(Object.isFrozen(BIP39_ENGLISH)).toBe(true);
+test('frozen V1 constants are immutable', () => {
   expect(Object.isFrozen(BRAINVAULT_V1)).toBe(true);
   expect(BRAINVAULT_V1.ARGON_VERSION).toBe(0x13);
   expect(BRAINVAULT_V1_SPEC_ID).toBe('brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8');
-  expect(() => ((BIP39_ENGLISH as string[])[0] = 'mutated')).toThrow();
   expect(() => ((BRAINVAULT_V1 as { ARGON_TIME_COST: number }).ARGON_TIME_COST = 2)).toThrow();
-  expect(hash).toBe('2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda');
 });
 
 test('external V1 vectors freeze input bytes and spec identity', () => {
@@ -150,25 +143,6 @@ test('full progress status never wraps at its non-compact terminal boundary', ()
   expect(line.length).toBeLessThanOrEqual(72);
 });
 
-test('promo banner stays inside an ultra-narrow terminal', () => {
-  const script = [
-    'set timeout 5',
-    'spawn env COLUMNS=20 NO_COLOR=1 TERM=xterm-256color bun brainvault --promo',
-    'expect "brainvault.sh"',
-    'exec kill -INT [exp_pid]',
-    'expect eof',
-  ].join('\n');
-  const result = Bun.spawnSync({
-    cmd: ['expect', '-c', script], cwd: PACKAGE_ROOT, stderr: 'pipe', stdout: 'pipe',
-  });
-  const lines = result.stdout.toString()
-    .replaceAll(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-    .split(/[\r\n]+/)
-    .filter(line => line !== '' && !line.startsWith('spawn '));
-  expect(lines.length).toBeGreaterThan(0);
-  for (const line of lines) expect(line.length).toBeLessThanOrEqual(20);
-});
-
 test('canonical manifest authenticates every listed source and native binary', async () => {
   const manifest = await Bun.file(`${PACKAGE_ROOT}/docs/manifest.sha256`).text();
   const entries = manifest.trim().split('\n').map(line => {
@@ -186,13 +160,8 @@ test('canonical manifest authenticates every listed source and native binary', a
     'src/native/hybrid.ts',
     'src/native/prebuilds/darwin-arm64/brainvault-argon2',
     'src/native/prebuilds/darwin-arm64/brainvault-argon2-m3',
-    'src/native/prebuilds/darwin-arm64/brainvault-argon2-rust',
-    'src/native/prebuilds/darwin-arm64/brainvault-argon2-rust-m3',
-    'src/native/prebuilds/darwin-arm64/brainvault-argon2-rust-no-wipe',
-    'src/native/prebuilds/darwin-arm64/brainvault-argon2-rust-no-wipe-m3',
     'src/native/prebuilds/darwin-arm64/brainvault-argon2-metal',
     'src/native/prebuilds/darwin-arm64/argon2.metallib',
-    'src/native/prebuilds/darwin-arm64/brainvault-argon2-opencl',
   ]) {
     expect(entries.some(entry => entry.path === required)).toBe(true);
   }
@@ -394,9 +363,6 @@ async function tinyRoot(name: string, passphrase: string, shardCount = 1): Promi
   const params = {
     algId: `${BRAINVAULT_V1.ALG_ID}|test-8kib`,
     shardMemoryKb: 8,
-    argonTimeCost: 1,
-    argonParallelism: 1,
-    shardOutputBytes: 32,
   };
   const shards = await Promise.all(Array.from({ length: shardCount }, async (_, index) => {
     const salt = await createShardSalt(name, index, shardCount, params.algId);
@@ -435,8 +401,6 @@ test('every semantic input and KDF domain parameter separates the root', async (
   const mutations = [
     combineShardsWithParams([shard], 1, { algId: `${BRAINVAULT_V1.ALG_ID}|mutated` }),
     combineShardsWithParams([shard], 1, { shardMemoryKb: BRAINVAULT_V1.SHARD_MEMORY_KB * 2 }),
-    combineShardsWithParams([shard], 1, { argonTimeCost: 2 }),
-    combineShardsWithParams([shard], 1, { argonParallelism: 2 }),
   ];
   for (const mutation of mutations) expect(bytesToHex(await mutation)).not.toBe(canonical);
   await expect(combineShardsWithParams([shard], 2)).rejects.toThrow('BRAINVAULT_FACTOR_SHARD_MISMATCH:2:1:1');
@@ -472,19 +436,14 @@ test('single shard derivation is deterministic', async () => {
 test('Wasm and native engines share canonical malformed UTF-16 encoding', async () => {
   const passphrase = '\ud800';
   const salt = await createShardSalt('unicode-parity', 0, 1);
-  const params = {
-    shardMemoryKb: 8,
-    argonTimeCost: 1,
-    argonParallelism: 1,
-    shardOutputBytes: 32,
-  };
+  const params = { shardMemoryKb: 8 };
   const wasm = await deriveShardWithParams(passphrase, salt, params);
   const native = await argon2Native(new TextEncoder().encode(passphrase.normalize('NFKD')), {
     salt,
     memoryCost: params.shardMemoryKb,
-    timeCost: params.argonTimeCost,
-    parallelism: params.argonParallelism,
-    outputLen: params.shardOutputBytes,
+    timeCost: BRAINVAULT_V1.ARGON_TIME_COST,
+    parallelism: BRAINVAULT_V1.ARGON_PARALLELISM,
+    outputLen: BRAINVAULT_V1.SHARD_OUTPUT_BYTES,
     algorithm: 2,
     version: 1,
   });
@@ -1159,19 +1118,9 @@ test('Ctrl+C exits the entire CLI and impossible RAM plans fail before allocatio
   expect(oversized.stderr.toString()).toContain('BRAINVAULT_WORKERS_EXCEED_MEMORY_LIMIT');
 });
 
-test('CLI accepts exact Unicode input without a recovery-only switch', () => {
-  expect(cliCreationCharacterError('alice', 'secret123456', false)).toBeUndefined();
-  expect(cliCreationCharacterError('Алиса', 'секрет-пароль', false)).toBeUndefined();
-  expect(cliCreationCharacterError('café', 'secrét-password', false)).toBeUndefined();
-  expect(cliCreationCharacterError('café', 'secrét-password', true)).toBeUndefined();
+test('CLI password policy enforces the short-password minimum', () => {
   expect(cliPasswordError('1234567', false)).toContain('BRAINVAULT_PASSPHRASE_TOO_SHORT');
   expect(cliPasswordError('1234567', true)).toBeUndefined();
-});
-
-test('known-corrupt same-isolate engine is research-only outside benchmark modes', () => {
-  const blocked = runCli(['--shards', '1', '--workers', '1', '--engine', 'native-direct']);
-  expect(blocked.exitCode).toBe(1);
-  expect(blocked.stderr.toString()).toContain('BRAINVAULT_ENGINE_RESEARCH_ONLY:native-direct');
 });
 
 test('CLI advanced menu accepts keyboard navigation and derives the selected level', () => {
@@ -1660,7 +1609,7 @@ test('exact --shards remains distinct from legacy --factor in benchmark parsing'
 });
 
 test('custom multiplier preserves final wallet parity across compatible engines', () => {
-  const engines = ['c-neon', 'c-neon-wipe', 'native-direct', 'native-sync', 'native', 'rust', 'rust-no-wipe', 'wasm'];
+  const engines = ['c-neon', 'native', 'wasm'];
   let expected: string | undefined;
   for (const engine of engines) {
     const child = runCli(['--bench', '--shards', '1', '--workers', '1', '--multiplier', '2', '--engine', engine]);

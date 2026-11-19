@@ -12,7 +12,7 @@ const SALT_BYTES = 32;
 const OUTPUT_BYTES = 32;
 const MEMORY_BYTES_PER_SHARD = 256 * 1024 * 1024;
 
-export type AcceleratorEngine = 'metal' | 'metal-generic' | 'opencl';
+export type AcceleratorEngine = 'metal';
 
 export type AcceleratorPlan = Readonly<{
   cpuShards: number;
@@ -27,7 +27,6 @@ export type NativeHybridPaths = Readonly<{
   cpuExecutable: string;
   acceleratorExecutable: string;
   metalLibrary?: string;
-  openclKernel?: string;
 }>;
 
 function boundedWorkers(value: number, shards: number): number {
@@ -56,25 +55,21 @@ export function acceleratorPlan(
   }
   const totalGiB = totalMemory / (1024 ** 3);
   const ultra = totalGiB >= 128 && cpuCount >= 24;
-  const acceleratorProcesses = engine !== 'opencl' && ultra && shardCount >= 100 ? 8 : 1;
+  const acceleratorProcesses = ultra && shardCount >= 100 ? 8 : 1;
 
   if (ultra && shardCount >= 100) {
     // The measured 1,000-shard profile is exactly two 40-arena waves in each
     // of eight Metal processes. Even one extra shard can create a third wave;
     // keep the frozen split until a repeated end-to-end profile proves better.
-    const acceleratorFraction = engine === 'opencl'
-      ? 0.496
-      // The exact level-4 profile was separately measured end to end. Do not
-      // extrapolate it to unmeasured custom/level-5/level-6 shard counts.
-      : engine === 'metal' && shardCount === 10_000 ? 0.80 : 0.64;
+    // The exact level-4 profile was separately measured end to end. Do not
+    // extrapolate it to unmeasured custom/level-5/level-6 shard counts.
+    const acceleratorFraction = shardCount === 10_000 ? 0.80 : 0.64;
     const acceleratorShards = Math.min(shardCount - 1, Math.round(shardCount * acceleratorFraction));
     return {
       cpuShards: shardCount - acceleratorShards,
-      cpuWorkers: boundedWorkers(engine === 'opencl' ? Math.min(30, requestedCpuWorkers) : requestedCpuWorkers, shardCount - acceleratorShards),
+      cpuWorkers: boundedWorkers(requestedCpuWorkers, shardCount - acceleratorShards),
       acceleratorShards,
-      acceleratorWorkers: engine === 'opencl'
-        ? Math.min(248, acceleratorShards)
-        : Math.min(40, Math.ceil(acceleratorShards / acceleratorProcesses)),
+      acceleratorWorkers: Math.min(40, Math.ceil(acceleratorShards / acceleratorProcesses)),
       acceleratorProcesses,
     };
   }
@@ -86,7 +81,7 @@ export function acceleratorPlan(
     Math.max(1, memorySlots - cpuWorkers),
     shardCount - 1,
   );
-  const acceleratorFraction = engine === 'opencl' ? 0.50 : 0.62;
+  const acceleratorFraction = 0.62;
   const acceleratorShards = Math.min(shardCount - 1, Math.max(1, Math.round(shardCount * acceleratorFraction)));
   return {
     cpuShards: shardCount - acceleratorShards,
@@ -97,25 +92,23 @@ export function acceleratorPlan(
   };
 }
 
-function makeInput(
+/** Stdin frame of the native engines: header, password, then one salt per shard. */
+export function encodeNativeInput(
   password: Uint8Array,
   salts: readonly Uint8Array[],
-  first: number,
-  count: number,
   workers: number,
   memoryKiB: number,
 ): Buffer {
+  const count = salts.length;
   const input = Buffer.alloc(HEADER_BYTES + password.length + (count * SALT_BYTES));
   input.writeUInt32LE(INPUT_MAGIC, 0);
   input.writeUInt32LE(count, 4);
   input.writeUInt32LE(Math.min(workers, count), 8);
   input.writeUInt32LE(password.length, 12);
-  input.writeUInt32LE(0, 16);
   input.writeUInt32LE(memoryKiB, 20);
   input.set(password, HEADER_BYTES);
-  for (let offset = 0; offset < count; offset += 1) {
-    const salt = salts[first + offset];
-    if (salt === undefined || salt.length !== SALT_BYTES) throw new Error('BRAINVAULT_ACCELERATOR_SALT_INVALID');
+  for (const [offset, salt] of salts.entries()) {
+    if (salt.length !== SALT_BYTES) throw new Error('BRAINVAULT_ACCELERATOR_SALT_INVALID');
     input.set(salt, HEADER_BYTES + password.length + (offset * SALT_BYTES));
   }
   return input;
@@ -203,13 +196,8 @@ export async function deriveHybridNativeShards(options: Readonly<{
   const plan = acceleratorPlan(engine, shardCount, requestedCpuWorkers);
   const cpuExecutable = verifyBundledExecutable(paths.cpuExecutable, paths.packageRoot);
   const acceleratorExecutable = verifyBundledExecutable(paths.acceleratorExecutable, paths.packageRoot);
-  if (engine === 'opencl') {
-    if (paths.openclKernel === undefined) throw new Error('BRAINVAULT_OPENCL_KERNEL_MISSING');
-    verifyBundledFile(paths.openclKernel, paths.packageRoot);
-  } else {
-    if (paths.metalLibrary === undefined) throw new Error('BRAINVAULT_METAL_LIBRARY_MISSING');
-    verifyBundledFile(paths.metalLibrary, paths.packageRoot);
-  }
+  if (paths.metalLibrary === undefined) throw new Error('BRAINVAULT_METAL_LIBRARY_MISSING');
+  verifyBundledFile(paths.metalLibrary, paths.packageRoot);
 
   const jobs: NativeJob[] = [];
   if (plan.cpuShards > 0) {
@@ -230,12 +218,8 @@ export async function deriveHybridNativeShards(options: Readonly<{
       count,
       workers: Math.min(plan.acceleratorWorkers, count),
       executable: acceleratorExecutable,
-      environment: engine === 'opencl' ? {
-        BRAINVAULT_OPENCL_BATCH: String(Math.min(plan.acceleratorWorkers, count)),
-        BRAINVAULT_OPENCL_JOBS_PER_BLOCK: '1',
-        BRAINVAULT_OPENCL_KERNEL_DIR: paths.openclKernel!.slice(0, paths.openclKernel!.lastIndexOf('/')),
-      } : {
-        BRAINVAULT_METAL_KERNEL: engine === 'metal' ? 'v1special' : 'modern64',
+      environment: {
+        BRAINVAULT_METAL_KERNEL: 'v1special',
         BRAINVAULT_METAL_PRIVATE: '1',
         BRAINVAULT_METAL_SIMDGROUPS: String(simdgroups),
       },
@@ -245,7 +229,7 @@ export async function deriveHybridNativeShards(options: Readonly<{
 
   const inputs: Buffer[] = [];
   try {
-    for (const job of jobs) inputs.push(makeInput(password, salts, job.first, job.count, job.workers, memoryKiB));
+    for (const job of jobs) inputs.push(encodeNativeInput(password, salts.slice(job.first, job.first + job.count), job.workers, memoryKiB));
   } catch (error) {
     for (const input of inputs) input.fill(0);
     throw error;

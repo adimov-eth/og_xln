@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { ethers } from 'ethers';
 import { BLOCKCHAIN } from '../../../config/constants';
 
-import { readAuthenticatedReceiptRange, type RpcBatchCall } from '../../../jurisdiction/adapter/receipt-root';
+import { readAuthenticatedReceiptRange, type RpcBatchCall } from '../../../jurisdiction/adapter/receipt/reader';
 import { sendBatchInChunks } from '../../../jurisdiction/adapter/rpc-utils';
 import { sealedHeader } from '../../helpers/jurisdiction/sealed-header';
 

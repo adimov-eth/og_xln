@@ -3,7 +3,7 @@
   import type { RuntimeAdapterViewFrame, RuntimeReplica, XLNModule } from '@xln/core/api/public/runtime-module';
   import { submitEntityInputs } from '#lib/stores/xlnStore.ts';
   import { runtimeQueryClient } from '#lib/stores/runtimeQueryClient.ts';
-  import { SURFACES } from '../../../../../docs/studies/ui/surfaces/surfaces.generated';
+  import { EVERYDAY_COPY } from '#lib/everyday/wallet-posture.ts';
   import type { EverydayWalletProjection, FriendTabRow } from '#lib/everyday/everyday-projection.ts';
   import { planEverydaySend, planFriendSplitTxs, type EverydayExternalRow } from '#lib/everyday/everyday-autopilot.ts';
   import { executeEverydaySendPlan } from './everyday-funding';
@@ -19,8 +19,8 @@
   let splitTarget = $state(''); let splitAmount = $state('');
   let busy = $state(false); let statusMsg = $state(''); let errorMsg = $state('');
 
-  const terms = SURFACES.everyday.terms;
-  const flows = SURFACES.everyday.flows;
+  const terms = EVERYDAY_COPY.terms;
+  const flows = EVERYDAY_COPY.flows;
   const peers = $derived((frame?.entities ?? []).filter(e => !e.isHub && e.entityId.toLowerCase() !== projection.entityId));
   const resolvedSplit = $derived(resolveContactTarget(splitTarget, peers));
   const parsedSplitAmount = $derived.by(() => {
@@ -32,7 +32,7 @@
   async function submitSplit(event: Event): Promise<void> {
     event.preventDefault();
     if (busy || !isLive || !commandReady || !projection.signerId || !xln || !resolvedSplit.target || parsedSplitAmount <= 0n) return;
-    busy = true; errorMsg = ''; statusMsg = flows['split-tab'].pending.text;
+    busy = true; errorMsg = ''; statusMsg = flows.splitTab.pending;
     try {
       const target = resolvedSplit.target;
       const isHubTarget = projection.hubAccounts.includes(target) || Boolean(frame?.entities.find(e => e.entityId.toLowerCase() === target)?.isHub);
@@ -48,14 +48,14 @@
         ...(!hasPeerSummary ? { disputeConfig: defaultAccountDisputeConfigForParties(projection.entityId, false, target, false) } : {}),
       });
       await submitEntityInputs([{ entityId: projection.entityId, signerId: projection.signerId, entityTxs: txs }]);
-      statusMsg = flows['split-tab'].done.text; splitAmount = ''; onRefresh();
-    } catch (err) { errorMsg = err instanceof Error ? err.message : flows['split-tab'].failed.text; statusMsg = ''; }
+      statusMsg = flows.splitTab.done; splitAmount = ''; onRefresh();
+    } catch (err) { errorMsg = err instanceof Error ? err.message : flows.splitTab.failed; statusMsg = ''; }
     finally { busy = false; }
   }
 
   async function settleTab(row: FriendTabRow): Promise<void> {
     if (busy || !isLive || !commandReady || !projection.signerId || !xln || row.signedAmount >= 0n || row.disputed) return;
-    busy = true; errorMsg = ''; statusMsg = flows['settle-tab'].pending.text;
+    busy = true; errorMsg = ''; statusMsg = flows.settleTab.pending;
     try {
       const amount = -row.signedAmount;
       const { route, deliveryMode, targetEntityId } = await quoteSettleTabRoute({
@@ -68,18 +68,18 @@
         onStage: msg => { statusMsg = msg; },
         refreshPlan: async () => buildPlan(await runtimeQueryClient.readViewFrame({ entityId: projection.entityId })),
       });
-      statusMsg = flows['settle-tab'].done.text; onRefresh();
-    } catch (err) { errorMsg = err instanceof Error ? err.message : flows['settle-tab'].failed.text; statusMsg = ''; }
+      statusMsg = flows.settleTab.done; onRefresh();
+    } catch (err) { errorMsg = err instanceof Error ? err.message : flows.settleTab.failed; statusMsg = ''; }
     finally { busy = false; }
   }
 </script>
 
 <section class="ev-card">
-  <h2 style="margin:0;font-size:1.25rem;">{terms.people.text}</h2>
+  <h2 style="margin:0;font-size:1.25rem;">{terms.people.label}</h2>
   <p class="ev-muted">{terms.people.note}</p>
   <div class="ev-row ev-num" style="justify-content:space-between;">
     <span>Friends owe you: <strong>{formatUsd(projection.primary.friendsOweYou, decimals)}</strong></span>
-    <span>{terms.owed.text}: <strong>{formatUsd(projection.primary.youOweFriends, decimals)}</strong></span>
+    <span>{terms.owed.label}: <strong>{formatUsd(projection.primary.youOweFriends, decimals)}</strong></span>
   </div>
 </section>
 
@@ -90,7 +90,7 @@
   </label>
   <label class="ev-field"><span>Split amount</span><input class="ev-input" inputmode="decimal" placeholder="15.00" data-testid="everyday-split-amount" bind:value={splitAmount} disabled={busy} /></label>
   {#if resolvedSplit.ambiguous}<p class="ev-alert error">More than one contact has this name.</p>{/if}
-  <button type="submit" class="ev-btn primary" data-testid="everyday-split-btn" disabled={busy || !isLive || !commandReady || !resolvedSplit.target || parsedSplitAmount <= 0n}>{busy ? flows['split-tab'].pending.text : flows['split-tab'].before.text}</button>
+  <button type="submit" class="ev-btn primary" data-testid="everyday-split-btn" disabled={busy || !isLive || !commandReady || !resolvedSplit.target || parsedSplitAmount <= 0n}>{busy ? flows.splitTab.pending : flows.splitTab.before}</button>
 </form>
 
 <section class="ev-card" data-testid="everyday-friends-list">
@@ -115,7 +115,7 @@
         </div>
         {#if row.signedAmount < 0n}
           <button type="button" class="ev-btn primary" data-testid="everyday-settle-btn" disabled={busy || !isLive || !commandReady || row.disputed} onclick={() => void settleTab(row)}>
-            {flows['settle-tab'].before.text} ({formatSignedUsd(row.signedAmount, decimals)})
+            {flows.settleTab.before} ({formatSignedUsd(row.signedAmount, decimals)})
           </button>
         {/if}
       </div>

@@ -97,7 +97,7 @@ export const startWatcherFromStorageAnchor = async (request: AnchorStartRequest)
     request.emitDebug({ event: 'j_watch_anchor_committed', height: pending.height, replicas: pending.replicaKeys });
     return false;
   }
-  if (services.mode !== 'rpc' && services.mode !== 'anvil') return false;
+  if (services.mode !== 'rpc') return false;
   if (session.pendingHistoryRange) return false;
   const relevant = [...env.state.eReplicas.entries()]
     .filter(([, replica]) => isEntityReplicaRelevantToWatcher(env, replica, request.watcherReplica));
