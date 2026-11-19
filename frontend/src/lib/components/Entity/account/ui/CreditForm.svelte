@@ -9,6 +9,8 @@
   import BigIntInput from '../../../Common/BigIntInput.svelte';
   import EntitySelect from '../../workspace/shell/EntitySelect.svelte';
   import { requireTokenDecimals } from '../../token-metadata';
+  import { signedCreditLimitFor } from '../account-credit-view';
+  import { newCreditRequestId } from '../entity-action-txs';
 
   export let entityId: string;
   export let actionRuntimeEnv: RuntimeReplica | null = null;
@@ -37,7 +39,7 @@
   $: signedCredit = signedDelta && activeXlnFunctions
     ? activeXlnFunctions.deriveDelta(signedDelta, entityId.toLowerCase() < effectiveCounterparty.toLowerCase())
     : null;
-  $: currentSignedLimit = signedCredit ? (mode === 'extend' ? signedCredit.ownCreditLimit : signedCredit.peerCreditLimit) : null;
+  $: currentSignedLimit = signedCredit ? signedCreditLimitFor(mode, signedCredit) : null;
   $: tokenList = activeXlnFunctions
     ? [1, 2, 3].map((id) => ({ id, symbol: activeXlnFunctions.getTokenInfo(id).symbol }))
     : [];
@@ -55,13 +57,6 @@
         type: 'requestCredit';
         data: { counterpartyEntityId: string; tokenId: number; amount: bigint; requestId: string };
       };
-
-  /** 'credit-<16 hex>': the Account replay id of one credit request. */
-  function newCreditRequestId(): string {
-    const bytes = new Uint8Array(8);
-    globalThis.crypto.getRandomValues(bytes);
-    return `credit-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-  }
 
   /**
    * Extend: we set our own credit line to the counterparty. Request: we sign a

@@ -153,7 +153,7 @@ const RULES: Rule[] = [
     // Authorized Russian publications live below docs/ru/. External projects keep
     // their own source-language policy.
     excludePrefix: ['docs/ru/', '.archive/', 'ai/', 'brainvault/'],
-    patterns: [{ re: /[Ѐ-ӿ]/u, label: 'cyrillic' }],
+    patterns: [{ re: /[\u0400-\u04FF]/u, label: 'cyrillic' }],
     // Multilingual product data and dated owner reports. Keep this list exact: a
     // directory-wide exemption would let Russian comments leak into source code.
     allow: new Set([

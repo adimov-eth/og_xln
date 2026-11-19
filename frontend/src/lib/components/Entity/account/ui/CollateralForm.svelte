@@ -97,9 +97,9 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
     return usdFormatter.format(value);
   }
 
+  /** Amount with its symbol, exactly once: the runtime formatter already appends it. */
   function formatTokenAmount(amount: bigint): string {
-    if (amount === 0n) return '0';
-    return activeXlnFunctions?.formatTokenAmount?.(selectedTokenId, amount) || amount.toString();
+    return activeXlnFunctions?.formatTokenAmount?.(selectedTokenId, amount) || `${amount.toString()} ${tokenSymbol(selectedTokenId)}`;
   }
 
   $: overCollateralUsd = amountToUsd(
@@ -299,15 +299,15 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
   {#if userDerivedDelta && projectedFeePolicy && collateralAmount > 0n}
     <div class="max-hint" data-testid="collateral-authorization-breakdown">
       Gross {formatTokenAmount(collateralAmount)} − exact fee {formatTokenAmount(projectedFeeAmount)}
-      = net collateral {formatTokenAmount(projectedNetCollateral)} {tokenSymbol(selectedTokenId)}
+      = net collateral {formatTokenAmount(projectedNetCollateral)}
     </div>
   {/if}
 
   {#if userDerivedDelta && overCollateralAmount > 0n}
     <div class="over-collateral-note">
       <div>
-        You are requesting over-collateralization of {formatTokenAmount(overCollateralAmount)} {tokenSymbol(selectedTokenId)}.
-        Hub acceptance cap: {formatTokenAmount(maxCollateralRequest)} {tokenSymbol(selectedTokenId)}.
+        You are requesting over-collateralization of {formatTokenAmount(overCollateralAmount)}.
+        Hub acceptance cap: {formatTokenAmount(maxCollateralRequest)}.
       </div>
       <div>
         Fee estimate: $1 per $100 per hour (approx.). For {overCollateralMinutes} minutes: {formatUsd(overCollateralRentCostUsd)}.
