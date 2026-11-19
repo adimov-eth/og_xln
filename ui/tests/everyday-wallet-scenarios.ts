@@ -77,13 +77,15 @@ export async function runEverydayCaseE2(page: Page, wallet: WalletKind): Promise
   expect(initialSnap.hubAccounts[0]!.peerCreditLimit).toBe('250000000');
   expect(initialSnap.hubAccounts[0]!.ownCreditLimit).toBe('0');
   expect(await readEverydayCashValue(page)).toBe(0);
-  await expect(page.getByTestId('home-faucet')).toBeVisible();
+  await expect(page.getByTestId('everyday-test-btn')).toBeVisible();
 
+  await page.getByTestId('everyday-test-btn').click();
+  await expect(page.getByTestId('home-faucet')).toBeVisible();
   await page.getByTestId('home-faucet').click();
+  await page.getByTestId('nav-cash').locator('visible=true').first().click();
   const arriving = page.getByTestId('everyday-arriving');
   await expect(arriving).toBeVisible({ timeout: 20_000 });
   await expect(arriving).toContainText(/arriving/i);
-  await expect(arriving).toContainText(/finishing/i);
   expect(await readEverydayCashValue(page)).toBe(0);
 
   // Unhappy: paying while funds are only arriving must not inflate or debit Cash.

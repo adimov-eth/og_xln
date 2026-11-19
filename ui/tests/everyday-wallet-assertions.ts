@@ -323,7 +323,9 @@ export async function readEverydayCashValue(page: Page): Promise<number> {
 }
 
 export async function fundViaHomeFaucetAndSettle(page: Page, wallet: WalletKind): Promise<number> {
+  await page.getByTestId('everyday-test-btn').click();
   await page.getByTestId('home-faucet').click();
+  await page.getByTestId('nav-cash').locator('visible=true').first().click();
   await expect(page.getByTestId('everyday-arriving')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId('everyday-arriving')).toHaveCount(0, { timeout: 45_000 });
   await expect

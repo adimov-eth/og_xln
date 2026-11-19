@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { lockEmbeddedRuntime } from '../../runtime/adapter';
 import { resetReactRetiredTestnetState } from '../../runtime/deploy-version';
+import { MATERIALS, NUMBER_FONTS } from '../../runtime/design';
 import { useApp } from '../../runtime/store';
 import { sendEntityTxs } from '../../runtime/tx';
 import { useEverydayWallet, useWalletPosture } from '../../runtime/use-everyday-wallet';
 import { Icon } from '../Icons';
 import { Sheet } from '../Sheet';
+import { EverydayDesignPreview } from './EverydayDesignPreview';
 import { EverydayRecoveryNotice } from './EverydayRecoveryNotice';
 
 export function EverydaySettingsPanel() {
@@ -16,6 +18,8 @@ export function EverydaySettingsPanel() {
   const sessionSeeds = useApp(state => state.sessionSeeds);
   const theme = useApp(state => state.theme);
   const setTheme = useApp(state => state.setTheme);
+  const design = useApp(state => state.design);
+  const setDesign = useApp(state => state.setDesign);
   const commandReady = useApp(state => state.commandReady);
   const toast = useApp(state => state.toast);
   const { wallet, projection } = useEverydayWallet(entityId);
@@ -120,7 +124,7 @@ export function EverydaySettingsPanel() {
 
       <div className="everyday-panel">
         <div className="everyday-panel-head">
-          <span className="everyday-label">Theme</span>
+          <span className="everyday-label">Appearance &amp; design</span>
           <span className="segc">
             <button type="button" className={theme === 'dark' ? 'active' : ''} onClick={() => setTheme('dark')}>
               <Icon name="moon" size={14} /> Dark
@@ -130,6 +134,39 @@ export function EverydaySettingsPanel() {
             </button>
           </span>
         </div>
+        <div className="everyday-panel-head">
+          <span className="everyday-row-sub">Surface</span>
+          <span className="segc">
+            {MATERIALS.map(entry => (
+              <button
+                key={entry.id}
+                type="button"
+                className={design.material === entry.id ? 'active' : ''}
+                onClick={() => setDesign({ material: entry.id })}
+                data-testid={`design-material-${entry.id}`}
+              >
+                {entry.title}
+              </button>
+            ))}
+          </span>
+        </div>
+        <div className="everyday-panel-head">
+          <span className="everyday-row-sub">Numbers</span>
+          <span className="segc">
+            {NUMBER_FONTS.map(entry => (
+              <button
+                key={entry.id}
+                type="button"
+                className={design.numbers === entry.id ? 'active' : ''}
+                onClick={() => setDesign({ numbers: entry.id })}
+                data-testid={`design-numbers-${entry.id}`}
+              >
+                {entry.title}
+              </button>
+            ))}
+          </span>
+        </div>
+        <EverydayDesignPreview />
       </div>
 
       <div className="everyday-panel">

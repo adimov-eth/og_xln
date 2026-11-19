@@ -121,6 +121,91 @@ export function splitMoneyDisplay(formatted: string): SplitMoneyDisplay {
   return { major: match[1] ?? formatted, minor: match[2] ?? '', suffix: match[3] ?? '' };
 }
 
+export type EverydayDesignPreviewId = 'empty' | 'settled' | 'arriving' | 'syncing' | 'savings';
+
+export type EverydayDesignPreviewState = {
+  readonly id: EverydayDesignPreviewId;
+  readonly tabLabel: string;
+  readonly heading: string;
+  readonly amount: string;
+  readonly subline: string;
+  readonly sublineKind: 'muted' | 'delta-in';
+  readonly truth: string;
+  readonly arrivingAmount: string | null;
+  readonly syncing: boolean;
+  readonly savings: boolean;
+  readonly showActions: boolean;
+};
+
+/** Canonical state fixtures shared by the React and Svelte Everyday design-system previews. */
+export const EVERYDAY_DESIGN_PREVIEW_STATES: readonly EverydayDesignPreviewState[] = [
+  {
+    id: 'empty',
+    tabLabel: '$0 Start',
+    heading: 'Cash',
+    amount: '$0.00',
+    subline: 'Your money, ready to spend or cash out anytime.',
+    sublineKind: 'muted',
+    truth: 'Connected via Hub H1.',
+    arrivingAmount: null,
+    syncing: false,
+    savings: false,
+    showActions: true,
+  },
+  {
+    id: 'settled',
+    tabLabel: 'Settled',
+    heading: 'Cash',
+    amount: '$99.89',
+    subline: '+$100.00, −$0.11 settle fee',
+    sublineKind: 'delta-in',
+    truth: 'Connected via Hub H1.',
+    arrivingAmount: null,
+    syncing: false,
+    savings: false,
+    showActions: true,
+  },
+  {
+    id: 'arriving',
+    tabLabel: 'Arriving',
+    heading: 'Cash',
+    amount: '$99.89',
+    subline: 'Your money, ready to spend or cash out anytime.',
+    sublineKind: 'muted',
+    truth: 'Connected via Hub H1.',
+    arrivingAmount: '+$25.00 arriving',
+    syncing: false,
+    savings: false,
+    showActions: true,
+  },
+  {
+    id: 'syncing',
+    tabLabel: 'Syncing',
+    heading: 'Cash',
+    amount: '$99.89',
+    subline: 'Syncing latest balance. Sending resumes in a moment.',
+    sublineKind: 'muted',
+    truth: 'Connected via Hub H1.',
+    arrivingAmount: null,
+    syncing: true,
+    savings: false,
+    showActions: true,
+  },
+  {
+    id: 'savings',
+    tabLabel: 'Savings',
+    heading: 'Savings · separate from Cash',
+    amount: '$250.00',
+    subline: 'Lent out to earn interest — not protected like Cash.',
+    sublineKind: 'muted',
+    truth: 'Available Cash: $99.89 · Hub H1 Savings.',
+    arrivingAmount: null,
+    syncing: false,
+    savings: true,
+    showActions: false,
+  },
+] as const;
+
 export function subscribeWalletPosture(listener: (posture: WalletPosture) => void): () => void {
   listeners.add(listener);
   if (typeof window === 'undefined') {

@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { EVERYDAY_COPY, splitMoneyDisplay } from '../../../frontend/src/lib/everyday/wallet-posture';
+import {
+  EVERYDAY_COPY,
+  EVERYDAY_DESIGN_PREVIEW_STATES,
+  splitMoneyDisplay,
+} from '../../../frontend/src/lib/everyday/wallet-posture';
 
 const REPO_ROOT = join(import.meta.dir, '../../..');
 
@@ -36,9 +40,12 @@ function listSourceFiles(relDir: string): string[] {
 }
 
 describe('Everyday wallet production boundary (one-way study -> wallet)', () => {
-  test('EVERYDAY_COPY contains zero protocol/plumbing jargon', () => {
-    const entries = collectStrings(EVERYDAY_COPY);
-    expect(entries.length).toBeGreaterThanOrEqual(35);
+  test('EVERYDAY_COPY and EVERYDAY_DESIGN_PREVIEW_STATES contain zero protocol/plumbing jargon', () => {
+    const entries = [
+      ...collectStrings(EVERYDAY_COPY),
+      ...collectStrings(EVERYDAY_DESIGN_PREVIEW_STATES, 'EVERYDAY_DESIGN_PREVIEW_STATES'),
+    ];
+    expect(entries.length).toBeGreaterThanOrEqual(45);
     const violations = entries
       .map(entry => ({ ...entry, match: entry.text.match(EVERYDAY_PLUMBING_JARGON_RE)?.[0] ?? null }))
       .filter(entry => entry.match !== null);

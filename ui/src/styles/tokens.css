@@ -8,6 +8,8 @@
 	--radius-m: 10px;
 	--radius-l: 14px;
 	--radius-pill: 999px;
+	/* Everyday uniform control/surface radius. */
+	--ev-radius: 8px;
 
 	--dur-fast: 140ms;
 	--dur-slow: 320ms;
@@ -59,6 +61,14 @@
 	--hold-dim: rgba(196, 181, 253, 0.28);
 	--dispute: #f26d6d;
 	--dispute-dim: rgba(242, 109, 109, 0.14);
+	/* Semantic Everyday ink grammar: monochrome controls, colour = money state only. */
+	--ink-settled: var(--display);
+	--ink-arriving: var(--debt);
+	--ink-owed: var(--credit);
+	--ink-dispute: var(--dispute);
+	--ink-delta-in: var(--reserve);
+	--ink-action: var(--display);
+	--ink-action-fg: var(--bg);
 	--btn-ink: #ffffff;
 	--scrim: rgba(4, 6, 10, 0.66);
 	--shadow-card: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -97,6 +107,13 @@
 	--hold-dim: rgba(142, 92, 245, 0.26);
 	--dispute: #df1b41;
 	--dispute-dim: rgba(223, 27, 65, 0.08);
+	--ink-settled: var(--display);
+	--ink-arriving: var(--debt);
+	--ink-owed: var(--credit);
+	--ink-dispute: var(--dispute);
+	--ink-delta-in: var(--coll);
+	--ink-action: var(--display);
+	--ink-action-fg: var(--bg);
 	--btn-ink: #ffffff;
 	--scrim: rgba(26, 31, 54, 0.4);
 	--shadow-card: 0 0 0 1px rgba(26, 31, 54, 0.06), 0 2px 5px rgba(60, 66, 87, 0.08), 0 1px 1px rgba(0, 0, 0, 0.04);

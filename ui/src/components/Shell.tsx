@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { VALUELESS_CHAIN_IDS } from '@xln/core/jurisdiction/adapter/chain-ids';
 import { getJurisdictionBadgeInfo } from '@xln/frontend/lib/utils/identity/jurisdictionBadge';
 import { getAdapter, getEmbeddedEnv } from '../runtime/adapter';
 import { useExternalWalletSync } from '../runtime/financial/external';
@@ -89,7 +90,11 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => clearToasts(), [pathname, clearToasts]);
 
   const navItems = posture === 'pro' ? PRO_NAV : EVERYDAY_NAV;
+  const navigate = useNavigate();
   const runtimeId = getAdapter()?.runtimeId ?? '';
+  const chainId = wallet.frame?.activeEntity?.core?.config.jurisdiction?.chainId;
+  const isDemoChain = chainId !== undefined && VALUELESS_CHAIN_IDS.has(Number(chainId));
+  const onTestScreen = pathname.startsWith('/test');
 
   return (
     <div
@@ -150,6 +155,17 @@ export function Shell({ children }: { children: ReactNode }) {
             data-entity-id={wallet.entityId}
           >
             <span className="everyday-context-pill">{wallet.name}</span>
+            {isDemoChain ? (
+              <button
+                type="button"
+                className={`everyday-test-trigger${onTestScreen ? ' active' : ''}`}
+                onClick={() => navigate(preserveModeTo(onTestScreen ? '/' : '/test'))}
+                aria-pressed={onTestScreen}
+                data-testid="everyday-test-btn"
+              >
+                Test
+              </button>
+            ) : null}
           </div>
         ) : null}
         {posture === 'pro' ? <Tour /> : null}

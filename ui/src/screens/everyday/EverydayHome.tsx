@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { VALUELESS_CHAIN_IDS } from '@xln/core/jurisdiction/adapter/chain-ids';
 import { formatEverydayArrivingNote } from '@xln/frontend/lib/everyday/everyday-policy';
 import { EVERYDAY_COPY, splitMoneyDisplay } from '@xln/frontend/lib/everyday/wallet-posture';
 import { EverydayCashOutPanel } from '../../components/everyday/EverydayCashOutPanel';
@@ -7,7 +6,6 @@ import { EverydayPayPanel } from '../../components/everyday/EverydayPayPanel';
 import { EverydayRequestPanel } from '../../components/everyday/EverydayRequestPanel';
 import { Icon } from '../../components/Icons';
 import { ScanSheet } from '../../components/ScanSheet';
-import { receiveTestMoney } from '../../runtime/financial/test-money';
 import { useApp } from '../../runtime/store';
 import { formatEverydayMoney, useEverydayWallet } from '../../runtime/use-everyday-wallet';
 
@@ -30,22 +28,11 @@ export function EverydayHome({
 
   const [action, setAction] = useState<ActiveAction>(null);
   const [scanning, setScanning] = useState(false);
-  const [faucetBusy, setFaucetBusy] = useState(false);
-  const [faucetError, setFaucetError] = useState('');
   const [showTruth, setShowTruth] = useState(false);
   const [deltaNotice, setDeltaNotice] = useState<BalanceDelta | null>(null);
   const lastCashRef = useRef<{ entityId: string; cash: bigint } | null>(null);
-  const faucetPendingRef = useRef(false);
 
   const tokenId = projection.primaryTokenId;
-  const chainId = wallet.frame?.activeEntity?.core?.config.jurisdiction?.chainId;
-  const isDemoChain = chainId !== undefined && VALUELESS_CHAIN_IDS.has(Number(chainId));
-  const showTestFaucet =
-    isDemoChain &&
-    projection.primary.cash === 0n &&
-    projection.primary.arriving === 0n &&
-    Boolean(projection.primaryHubId);
-
   const cashFormatted = formatEverydayMoney(projection.primary.cash, tokenId);
   const cashParts = splitMoneyDisplay(cashFormatted);
   const activeHub = wallet.accounts.find(account => account.counterpartyId === projection.primaryHubId)
@@ -62,18 +49,6 @@ export function EverydayHome({
     const diff = projection.primary.cash - prev.cash;
     if (diff === 0n) return;
     lastCashRef.current = { entityId: projection.entityId, cash: projection.primary.cash };
-    if (diff > 0n && faucetPendingRef.current) {
-      faucetPendingRef.current = false;
-      const expectedGross = 100_000_000n;
-      if (tokenId === 1 && diff < expectedGross && diff > 95_000_000n) {
-        const fee = expectedGross - diff;
-        setDeltaNotice({
-          positive: true,
-          text: `+$100.00, −${formatEverydayMoney(fee, tokenId)} settle fee`,
-        });
-        return;
-      }
-    }
     setDeltaNotice({
       positive: diff > 0n,
       text: diff > 0n
@@ -93,21 +68,6 @@ export function EverydayHome({
       ? `Connected via ${activeHub.label}. Protection is active on this hub.`
       : `Connected via ${activeHub.label}.`
     : 'No hub connected yet.';
-
-  const requestTestCash = async (): Promise<void> => {
-    if (faucetBusy || !commandReady) return;
-    setFaucetBusy(true);
-    setFaucetError('');
-    faucetPendingRef.current = true;
-    try {
-      await receiveTestMoney(wallet, () => {});
-    } catch (failure) {
-      faucetPendingRef.current = false;
-      setFaucetError(failure instanceof Error ? failure.message : 'Could not add test cash.');
-    } finally {
-      setFaucetBusy(false);
-    }
-  };
 
   return (
     <div className="everyday-screen fade-in">
@@ -159,30 +119,12 @@ export function EverydayHome({
             <span className="everyday-note">{arrivingNote}</span>
           </div>
         ) : null}
-
-        {showTestFaucet ? (
-          <div className="stack" style={{ gap: 6 }}>
-            <button
-              type="button"
-              className="btn primary"
-              disabled={faucetBusy || !commandReady}
-              onClick={() => void requestTestCash()}
-              data-testid="home-faucet"
-            >
-              {faucetBusy ? 'Adding test cash...' : 'Add $100 test cash'}
-            </button>
-            <span className="everyday-fee-line">
-              $100.00 sent · about $99.89 after ~$0.11 settle fee
-            </span>
-            {faucetError ? <p className="everyday-alert" role="alert">{faucetError}</p> : null}
-          </div>
-        ) : null}
       </section>
 
       <div className="everyday-actions">
         <button
           type="button"
-          className={`btn ${(!showTestFaucet && action === null) || action === 'pay' ? 'primary' : ''}`}
+          className={`btn ${action === null || action === 'pay' ? 'primary' : ''}`}
           onClick={() => setAction(current => (current === 'pay' ? null : 'pay'))}
           data-testid="everyday-pay-btn"
         >

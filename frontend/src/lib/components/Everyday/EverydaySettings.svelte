@@ -2,19 +2,31 @@
   import { vaultOperations, type Runtime } from '#lib/stores/vault/vaultStore.ts';
   import { setWalletPosture } from '#lib/stores/everyday/walletPostureStore.ts';
   import { resetRetiredTestnetState } from '#lib/utils/control/resetEverything.ts';
-  import { EVERYDAY_COPY } from '#lib/everyday/wallet-posture.ts';
+  import {
+    EVERYDAY_COPY,
+    EVERYDAY_DESIGN_PREVIEW_STATES,
+    splitMoneyDisplay,
+    type EverydayDesignPreviewId,
+  } from '#lib/everyday/wallet-posture.ts';
   import type { EverydayWalletProjection } from '#lib/everyday/everyday-projection.ts';
   import { classifyRecoveryShieldState } from '#lib/everyday/everyday-recovery.ts';
   import { resolveRecoveryShieldInput } from './everyday-runtime';
 
-  interface Props { projection: EverydayWalletProjection; runtime: Runtime | null; }
-  let { projection, runtime }: Props = $props();
+  interface Props {
+    projection: EverydayWalletProjection;
+    runtime: Runtime | null;
+    theme?: 'dark' | 'light';
+    onThemeChange?: (next: 'dark' | 'light') => void;
+  }
+  let { projection, runtime, theme = 'dark', onThemeChange }: Props = $props();
 
   let exporting = $state(false);
   let resetting = $state(false);
   let proChecked = $state(false);
   let statusMsg = $state('');
   let errorMsg = $state('');
+  let previewId = $state<EverydayDesignPreviewId>('settled');
+  let previewTruthOpen = $state(false);
 
   const resetCopy = EVERYDAY_COPY.flows.resetDemo;
   const shield = $derived(classifyRecoveryShieldState({
@@ -22,6 +34,11 @@
     disputes: projection.disputes,
     hasZeroL1Gas: projection.hasZeroL1Gas,
   }));
+  const previewState = $derived(
+    EVERYDAY_DESIGN_PREVIEW_STATES.find(entry => entry.id === previewId)
+    ?? EVERYDAY_DESIGN_PREVIEW_STATES[1]!,
+  );
+  const previewParts = $derived(splitMoneyDisplay(previewState.amount));
 
   async function saveBackup(): Promise<void> {
     if (exporting) return;
@@ -53,6 +70,51 @@
   </button>
 </section>
 
+<section class="ev-card" data-testid="everyday-design-preview">
+  <div class="ev-row" style="justify-content:space-between;">
+    <p class="ev-label">Appearance &amp; design</p>
+    <div class="ev-row">
+      <button type="button" class="ev-preview-pill" aria-pressed={theme === 'dark'} onclick={() => onThemeChange?.('dark')}>Dark</button>
+      <button type="button" class="ev-preview-pill" aria-pressed={theme === 'light'} onclick={() => onThemeChange?.('light')}>Light</button>
+    </div>
+  </div>
+  <div class="ev-preview-stage">
+    <div class="ev-row" role="group" aria-label="Preview wallet state">
+      {#each EVERYDAY_DESIGN_PREVIEW_STATES as entry (entry.id)}
+        <button
+          type="button"
+          class="ev-preview-pill"
+          aria-pressed={entry.id === previewState.id}
+          data-testid={`everyday-preview-${entry.id}`}
+          onclick={() => previewId = entry.id}
+        >
+          {entry.tabLabel}
+        </button>
+      {/each}
+    </div>
+    <p class="ev-label">{previewState.heading}</p>
+    <button type="button" class="ev-balance-trigger" aria-expanded={previewTruthOpen} onclick={() => previewTruthOpen = !previewTruthOpen}>
+      <div class="ev-hero" class:is-syncing={previewState.syncing} class:is-savings={previewState.savings}>
+        <span>{previewParts.major}</span>{#if previewParts.minor}<span class="ev-cents">{previewParts.minor}</span>{/if}{#if previewParts.suffix}<span class="ev-suffix">{previewParts.suffix}</span>{/if}
+      </div>
+    </button>
+    {#if previewState.sublineKind === 'delta-in'}
+      <p class="ev-delta">{previewState.subline}</p>
+    {:else}
+      <p class="ev-muted">{previewState.subline}</p>
+    {/if}
+    {#if previewTruthOpen}<p class="ev-truth">{previewState.truth}</p>{/if}
+    {#if previewState.arrivingAmount}<div class="ev-pill">{previewState.arrivingAmount}</div>{/if}
+    {#if previewState.showActions}
+      <div class="ev-row" aria-hidden="true">
+        <span class="ev-btn primary">Pay</span>
+        <span class="ev-btn">Request</span>
+        <span class="ev-btn">Cash out</span>
+      </div>
+    {/if}
+  </div>
+</section>
+
 <section class="ev-card">
   <label class="ev-row" style="justify-content:space-between;min-height:48px;cursor:pointer;">
     <span style="flex:1;">
@@ -63,7 +125,7 @@
       type="checkbox"
       data-testid="toggle-pro-mode"
       checked={proChecked}
-      style="width:48px;height:48px;accent-color:#10b981;cursor:pointer;"
+      style="width:48px;height:48px;accent-color:var(--ink-action);cursor:pointer;"
       onchange={e => {
         proChecked = (e.currentTarget as HTMLInputElement).checked;
         setWalletPosture(proChecked ? 'pro' : 'everyday');

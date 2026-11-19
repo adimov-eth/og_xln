@@ -25,6 +25,7 @@ import { CustomContracts } from './screens/CustomContracts';
 import { EverydayFriends } from './screens/everyday/EverydayFriends';
 import { EverydayHome } from './screens/everyday/EverydayHome';
 import { EverydaySavings } from './screens/everyday/EverydaySavings';
+import { EverydayTest } from './screens/everyday/EverydayTest';
 import { Gate } from './screens/Gate';
 import { Home } from './screens/Home';
 import { Lending } from './screens/Lending';
@@ -167,6 +168,7 @@ function WalletApp() {
           <Route path="/savings" element={<EverydaySavings />} />
           <Route path="/activity" element={<ActivityScreen />} />
           <Route path="/settings" element={<SettingsScreen />} />
+          <Route path="/test" element={<EverydayTest />} />
           <Route path="*" element={<EverydayHome onOpenExternalRequest={setExternalInvoice} />} />
         </Routes>
       ) : (
