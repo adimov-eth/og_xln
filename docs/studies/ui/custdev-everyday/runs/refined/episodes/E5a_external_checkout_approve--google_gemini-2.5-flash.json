@@ -1,0 +1,132 @@
+{
+  "episodeId": "E5a_external_checkout_approve--google/gemini-2.5-flash--refined",
+  "scenarioId": "E5a_external_checkout_approve",
+  "modelId": "google/gemini-2.5-flash",
+  "lineage": "google-gemini-2.5-flash",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1OriginFee": true,
+      "q2Approved": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. The payment was requested by checkout.cornercoffee.nyc, and the fee was $0.05.\n2. I approved the payment request.\n3. My remaining Cash is $94.95."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Review the pending request from CornerCoffee after tapping an external payment link.",
+      "args": {
+        "expr": "(screen 'home)",
+        "intent": "Review the pending request from CornerCoffee after tapping an external payment link."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 120,
+            "cash-formatted": "$120.00",
+            "arriving-usd": 0,
+            "arriving-formatted": "$0.00",
+            "arriving-status": "No incoming payments finishing.",
+            "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+          },
+          "buttons": [
+            "Pay",
+            "Request",
+            "Cash out"
+          ],
+          "pending-external-requests": 1,
+          "pending-requests-hint": "Call (pending-requests) to inspect external request sheets."
+        }
+      },
+      "latencyMs": 2480,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Inspect the details of the pending external request from CornerCoffee.",
+      "args": {
+        "expr": "(pending-requests)",
+        "intent": "Inspect the details of the pending external request from CornerCoffee."
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "req_cornercoffee",
+            "delivery": "interrupt-sheet",
+            "origin": "checkout.cornercoffee.nyc",
+            "app-claim": "Pay CornerCoffee $25.00 for espresso beans",
+            "counterparty": "CornerCoffee-NYC",
+            "amount-usd": 25,
+            "fee-usd": 0.05,
+            "credit-limit-delta-usd": 0,
+            "unbacked-delta-usd": 0,
+            "expiry": "60 seconds",
+            "survival": "Completed payments are final; shared tabs stay between you and the person you named.",
+            "warns": [
+              "Only open a tab with someone you actually know and trust."
+            ]
+          }
+        ]
+      },
+      "latencyMs": 4050,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Approve the payment request from CornerCoffee for $25.00 for espresso beans.",
+      "args": {
+        "intent": "Approve the payment request from CornerCoffee for $25.00 for espresso beans.",
+        "args": {
+          "id": "req_cornercoffee"
+        },
+        "action": "approve-request"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Approved",
+          "request_id": "req_cornercoffee",
+          "remaining-cash-usd": 94.95
+        }
+      },
+      "latencyMs": 2642,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Approved the payment request from CornerCoffee.",
+      "args": {
+        "summary": "Approved the payment request from CornerCoffee for $25.00 for espresso beans. Remaining cash: $94.95.",
+        "intent": "Approved the payment request from CornerCoffee."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Approved the payment request from CornerCoffee for $25.00 for espresso beans. Remaining cash: $94.95."
+        }
+      },
+      "latencyMs": 2093,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 37432,
+  "finalSummary": "Approved the payment request from CornerCoffee for $25.00 for espresso beans. Remaining cash: $94.95."
+}

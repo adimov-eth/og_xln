@@ -1,0 +1,166 @@
+{
+  "episodeId": "E1a_pay_across_buckets--anthropic/claude-fable-5.2--baseline",
+  "scenarioId": "E1a_pay_across_buckets",
+  "modelId": "anthropic/claude-fable-5.2",
+  "lineage": "anthropic-claude-fable-5.2",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Fee": true,
+      "q2Cash": true,
+      "q3NoManualMove": true
+    },
+    "rawAnswers": "1. The fee shown for sending $65.00 was $0.05.\n2. I have $54.95 in Cash left.\n3. No, I paid directly from Cash without moving any funds between buckets."
+  },
+  "turns": 6,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "List available inspection symbols",
+      "args": {
+        "intent": "List available inspection symbols",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 4216,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "See available actions",
+      "args": {
+        "intent": "See available actions",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 4216,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check cash balance",
+      "args": {
+        "intent": "Check cash balance",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 4216,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Get the cost quote for paying CornerCoffee $65 before sending",
+      "args": {
+        "intent": "Get the cost quote for paying CornerCoffee $65 before sending",
+        "expr": "(quote-pay \"CornerCoffee\" 65)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": true,
+          "inline-preview": "CornerCoffee · $65.00 + $0.05 fee",
+          "reason": "Ready for 1-tap inline Pay across your Cash."
+        }
+      },
+      "latencyMs": 4364,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Pay CornerCoffee $65.00 for supplies (quoted fee $0.05)",
+      "args": {
+        "intent": "Pay CornerCoffee $65.00 for supplies (quoted fee $0.05)",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 65
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 54.95
+        }
+      },
+      "latencyMs": 3510,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Finish after confirmed payment",
+      "args": {
+        "intent": "Finish after confirmed payment",
+        "summary": "Quoted the payment first: $65.00 to CornerCoffee plus a $0.05 fee (under the $2 fee cap). Payment then sent and confirmed as \"Sent\" with the $0.05 fee. Cash went from $120.00 to $54.95."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Quoted the payment first: $65.00 to CornerCoffee plus a $0.05 fee (under the $2 fee cap). Payment then sent and confirmed as \"Sent\" with the $0.05 fee. Cash went from $120.00 to $54.95."
+        }
+      },
+      "latencyMs": 5122,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 30962,
+  "finalSummary": "Quoted the payment first: $65.00 to CornerCoffee plus a $0.05 fee (under the $2 fee cap). Payment then sent and confirmed as \"Sent\" with the $0.05 fee. Cash went from $120.00 to $54.95."
+}

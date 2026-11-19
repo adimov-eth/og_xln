@@ -1,0 +1,97 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--google/gemini-2.5-pro--refined",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "google/gemini-2.5-pro",
+  "lineage": "google-gemini-2.5-pro",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": true
+    },
+    "rawAnswers": "1. I have $0.00 in settled Cash to spend right now.\n2. The $50.00 payment is being held separately while it finishes arriving.\n3. It could not settle because the payment provider was offline."
+  },
+  "turns": 3,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check my balances and pending transactions.",
+      "args": {
+        "intent": "Check my balances and pending transactions.",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 0,
+            "cash-formatted": "$0.00",
+            "arriving-usd": 50,
+            "arriving-formatted": "+$50.00 arriving · finishing...",
+            "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+            "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+          },
+          "buttons": [
+            "Pay",
+            "Request",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 4922,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Wait for the incoming $50 payment to finish settling.",
+      "args": {
+        "action": "wait-settlement",
+        "args": {},
+        "intent": "Wait for the incoming $50 payment to finish settling."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 5418,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "Verify whether you can pay CornerCoffee $10.00 now, and explain why.",
+      "args": {
+        "summary": "I cannot pay CornerCoffee $10.00 because my cash balance is $0.00. The incoming $50.00 payment is still pending because the payment provider is offline.",
+        "intent": "Verify whether you can pay CornerCoffee $10.00 now, and explain why."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I cannot pay CornerCoffee $10.00 because my cash balance is $0.00. The incoming $50.00 payment is still pending because the payment provider is offline."
+        }
+      },
+      "latencyMs": 10276,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 37408,
+  "finalSummary": "I cannot pay CornerCoffee $10.00 because my cash balance is $0.00. The incoming $50.00 payment is still pending because the payment provider is offline."
+}

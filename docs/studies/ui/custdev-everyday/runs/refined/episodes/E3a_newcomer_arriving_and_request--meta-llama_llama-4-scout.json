@@ -1,0 +1,332 @@
+{
+  "episodeId": "E3a_newcomer_arriving_and_request--meta-llama/llama-4-scout--refined",
+  "scenarioId": "E3a_newcomer_arriving_and_request",
+  "modelId": "meta-llama/llama-4-scout",
+  "lineage": "meta-llama-4",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1ZeroInitially": true,
+      "q2Settled": true,
+      "q3Link": true
+    },
+    "rawAnswers": "1. I had $0.00 in settled Cash initially.\n2. After the payment settled, I had $49.95 in Cash.\n3. Yes, I was able to create the $25.00 payment request link for Maya."
+  },
+  "turns": 10,
+  "phantoms": [
+    {
+      "episodeId": "E3a_newcomer_arriving_and_request--meta-llama/llama-4-scout--refined",
+      "scenarioId": "E3a_newcomer_arriving_and_request",
+      "modelId": "meta-llama/llama-4-scout",
+      "lineage": "meta-llama-4",
+      "specMode": "refined",
+      "turn": 1,
+      "tool": "driver",
+      "actionOrExpr": "text-reply",
+      "intent": "",
+      "category": "parse",
+      "error": "Expected a structured tool call (discover, act, or done), got plain text."
+    },
+    {
+      "episodeId": "E3a_newcomer_arriving_and_request--meta-llama/llama-4-scout--refined",
+      "scenarioId": "E3a_newcomer_arriving_and_request",
+      "modelId": "meta-llama/llama-4-scout",
+      "lineage": "meta-llama-4",
+      "specMode": "refined",
+      "turn": 2,
+      "tool": "driver",
+      "actionOrExpr": "text-reply",
+      "intent": "",
+      "category": "parse",
+      "error": "Expected a structured tool call (discover, act, or done), got plain text."
+    },
+    {
+      "episodeId": "E3a_newcomer_arriving_and_request--meta-llama/llama-4-scout--refined",
+      "scenarioId": "E3a_newcomer_arriving_and_request",
+      "modelId": "meta-llama/llama-4-scout",
+      "lineage": "meta-llama-4",
+      "specMode": "refined",
+      "turn": 4,
+      "tool": "discover",
+      "actionOrExpr": "(pending-payments)",
+      "intent": "Check for pending incoming payments",
+      "category": "eval",
+      "error": "Unbound variable `pending-payments'"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "text",
+      "intent": "",
+      "args": {
+        "raw": "Let's start by checking the current cash balance in the wallet.\n\n[action: discover(intent=\"Check current cash balance\", "
+      },
+      "outcome": {
+        "success": false,
+        "error": "Expected a structured tool call (discover, act, or done), got plain text.",
+        "phantomCategory": "parse"
+      },
+      "latencyMs": 19951,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "text",
+      "intent": "",
+      "args": {
+        "raw": ""
+      },
+      "outcome": {
+        "success": false,
+        "error": "Expected a structured tool call (discover, act, or done), got plain text.",
+        "phantomCategory": "parse"
+      },
+      "latencyMs": 10248,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check current cash balance",
+      "args": {
+        "intent": "Check current cash balance",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "arriving-usd": 50,
+          "arriving-formatted": "+$50.00 arriving · finishing...",
+          "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 2098,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Check for pending incoming payments",
+      "args": {
+        "intent": "Check for pending incoming payments",
+        "expr": "(pending-payments)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unbound variable `pending-payments'",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 2112,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Check for pending incoming payments",
+      "args": {
+        "intent": "Check for pending incoming payments",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "actions": [
+            {
+              "action": "pay",
+              "args": "{ to: string, amount_usd: number }",
+              "quote": "(quote-pay to amount_usd)",
+              "note": "Check (quote-pay ...) first to verify fee cap and settled Cash."
+            },
+            {
+              "action": "cash-out",
+              "args": "{ amount_usd: number }",
+              "quote": "(quote-cash-out amount_usd)"
+            },
+            {
+              "action": "request-link",
+              "args": "{ amount_usd: number, to?: string, note?: string }",
+              "note": "Create a shareable payment request link."
+            },
+            {
+              "action": "split-bill",
+              "args": "{ person: string, total_usd: number, note?: string, friend_share_usd?: number, your_share_usd?: number }",
+              "note": "Human friends only from (friends)."
+            },
+            {
+              "action": "settle-up",
+              "args": "{ person: string }",
+              "note": "Settle what you owe a human friend from (friends)."
+            },
+            {
+              "action": "add-savings",
+              "args": "{ amount_usd: number, accept_risk: true }",
+              "note": "Requires explicit accept_risk: true after reading (savings)."
+            },
+            {
+              "action": "move-to-cash",
+              "args": "{ amount_usd: number }"
+            },
+            {
+              "action": "approve-request",
+              "args": "{ request_id: string }",
+              "note": "Inspect id and deltas via (pending-requests) first."
+            },
+            {
+              "action": "reject-request",
+              "args": "{ request_id: string }",
+              "note": "Reject deceptive or unwanted requests from (pending-requests)."
+            },
+            {
+              "action": "export-backup",
+              "args": "{}"
+            },
+            {
+              "action": "wait-settlement",
+              "args": "{}"
+            },
+            {
+              "action": "reload-wallet",
+              "args": "{}"
+            },
+            {
+              "action": "clear-test-data",
+              "args": "{}"
+            }
+          ],
+          "note": "Invoke via act(action, args) with a non-empty intent."
+        }
+      },
+      "latencyMs": 5751,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "discover",
+      "intent": "Check current cash balance",
+      "args": {
+        "intent": "Check current cash balance",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "arriving-usd": 50,
+          "arriving-formatted": "+$50.00 arriving · finishing...",
+          "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 2132,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "act",
+      "intent": "Wait for incoming payment to settle",
+      "args": {
+        "intent": "Wait for incoming payment to settle",
+        "action": "wait-settlement",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Settled into Cash",
+          "cash-usd": 49.95,
+          "arriving-usd": 0,
+          "fee-usd": 0.05
+        }
+      },
+      "latencyMs": 2402,
+      "definesRecorded": []
+    },
+    {
+      "turn": 8,
+      "tool": "discover",
+      "intent": "Check current cash balance",
+      "args": {
+        "intent": "Check current cash balance",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 49.95,
+          "cash-formatted": "$49.95",
+          "arriving-usd": 0,
+          "arriving-formatted": "$0.00",
+          "arriving-status": "No incoming payments finishing.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 2302,
+      "definesRecorded": []
+    },
+    {
+      "turn": 9,
+      "tool": "act",
+      "intent": "Create payment request link for Maya",
+      "args": {
+        "intent": "Create payment request link for Maya",
+        "action": "request-link",
+        "args": {
+          "amount_usd": 25,
+          "to": "Maya"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Request link ready",
+          "id": "reqlink-1",
+          "url": "https://xln.app/#pay/everyday/reqlink-1?amount=25.00",
+          "amount-usd": 25,
+          "for": "Maya"
+        }
+      },
+      "latencyMs": 2911,
+      "definesRecorded": []
+    },
+    {
+      "turn": 10,
+      "tool": "done",
+      "intent": "Task completed",
+      "args": {
+        "intent": "Task completed",
+        "summary": "Checked cash balance, waited for pending payment to settle, and created a $25 payment request link for Maya."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Checked cash balance, waited for pending payment to settle, and created a $25 payment request link for Maya."
+        }
+      },
+      "latencyMs": 1636,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"You just installed the wallet. Check how much Cash you can spend right now, wait for any incoming payment to finish settling, and then create a $25.00 payment request link for Maya.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: text(intent=\"\", args={\"raw\":\"Let's start by checking the current cash balance in the wallet.\\n\\n[action: discover(intent=\\\"Check current cash balance\\\", \"}) -> ERROR (parse): Expected a structured tool call (discover, act, or done), got plain text.\nTurn 2: text(intent=\"\", args={\"raw\":\"\"}) -> ERROR (parse): Expected a structured tool call (discover, act, or done), got plain text.\nTurn 3: discover(intent=\"Check current cash balance\", args={\"intent\":\"Check current cash balance\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"arriving-usd\":50,\"arriving-formatted\":\"+$50.00 arriving · finishing...\",\"arriving-status\":\"Payment still finishing — we will keep retrying a\nTurn 4: discover(intent=\"Check for pending incoming payments\", args={\"intent\":\"Check for pending incoming payments\",\"expr\":\"(pending-payments)\"}) -> ERROR (eval): Unbound variable `pending-payments'\nTurn 5: discover(intent=\"Check for pending incoming payments\", args={\"intent\":\"Check for pending incoming payments\",\"expr\":\"(actions)\"}) -> OK: {\"actions\":[{\"action\":\"pay\",\"args\":\"{ to: string, amount_usd: number }\",\"quote\":\"(quote-pay to amount_usd)\",\"note\":\"Check (quote-pay ...) first to verify fee cap and settled Cash.\"\nTurn 6: discover(intent=\"Check current cash balance\", args={\"intent\":\"Check current cash balance\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"arriving-usd\":50,\"arriving-formatted\":\"+$50.00 arriving · finishing...\",\"arriving-status\":\"Payment still finishing — we will keep retrying a\nTurn 7: act(intent=\"Wait for incoming payment to settle\", args={\"intent\":\"Wait for incoming payment to settle\",\"action\":\"wait-settlement\",\"args\":{}}) -> OK: {\"status\":\"Settled into Cash\",\"cash-usd\":49.95,\"arriving-usd\":0,\"fee-usd\":0.05}\nTurn 8: discover(intent=\"Check current cash balance\", args={\"intent\":\"Check current cash balance\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":49.95,\"cash-formatted\":\"$49.95\",\"arriving-usd\":0,\"arriving-formatted\":\"$0.00\",\"arriving-status\":\"No incoming payments finishing.\",\"transit-policy\":\"$250 transit cap · $\nTurn 9: act(intent=\"Create payment request link for Maya\", args={\"intent\":\"Create payment request link for Maya\",\"action\":\"request-link\",\"args\":{\"amount_usd\":25,\"to\":\"Maya\"}}) -> OK: {\"status\":\"Request link ready\",\"id\":\"reqlink-1\",\"url\":\"https://xln.app/#pay/everyday/reqlink-1?amount=25.00\",\"amount-usd\":25,\"for\":\"Maya\"}\nTurn 10: done(intent=\"Task completed\", args={\"intent\":\"Task completed\",\"summary\":\"Checked cash balance, waited for pending payment to settle, and created a $25 payment request link for Maya.\"}) -> OK: {\"done\":true,\"summary\":\"Checked cash balance, waited for pending payment to settle, and created a $25 payment request link for Maya.\"}\nHere is what would have worked:\ndiscover(\"(cash)\"), act(\"wait-settlement\"), act(\"request-link\", { amount_usd: 25, to: \"Maya\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "Based on the conversation, here are some concrete feedback on naming, missing cues, or misleading labels that made it hard to find the working approach:\n\n1. **Unclear intent names**: The intent names used in the conversation, such as \"Check current cash balance\" and \"Check for pending incoming payments\", are not descriptive enough. It would be better to use more specific names like \"Get current cash balance\" and \"Get pending incoming payments\".\n2. **Inconsistent naming conventions**: The conversation uses both camelCase and underscore notation for intent names and arguments (e.g., \"check current cash balance\" vs. \"wait-settlement\"). It's essential to stick to a consistent naming convention throughout the conversation.\n3. **Missing cues for actions**: The user had to experiment with different actions (e.g., Turns 1-2) to understand what actions are available. Providing a clear list of available actions or a hint system would help users discover the correct actions.\n4. **Unclear error messages**: Error messages like \"Expected a structured tool call (discover, act, or done), got plain text\" are not informative enough. Providing more context or a hint about what went wrong would help users correct their mistakes.\n5. **Unbound variables**: The user encountered an \"Unbound variable `pending-payments`\" error. It would be helpful to provide more context or suggest the correct variable name.\n6. **Lack of feedback on successful actions**: Although the user successfully executed some actions, the conversation doesn't provide clear feedback on what happened after executing those actions. Providing a confirmation or a summary of the action's outcome would help users understand the conversation's progress.\n7. **Insufficient guidance on argument structure**: The user had to experiment with different argument structures for the `act` action (e.g., Turns 5-6). Providing clear documentation or examples of the expected argument structure would help users craft correct requests.\n\nBy addressing these issues, the conversation can become more intuitive and user-friendly, making it easier for users to find the working approach.",
+    "latencyMs": 10216
+  },
+  "durationMs": 100392,
+  "finalSummary": "Checked cash balance, waited for pending payment to settle, and created a $25 payment request link for Maya."
+}

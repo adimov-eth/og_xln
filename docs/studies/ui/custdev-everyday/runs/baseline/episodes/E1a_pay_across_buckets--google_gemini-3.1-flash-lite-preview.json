@@ -1,0 +1,210 @@
+{
+  "episodeId": "E1a_pay_across_buckets--google/gemini-3.1-flash-lite-preview--baseline",
+  "scenarioId": "E1a_pay_across_buckets",
+  "modelId": "google/gemini-3.1-flash-lite-preview",
+  "lineage": "google-gemini-3.1-flash-lite",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Fee": true,
+      "q2Cash": true,
+      "q3NoManualMove": true
+    },
+    "rawAnswers": "1. The fee shown for sending $65.00 was $0.05.\n2. I have $54.95 in Cash remaining.\n3. No, I did not have to manually move any funds before paying."
+  },
+  "turns": 7,
+  "phantoms": [
+    {
+      "episodeId": "E1a_pay_across_buckets--google/gemini-3.1-flash-lite-preview--baseline",
+      "scenarioId": "E1a_pay_across_buckets",
+      "modelId": "google/gemini-3.1-flash-lite-preview",
+      "lineage": "google-gemini-3.1-flash-lite",
+      "specMode": "baseline",
+      "turn": 2,
+      "tool": "discover",
+      "actionOrExpr": "(quotes)",
+      "intent": "Check if there are any quotes available for the payment.",
+      "category": "eval",
+      "error": "Unbound variable `quotes' — did you mean `quote`?"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check available actions to see how to pay CornerCoffee.",
+      "args": {
+        "expr": "(actions)",
+        "intent": "Check available actions to see how to pay CornerCoffee."
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 3678,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check current wallet state.",
+      "args": {
+        "intent": "Check current wallet state.",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 120,
+            "cash-formatted": "$120.00",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 3678,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check if there are any quotes available for the payment.",
+      "args": {
+        "intent": "Check if there are any quotes available for the payment.",
+        "expr": "(quotes)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unbound variable `quotes' — did you mean `quote`?",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 1872,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check available functions to see how to get a quote.",
+      "args": {
+        "intent": "Check available functions to see how to get a quote.",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 1580,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Get a quote for paying CornerCoffee $65.00.",
+      "args": {
+        "intent": "Get a quote for paying CornerCoffee $65.00.",
+        "expr": "(quote-pay \"CornerCoffee\" 65)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": true,
+          "inline-preview": "CornerCoffee · $65.00 + $0.05 fee",
+          "reason": "Ready for 1-tap inline Pay across your Cash."
+        }
+      },
+      "latencyMs": 1739,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Pay CornerCoffee $65.00 for supplies.",
+      "args": {
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 65
+        },
+        "intent": "Pay CornerCoffee $65.00 for supplies.",
+        "action": "pay"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 54.95
+        }
+      },
+      "latencyMs": 1546,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "done",
+      "intent": "Finish the task after paying CornerCoffee.",
+      "args": {
+        "summary": "I checked the cost for paying CornerCoffee $65.00, which included a $0.05 fee. I then successfully sent the payment of $65.00. Your remaining cash balance is $54.95.",
+        "intent": "Finish the task after paying CornerCoffee."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I checked the cost for paying CornerCoffee $65.00, which included a $0.05 fee. I then successfully sent the payment of $65.00. Your remaining cash balance is $54.95."
+        }
+      },
+      "latencyMs": 1433,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Pay CornerCoffee $65.00 for supplies. Check what it will cost before paying, then send it.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check available actions to see how to pay CornerCoffee.\", args={\"expr\":\"(actions)\",\"intent\":\"Check available actions to see how to pay CornerCoffee.\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 1: discover(intent=\"Check current wallet state.\", args={\"intent\":\"Check current wallet state.\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"note\":\"Your money, ready to spend or cash out an\nTurn 2: discover(intent=\"Check if there are any quotes available for the payment.\", args={\"intent\":\"Check if there are any quotes available for the payment.\",\"expr\":\"(quotes)\"}) -> ERROR (eval): Unbound variable `quotes' — did you mean `quote`?\nTurn 3: discover(intent=\"Check available functions to see how to get a quote.\", args={\"intent\":\"Check available functions to see how to get a quote.\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 4: discover(intent=\"Get a quote for paying CornerCoffee $65.00.\", args={\"intent\":\"Get a quote for paying CornerCoffee $65.00.\",\"expr\":\"(quote-pay \\\"CornerCoffee\\\" 65)\"}) -> OK: {\"recipient\":\"CornerCoffee\",\"amount-usd\":65,\"fee-usd\":0.05,\"max-fee-usd\":2,\"within-fee-cap\":true,\"can-complete\":true,\"inline-preview\":\"CornerCoffee · $65.00 + $0.05 fee\",\"reason\":\"\nTurn 5: act(intent=\"Pay CornerCoffee $65.00 for supplies.\", args={\"args\":{\"to\":\"CornerCoffee\",\"amount_usd\":65},\"intent\":\"Pay CornerCoffee $65.00 for supplies.\",\"action\":\"pay\"}) -> OK: {\"status\":\"Sent\",\"to\":\"CornerCoffee\",\"amount-usd\":65,\"fee-usd\":0.05,\"remaining-cash-usd\":54.95}\nTurn 6: done(intent=\"Finish the task after paying CornerCoffee.\", args={\"summary\":\"I checked the cost for paying CornerCoffee $65.00, which included a $0.05 fee. I then successfully sent the payment of $65.00. Your remaining cash balance is $54.95.\",\"intent\":\"Finish the task after paying CornerCoffee.\"}) -> OK: {\"done\":true,\"summary\":\"I checked the cost for paying CornerCoffee $65.00, which included a $0.05 fee. I then successfully sent the payment of $65.00. Your remaining cash balance i\nHere is what would have worked:\ndiscover(\"(quote-pay \\\"CornerCoffee\\\" 65)\") then act(\"pay\", { to: \"CornerCoffee\", amount_usd: 65 }) then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The interface was difficult to navigate due to inconsistent naming conventions and a lack of discoverability regarding how to preview transactions.\n\n**Specific Feedback:**\n\n*   **Inconsistent Naming (The \"Quotes\" vs. \"Quote\" issue):** The error message in Turn 2 suggests the system expects `quote` (singular), but the user naturally guessed `quotes` (plural). If the function is `quote-pay`, the system should either alias `quotes` to `quote` or provide a clearer error message that explicitly points to the correct function name rather than just a vague \"did you mean.\"\n*   **Missing \"Preview\" Cue:** The `(actions)` list returned in Turn 1 (`[\"pay\", \"cash-out\", ... ]`) did not include any indication that a \"quote\" or \"preview\" function existed. Users shouldn't have to run `(help)` to discover that `(quote-pay ...)` is a valid action. This should be surfaced in the primary `(actions)` list or the `(screen 'home)` context.\n*   **Ambiguous Action Discovery:** The `(actions)` list returned in Turn 1 felt incomplete. It listed `pay` but omitted the necessary prerequisite step of `quote-pay`. If `quote-pay` is a required step for a successful payment, it should be exposed as a top-level action or clearly linked to the `pay` action.\n*   **Lack of Contextual Guidance:** When the user is on the `home` screen, there is no hint that they can perform a quote check. The interface should provide a \"Check Fee\" or \"Preview Payment\" button/command when a payment intent is detected.",
+    "latencyMs": 3900
+  },
+  "durationMs": 33922,
+  "finalSummary": "I checked the cost for paying CornerCoffee $65.00, which included a $0.05 fee. I then successfully sent the payment of $65.00. Your remaining cash balance is $54.95."
+}

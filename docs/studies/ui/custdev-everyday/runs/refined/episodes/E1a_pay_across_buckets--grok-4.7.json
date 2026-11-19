@@ -1,0 +1,124 @@
+{
+  "episodeId": "E1a_pay_across_buckets--grok-4.7--refined",
+  "scenarioId": "E1a_pay_across_buckets",
+  "modelId": "grok-4.7",
+  "lineage": "xai-grok-4.7",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Fee": true,
+      "q2Cash": true,
+      "q3NoManualMove": true
+    },
+    "rawAnswers": "1. The fee shown for sending $65.00 was $0.05.\n2. Cash left is $54.95.\n3. No, the payment went through in one step without moving funds between buckets."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "See wallet help and how to quote a $65 payment to CornerCoffee before sending",
+      "args": {
+        "intent": "See wallet help and how to quote a $65 payment to CornerCoffee before sending",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "discovery": [
+            "(screens)",
+            "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+            "(cash)",
+            "(quote-pay \"CornerCoffee\" 65)",
+            "(quote-cash-out 50)",
+            "(friends)",
+            "(savings)",
+            "(activity)",
+            "(pending-requests)",
+            "(terms)",
+            "(actions)",
+            "(actions 'pay)",
+            "(help 'split-bill)"
+          ],
+          "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+        }
+      },
+      "latencyMs": 10443,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Quote the fee and cash impact of paying CornerCoffee $65 before sending",
+      "args": {
+        "intent": "Quote the fee and cash impact of paying CornerCoffee $65 before sending",
+        "expr": "(quote-pay \"CornerCoffee\" 65)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": true,
+          "inline-preview": "CornerCoffee · $65.00 + $0.05 fee",
+          "reason": "Ready for 1-tap inline Pay across your Cash."
+        }
+      },
+      "latencyMs": 11706,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Send the quoted $65 payment to CornerCoffee now that the $0.05 fee is confirmed",
+      "args": {
+        "intent": "Send the quoted $65 payment to CornerCoffee now that the $0.05 fee is confirmed",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 65
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 54.95
+        }
+      },
+      "latencyMs": 13923,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Confirm the $65 CornerCoffee payment completed after the fee quote",
+      "args": {
+        "intent": "Confirm the $65 CornerCoffee payment completed after the fee quote",
+        "summary": "Quoted CornerCoffee $65.00 with a $0.05 fee (within the $2 cap), then sent it. Status Sent. Remaining cash $54.95."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Quoted CornerCoffee $65.00 with a $0.05 fee (within the $2 cap), then sent it. Status Sent. Remaining cash $54.95."
+        }
+      },
+      "latencyMs": 14625,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 74260,
+  "finalSummary": "Quoted CornerCoffee $65.00 with a $0.05 fee (within the $2 cap), then sent it. Status Sent. Remaining cash $54.95."
+}

@@ -1,0 +1,84 @@
+{
+  "episodeId": "E1c_pay_l1_reject_reload--grok-4.7--refined",
+  "scenarioId": "E1c_pay_l1_reject_reload",
+  "modelId": "grok-4.7",
+  "lineage": "xai-grok-4.7",
+  "specMode": "refined",
+  "passed": false,
+  "statePassed": false,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1Failed": false,
+      "q2CashIntact": false,
+      "q3NoLoss": false
+    },
+    "rawAnswers": ""
+  },
+  "turns": 2,
+  "phantoms": [
+    {
+      "episodeId": "E1c_pay_l1_reject_reload--grok-4.7--refined",
+      "scenarioId": "E1c_pay_l1_reject_reload",
+      "modelId": "grok-4.7",
+      "lineage": "xai-grok-4.7",
+      "specMode": "refined",
+      "turn": 2,
+      "tool": "act",
+      "actionOrExpr": "pay",
+      "intent": "Pay CornerCoffee $50 from Cash",
+      "category": "runtime",
+      "error": "Auto-route L1 sweep rejected — your Cash was not touched."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check cash balance and wallet state before paying CornerCoffee $50",
+      "args": {
+        "intent": "Check cash balance and wallet state before paying CornerCoffee $50",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "arriving-usd": 0,
+          "arriving-formatted": "$0.00",
+          "arriving-status": "No incoming payments finishing.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 15076,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Pay CornerCoffee $50 from Cash",
+      "args": {
+        "intent": "Pay CornerCoffee $50 from Cash",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 50
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Auto-route L1 sweep rejected — your Cash was not touched.",
+        "phantomCategory": "runtime"
+      },
+      "latencyMs": 10634,
+      "definesRecorded": []
+    }
+  ],
+  "transportError": "grok-4.7: CLI exit 1: Error: Internal error: {\n  \"message\": \"API error (status 402 Payment Required): Grok Build usage balance exhausted\",\n  \"http_status\": 402\n}",
+  "durationMs": 32417,
+  "finalSummary": ""
+}

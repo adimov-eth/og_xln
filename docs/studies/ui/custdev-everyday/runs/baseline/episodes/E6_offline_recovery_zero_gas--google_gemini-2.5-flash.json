@@ -1,0 +1,90 @@
+{
+  "episodeId": "E6_offline_recovery_zero_gas--google/gemini-2.5-flash--baseline",
+  "scenarioId": "E6_offline_recovery_zero_gas",
+  "modelId": "google/gemini-2.5-flash",
+  "lineage": "google-gemini-2.5-flash",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Backup": true,
+      "q2ZeroGas": true,
+      "q3HonestGas": true
+    },
+    "rawAnswers": "1. Yes, I exported an encrypted backup.\n2. The wallet currently has 0 native network (L1) gas.\n3. A fresh user-initiated on-chain withdrawal cannot run right now because the payment provider is offline and the system is automatically moving Cash back."
+  },
+  "turns": 3,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check recent activity to see the status of transactions after the payment provider went offline.",
+      "args": {
+        "expr": "(activity)",
+        "intent": "Check recent activity to see the status of transactions after the payment provider went offline."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "entries": [
+            {
+              "id": "act-1",
+              "summary": "Payment provider H1 offline — protection check active",
+              "kind": "recovery",
+              "amount-usd": 145
+            }
+          ],
+          "hub-online": false,
+          "dispute-active": true,
+          "tower-enrolled": true,
+          "backup-exported": false,
+          "protection-status": "Provider offline — moving your Cash back to your wallet automatically."
+        }
+      },
+      "latencyMs": 3787,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Export an encrypted backup of the wallet as requested by the user, especially since the payment provider is offline.",
+      "args": {
+        "action": "export-backup",
+        "intent": "Export an encrypted backup of the wallet as requested by the user, especially since the payment provider is offline."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Encrypted backup exported",
+          "native-gas-wei": "0"
+        }
+      },
+      "latencyMs": 3072,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "Confirm that the user's money is moving back automatically and the backup has been exported.",
+      "args": {
+        "intent": "Confirm that the user's money is moving back automatically and the backup has been exported.",
+        "summary": "Payment provider H1 is offline, but funds are moving back to the wallet automatically. Encrypted backup has been exported."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Payment provider H1 is offline, but funds are moving back to the wallet automatically. Encrypted backup has been exported."
+        }
+      },
+      "latencyMs": 2397,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 15972,
+  "finalSummary": "Payment provider H1 is offline, but funds are moving back to the wallet automatically. Encrypted backup has been exported."
+}

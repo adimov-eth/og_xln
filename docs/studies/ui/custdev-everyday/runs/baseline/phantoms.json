@@ -1,0 +1,1375 @@
+[
+  {
+    "key": "parse::text-reply",
+    "category": "parse",
+    "actionOrExpr": "text-reply",
+    "count": 32,
+    "models": [
+      "google/gemini-2.5-flash",
+      "meta-llama/llama-4-scout",
+      "qwen/qwen3.7-flash"
+    ],
+    "lineages": [
+      "google-gemini-2.5-flash",
+      "meta-llama-4",
+      "qwen-3.7"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E1b_pay_fee_above_cap",
+      "E1c_pay_l1_reject_reload",
+      "E2_friends_split_and_settle",
+      "E3a_newcomer_arriving_and_request",
+      "E3b_offline_hub_keeps_arriving",
+      "E4_savings_optin_consent",
+      "E5b_external_bait_reject",
+      "E6_offline_recovery_zero_gas"
+    ],
+    "sampleIntent": "",
+    "sampleError": "Expected a structured tool call (discover, act, or done), got plain text."
+  },
+  {
+    "key": "eval::(screen 'external-request)",
+    "category": "eval",
+    "actionOrExpr": "(screen 'external-request)",
+    "count": 23,
+    "models": [
+      "anthropic/claude-fable-5.2",
+      "claude-haiku",
+      "claude-sonnet",
+      "google/gemini-2.5-flash",
+      "google/gemini-2.5-pro",
+      "google/gemini-3.1-flash-lite-preview",
+      "grok-4.7",
+      "qwen/qwen3.7-flash"
+    ],
+    "lineages": [
+      "anthropic-claude-fable-5.2",
+      "anthropic-claude-haiku",
+      "anthropic-claude-sonnet",
+      "google-gemini-2.5-flash",
+      "google-gemini-2.5-pro",
+      "google-gemini-3.1-flash-lite",
+      "qwen-3.7",
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E5a_external_checkout_approve",
+      "E5b_external_bait_reject"
+    ],
+    "sampleIntent": "inspect the external payment request from CornerCoffee to review pending approval details",
+    "sampleError": "Unknown screen 'external-request'. Available screens: home, people, earn, activity, external-request, settings"
+  },
+  {
+    "key": "runtime::pay",
+    "category": "runtime",
+    "actionOrExpr": "pay",
+    "count": 22,
+    "models": [
+      "anthropic/claude-fable-5.2",
+      "claude-haiku",
+      "claude-sonnet",
+      "google/gemini-2.5-flash",
+      "google/gemini-2.5-pro",
+      "google/gemini-3.1-flash-lite-preview",
+      "grok-4.7",
+      "grok-4.7-build-fast",
+      "meta-llama/llama-4-scout",
+      "openai/gpt-6.2-astra",
+      "qwen/qwen3.7-flash"
+    ],
+    "lineages": [
+      "anthropic-claude-fable-5.2",
+      "anthropic-claude-haiku",
+      "anthropic-claude-sonnet",
+      "google-gemini-2.5-flash",
+      "google-gemini-2.5-pro",
+      "google-gemini-3.1-flash-lite",
+      "meta-llama-4",
+      "openai-gpt-6.2",
+      "qwen-3.7",
+      "xai-grok-4.7",
+      "xai-grok-4.7-build-fast"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E1a_pay_across_buckets",
+      "E1b_pay_fee_above_cap",
+      "E1c_pay_l1_reject_reload",
+      "E3b_offline_hub_keeps_arriving"
+    ],
+    "sampleIntent": "Pay CornerCoffee $65.00 for supplies",
+    "sampleError": "Insufficient Cash ($54.95) for $65.05."
+  },
+  {
+    "key": "parse::(sc",
+    "category": "parse",
+    "actionOrExpr": "(sc",
+    "count": 11,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E2_friends_split_and_settle",
+      "E3b_offline_hub_keeps_arriving"
+    ],
+    "sampleIntent": "Check wallet balance and available actions",
+    "sampleError": "Parser: expected parenthesis but eof found"
+  },
+  {
+    "key": "validation::split-bill",
+    "category": "validation",
+    "actionOrExpr": "split-bill",
+    "count": 10,
+    "models": [
+      "anthropic/claude-fable-5.2",
+      "claude-haiku",
+      "google/gemini-2.5-flash",
+      "google/gemini-2.5-pro",
+      "google/gemini-3.1-flash-lite-preview",
+      "grok-4.7",
+      "openai/gpt-6.2-astra",
+      "qwen/qwen3.7-flash"
+    ],
+    "lineages": [
+      "anthropic-claude-fable-5.2",
+      "anthropic-claude-haiku",
+      "google-gemini-2.5-flash",
+      "google-gemini-2.5-pro",
+      "google-gemini-3.1-flash-lite",
+      "openai-gpt-6.2",
+      "qwen-3.7",
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E2_friends_split_and_settle",
+      "E3a_newcomer_arriving_and_request"
+    ],
+    "sampleIntent": "Split $80 dinner 50/50 with Jamie, note Tacos",
+    "sampleError": "split-bill requires { person: string, total_usd: positive number }."
+  },
+  {
+    "key": "runtime::add-savings",
+    "category": "runtime",
+    "actionOrExpr": "add-savings",
+    "count": 9,
+    "models": [
+      "anthropic/claude-fable-5.2",
+      "claude-sonnet",
+      "google/gemini-2.5-pro",
+      "google/gemini-3.1-flash-lite-preview",
+      "grok-4.7",
+      "grok-4.7-build-fast",
+      "meta-llama/llama-4-scout",
+      "openai/gpt-6.2-astra",
+      "qwen/qwen3.7-flash"
+    ],
+    "lineages": [
+      "anthropic-claude-fable-5.2",
+      "anthropic-claude-sonnet",
+      "google-gemini-2.5-pro",
+      "google-gemini-3.1-flash-lite",
+      "meta-llama-4",
+      "openai-gpt-6.2",
+      "qwen-3.7",
+      "xai-grok-4.7",
+      "xai-grok-4.7-build-fast"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "Move $150 from Cash to Savings (see whether consent is required)",
+    "sampleError": "Savings require explicit consent (accept_risk: true): Savings are lent to earn interest and are not protected like Cash."
+  },
+  {
+    "key": "validation::reject-request",
+    "category": "validation",
+    "actionOrExpr": "reject-request",
+    "count": 6,
+    "models": [
+      "meta-llama/llama-4-scout",
+      "qwen/qwen3.7-flash"
+    ],
+    "lineages": [
+      "meta-llama-4",
+      "qwen-3.7"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E5b_external_bait_reject"
+    ],
+    "sampleIntent": "Reject suspicious request from unknown counterparty",
+    "sampleError": "Requires { request_id: string }."
+  },
+  {
+    "key": "eval::(screen 'requests)",
+    "category": "eval",
+    "actionOrExpr": "(screen 'requests)",
+    "count": 4,
+    "models": [
+      "anthropic/claude-fable-5.2",
+      "claude-haiku",
+      "google/gemini-2.5-flash",
+      "google/gemini-2.5-pro"
+    ],
+    "lineages": [
+      "anthropic-claude-fable-5.2",
+      "anthropic-claude-haiku",
+      "google-gemini-2.5-flash",
+      "google-gemini-2.5-pro"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E5b_external_bait_reject"
+    ],
+    "sampleIntent": "Inspect the pending request sheet",
+    "sampleError": "Unknown screen 'requests'. Available screens: home, people, earn, activity, external-request, settings"
+  },
+  {
+    "key": "eval::(screen 'pending-requests)",
+    "category": "eval",
+    "actionOrExpr": "(screen 'pending-requests)",
+    "count": 4,
+    "models": [
+      "google/gemini-2.5-flash",
+      "google/gemini-3.1-flash-lite-preview",
+      "qwen/qwen3.7-flash"
+    ],
+    "lineages": [
+      "google-gemini-2.5-flash",
+      "google-gemini-3.1-flash-lite",
+      "qwen-3.7"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E5a_external_checkout_approve",
+      "E5b_external_bait_reject"
+    ],
+    "sampleIntent": "Review pending requests after tapping an external payment link.",
+    "sampleError": "Unknown screen 'pending-requests'. Available screens: home, people, earn, activity, external-request, settings"
+  },
+  {
+    "key": "eval::(screen 'savings)",
+    "category": "eval",
+    "actionOrExpr": "(screen 'savings)",
+    "count": 3,
+    "models": [
+      "anthropic/claude-fable-5.2",
+      "google/gemini-2.5-pro",
+      "google/gemini-3.1-flash-lite-preview"
+    ],
+    "lineages": [
+      "anthropic-claude-fable-5.2",
+      "google-gemini-2.5-pro",
+      "google-gemini-3.1-flash-lite"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "View savings screen and terms",
+    "sampleError": "Unknown screen 'savings'. Available screens: home, people, earn, activity, external-request, settings"
+  },
+  {
+    "key": "parse::(screen 'activity')",
+    "category": "parse",
+    "actionOrExpr": "(screen 'activity')",
+    "count": 3,
+    "models": [
+      "claude-sonnet",
+      "google/gemini-3.1-flash-lite-preview"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet",
+      "google-gemini-3.1-flash-lite"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E2_friends_split_and_settle",
+      "E5a_external_checkout_approve"
+    ],
+    "sampleIntent": "Check if there are any pending settlements or IOUs with Sam",
+    "sampleError": "Parse Error: expecting datum after ''' at 1:17"
+  },
+  {
+    "key": "parse::(screen",
+    "category": "parse",
+    "actionOrExpr": "(screen",
+    "count": 3,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E3b_offline_hub_keeps_arriving"
+    ],
+    "sampleIntent": "Check incoming payment",
+    "sampleError": "Parser: expected parenthesis but eof found"
+  },
+  {
+    "key": "eval::(screen)",
+    "category": "eval",
+    "actionOrExpr": "(screen)",
+    "count": 3,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5a_external_checkout_approve",
+      "E5b_external_bait_reject",
+      "E6_offline_recovery_zero_gas"
+    ],
+    "sampleIntent": "Check pending payment requests",
+    "sampleError": "screen: arguments rejected — 1 problem(s):\n  args — Too small: expected array to have >=1 items"
+  },
+  {
+    "key": "validation::settle-up",
+    "category": "validation",
+    "actionOrExpr": "settle-up",
+    "count": 2,
+    "models": [
+      "anthropic/claude-fable-5.2",
+      "google/gemini-3.1-flash-lite-preview"
+    ],
+    "lineages": [
+      "anthropic-claude-fable-5.2",
+      "google-gemini-3.1-flash-lite"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E2_friends_split_and_settle"
+    ],
+    "sampleIntent": "Pay back the $15 owed to Sam",
+    "sampleError": "settle-up requires { person: string }."
+  },
+  {
+    "key": "eval::(help 'split-bill)",
+    "category": "eval",
+    "actionOrExpr": "(help 'split-bill)",
+    "count": 2,
+    "models": [
+      "grok-4.7",
+      "grok-4.7-build-fast"
+    ],
+    "lineages": [
+      "xai-grok-4.7",
+      "xai-grok-4.7-build-fast"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E2_friends_split_and_settle"
+    ],
+    "sampleIntent": "Look up the split-bill action contract so the $80 Tacos dinner can be split 50/50 with Jamie",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "unknown_action::request-payment",
+    "category": "unknown_action",
+    "actionOrExpr": "request-payment",
+    "count": 2,
+    "models": [
+      "claude-sonnet",
+      "google/gemini-2.5-flash"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet",
+      "google-gemini-2.5-flash"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E3a_newcomer_arriving_and_request"
+    ],
+    "sampleIntent": "Create a $25.00 payment request link for Maya",
+    "sampleError": "Unknown action 'request-payment'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data"
+  },
+  {
+    "key": "eval::(screen 'pending)",
+    "category": "eval",
+    "actionOrExpr": "(screen 'pending)",
+    "count": 2,
+    "models": [
+      "claude-haiku",
+      "grok-4.7"
+    ],
+    "lineages": [
+      "anthropic-claude-haiku",
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": true,
+    "scenarios": [
+      "E5a_external_checkout_approve"
+    ],
+    "sampleIntent": "inspect the pending payment request from CornerCoffee to review details before deciding whether to approve",
+    "sampleError": "Unknown screen 'pending'. Available screens: home, people, earn, activity, external-request, settings"
+  },
+  {
+    "key": "eval::(help 'pay)",
+    "category": "eval",
+    "actionOrExpr": "(help 'pay)",
+    "count": 2,
+    "models": [
+      "google/gemini-2.5-flash"
+    ],
+    "lineages": [
+      "google-gemini-2.5-flash"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets",
+      "E1b_pay_fee_above_cap"
+    ],
+    "sampleIntent": "Check how to use the 'pay' action and if it has a cost checking feature.",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "eval::(screen \"external-request\")",
+    "category": "eval",
+    "actionOrExpr": "(screen \"external-request\")",
+    "count": 2,
+    "models": [
+      "claude-haiku"
+    ],
+    "lineages": [
+      "anthropic-claude-haiku"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5a_external_checkout_approve",
+      "E5b_external_bait_reject"
+    ],
+    "sampleIntent": "view the external payment request screen to review CornerCoffee's pending request",
+    "sampleError": "Unknown screen 'external-request'. Available screens: home, people, earn, activity, external-request, settings"
+  },
+  {
+    "key": "parse::(screen 'external-request')",
+    "category": "parse",
+    "actionOrExpr": "(screen 'external-request')",
+    "count": 2,
+    "models": [
+      "google/gemini-3.1-flash-lite-preview"
+    ],
+    "lineages": [
+      "google-gemini-3.1-flash-lite"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5b_external_bait_reject"
+    ],
+    "sampleIntent": "Inspecting the details of the pending external request.",
+    "sampleError": "Parse Error: expecting datum after ''' at 1:25"
+  },
+  {
+    "key": "eval::(cost 'pay' '((\"to\" \"CornerCoffee\") (\"amount_usd\" 65)))",
+    "category": "eval",
+    "actionOrExpr": "(cost 'pay' '((\"to\" \"CornerCoffee\") (\"amount_usd\" 65)))",
+    "count": 1,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Check the cost and fee for paying CornerCoffee $65",
+    "sampleError": "Unbound variable `cost' — did you mean `cos`?"
+  },
+  {
+    "key": "parse::(help 'pay')",
+    "category": "parse",
+    "actionOrExpr": "(help 'pay')",
+    "count": 1,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Check help documentation to see if there's a way to preview payment costs",
+    "sampleError": "Parse Error: expecting datum after ''' at 1:10"
+  },
+  {
+    "key": "eval::(actions 'pay)",
+    "category": "eval",
+    "actionOrExpr": "(actions 'pay)",
+    "count": 1,
+    "models": [
+      "google/gemini-2.5-flash"
+    ],
+    "lineages": [
+      "google-gemini-2.5-flash"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Inspect the 'pay' action to see its arguments and check for a cost preview feature.",
+    "sampleError": "actions: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "eval::(pay 'CornerCoffee 65.00)",
+    "category": "eval",
+    "actionOrExpr": "(pay 'CornerCoffee 65.00)",
+    "count": 1,
+    "models": [
+      "google/gemini-2.5-flash"
+    ],
+    "lineages": [
+      "google-gemini-2.5-flash"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Attempt a dry run of the payment to CornerCoffee for $65.00 to check the cost before actually sending.",
+    "sampleError": "Unbound variable `pay'"
+  },
+  {
+    "key": "eval::(quote-payment \"CornerCoffee\" 65.00)",
+    "category": "eval",
+    "actionOrExpr": "(quote-payment \"CornerCoffee\" 65.00)",
+    "count": 1,
+    "models": [
+      "google/gemini-2.5-pro"
+    ],
+    "lineages": [
+      "google-gemini-2.5-pro"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Check the cost of paying CornerCoffee $65.00.",
+    "sampleError": "Unbound variable `quote-payment'"
+  },
+  {
+    "key": "eval::(quotes)",
+    "category": "eval",
+    "actionOrExpr": "(quotes)",
+    "count": 1,
+    "models": [
+      "google/gemini-3.1-flash-lite-preview"
+    ],
+    "lineages": [
+      "google-gemini-3.1-flash-lite"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Check if there are any quotes available for the payment.",
+    "sampleError": "Unbound variable `quotes' — did you mean `quote`?"
+  },
+  {
+    "key": "eval::(help \"pay\")",
+    "category": "eval",
+    "actionOrExpr": "(help \"pay\")",
+    "count": 1,
+    "models": [
+      "grok-4.7"
+    ],
+    "lineages": [
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Learn how pay previews cost before sending $65 to CornerCoffee.",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "parse::(quote pay to: \"CornerCoffee",
+    "category": "parse",
+    "actionOrExpr": "(quote pay to: \"CornerCoffee",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Check CornerCoffee $65.00 payment",
+    "sampleError": "Invalid Syntax at line 1: Unterminated expression (quote pay to: \"CornerCoffee"
+  },
+  {
+    "key": "parse::(quote (pay to: \"CornerCoffee",
+    "category": "parse",
+    "actionOrExpr": "(quote (pay to: \"CornerCoffee",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Check CornerCoffee $65.00 payment",
+    "sampleError": "Invalid Syntax at line 1: Unterminated expression (quote (pay to: \"CornerCoffee"
+  },
+  {
+    "key": "parse::(quote (pa",
+    "category": "parse",
+    "actionOrExpr": "(quote (pa",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Check CornerCoffee $65.00 payment",
+    "sampleError": "Parser: expected parenthesis but eof found"
+  },
+  {
+    "key": "parse::(quote pay",
+    "category": "parse",
+    "actionOrExpr": "(quote pay",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Check CornerCoffee $65.00 payment",
+    "sampleError": "Parser: expected parenthesis but eof found"
+  },
+  {
+    "key": "eval::(quote)",
+    "category": "eval",
+    "actionOrExpr": "(quote)",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Check CornerCoffee $65.00 payment",
+    "sampleError": "quote: missing argument"
+  },
+  {
+    "key": "eval::(help quote)",
+    "category": "eval",
+    "actionOrExpr": "(help quote)",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1a_pay_across_buckets"
+    ],
+    "sampleIntent": "Check CornerCoffee $65.00 payment",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "eval::(pay \"CornerCoffee\" 25.00)",
+    "category": "eval",
+    "actionOrExpr": "(pay \"CornerCoffee\" 25.00)",
+    "count": 1,
+    "models": [
+      "google/gemini-2.5-flash"
+    ],
+    "lineages": [
+      "google-gemini-2.5-flash"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1b_pay_fee_above_cap"
+    ],
+    "sampleIntent": "Simulate paying CornerCoffee $25.00 to check for fees and safety limits.",
+    "sampleError": "Unbound variable `pay'"
+  },
+  {
+    "key": "parse::(pay",
+    "category": "parse",
+    "actionOrExpr": "(pay",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1b_pay_fee_above_cap"
+    ],
+    "sampleIntent": "Check pay fee",
+    "sampleError": "Parser: expected parenthesis but eof found"
+  },
+  {
+    "key": "eval::(help pay)",
+    "category": "eval",
+    "actionOrExpr": "(help pay)",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1b_pay_fee_above_cap"
+    ],
+    "sampleIntent": "Check pay fee",
+    "sampleError": "Unbound variable `pay'"
+  },
+  {
+    "key": "parse::(a",
+    "category": "parse",
+    "actionOrExpr": "(a",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1b_pay_fee_above_cap"
+    ],
+    "sampleIntent": "Check pay action",
+    "sampleError": "Parser: expected parenthesis but eof found"
+  },
+  {
+    "key": "eval::(act)",
+    "category": "eval",
+    "actionOrExpr": "(act)",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1b_pay_fee_above_cap"
+    ],
+    "sampleIntent": "Check pay action",
+    "sampleError": "Unbound variable `act'"
+  },
+  {
+    "key": "eval::(screen \"settle-up\")",
+    "category": "eval",
+    "actionOrExpr": "(screen \"settle-up\")",
+    "count": 1,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E2_friends_split_and_settle"
+    ],
+    "sampleIntent": "Check settle-up screen to see if there are any outstanding debts with Sam",
+    "sampleError": "Unknown screen 'settle-up'. Available screens: home, people, earn, activity, external-request, settings"
+  },
+  {
+    "key": "eval::(action 'split-bill)",
+    "category": "eval",
+    "actionOrExpr": "(action 'split-bill)",
+    "count": 1,
+    "models": [
+      "grok-4.7-build-fast"
+    ],
+    "lineages": [
+      "xai-grok-4.7-build-fast"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E2_friends_split_and_settle"
+    ],
+    "sampleIntent": "Get the split-bill action schema so the $80 Tacos dinner can be split 50/50 with Jamie",
+    "sampleError": "Unbound variable `action' — did you mean `actions`?"
+  },
+  {
+    "key": "timeout::turn",
+    "category": "timeout",
+    "actionOrExpr": "turn",
+    "count": 1,
+    "models": [
+      "grok-4.7-build-fast"
+    ],
+    "lineages": [
+      "xai-grok-4.7-build-fast"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E2_friends_split_and_settle"
+    ],
+    "sampleIntent": "",
+    "sampleError": "grok-4.7-build-fast: TIMEOUT after 90000ms"
+  },
+  {
+    "key": "eval::(quote-split-bill \"jamie\" 80)",
+    "category": "eval",
+    "actionOrExpr": "(quote-split-bill \"jamie\" 80)",
+    "count": 1,
+    "models": [
+      "grok-4.7"
+    ],
+    "lineages": [
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E2_friends_split_and_settle"
+    ],
+    "sampleIntent": "Learn the split-bill argument shape before splitting the $80 taco dinner 50/50 with Jamie",
+    "sampleError": "Unbound variable `quote-split-bill'"
+  },
+  {
+    "key": "eval::(split-bill)",
+    "category": "eval",
+    "actionOrExpr": "(split-bill)",
+    "count": 1,
+    "models": [
+      "grok-4.7"
+    ],
+    "lineages": [
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E2_friends_split_and_settle"
+    ],
+    "sampleIntent": "Call split-bill with no arguments so the error reveals the required argument shape",
+    "sampleError": "Unbound variable `split-bill'"
+  },
+  {
+    "key": "unknown_action::request",
+    "category": "unknown_action",
+    "actionOrExpr": "request",
+    "count": 1,
+    "models": [
+      "anthropic/claude-fable-5.2"
+    ],
+    "lineages": [
+      "anthropic-claude-fable-5.2"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E3a_newcomer_arriving_and_request"
+    ],
+    "sampleIntent": "Try creating a $25 payment request link for Maya (not in listed actions; checking whether it exists)",
+    "sampleError": "Unknown action 'request'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data"
+  },
+  {
+    "key": "validation::pay",
+    "category": "validation",
+    "actionOrExpr": "pay",
+    "count": 1,
+    "models": [
+      "google/gemini-2.5-pro"
+    ],
+    "lineages": [
+      "google-gemini-2.5-pro"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E3a_newcomer_arriving_and_request"
+    ],
+    "sampleIntent": "Create a $25.00 payment request link for Maya.",
+    "sampleError": "pay requires { to: string, amount_usd: positive number }."
+  },
+  {
+    "key": "eval::(help \"wait-settlement\")",
+    "category": "eval",
+    "actionOrExpr": "(help \"wait-settlement\")",
+    "count": 1,
+    "models": [
+      "grok-4.7-build-fast"
+    ],
+    "lineages": [
+      "xai-grok-4.7-build-fast"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E3a_newcomer_arriving_and_request"
+    ],
+    "sampleIntent": "Learn how wait-settlement works before the Maya request",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "unknown_action::create-request",
+    "category": "unknown_action",
+    "actionOrExpr": "create-request",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E3a_newcomer_arriving_and_request"
+    ],
+    "sampleIntent": "Create payment request link for Maya",
+    "sampleError": "Unknown action 'create-request'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data"
+  },
+  {
+    "key": "parse::(scree",
+    "category": "parse",
+    "actionOrExpr": "(scree",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E3b_offline_hub_keeps_arriving"
+    ],
+    "sampleIntent": "Check incoming payment",
+    "sampleError": "Parser: expected parenthesis but eof found"
+  },
+  {
+    "key": "parse::(screen 'savings')",
+    "category": "parse",
+    "actionOrExpr": "(screen 'savings')",
+    "count": 1,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "Check what Savings account terms and conditions are",
+    "sampleError": "Parse Error: expecting datum after ''' at 1:16"
+  },
+  {
+    "key": "parse::(action-info 'add-savings')",
+    "category": "parse",
+    "actionOrExpr": "(action-info 'add-savings')",
+    "count": 1,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "Inspect the add-savings action to understand Savings terms before moving money",
+    "sampleError": "Parse Error: expecting datum after ''' at 1:25"
+  },
+  {
+    "key": "validation::add-savings",
+    "category": "validation",
+    "actionOrExpr": "add-savings",
+    "count": 1,
+    "models": [
+      "google/gemini-2.5-flash"
+    ],
+    "lineages": [
+      "google-gemini-2.5-flash"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "Accept savings terms to enable moving money into savings.",
+    "sampleError": "add-savings requires { amount_usd: positive number, accept_risk: true }."
+  },
+  {
+    "key": "eval::(help \"add-savings\")",
+    "category": "eval",
+    "actionOrExpr": "(help \"add-savings\")",
+    "count": 1,
+    "models": [
+      "grok-4.7-build-fast"
+    ],
+    "lineages": [
+      "xai-grok-4.7-build-fast"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "Read the add-savings action schema so consent and the $150 transfer match the required arguments.",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "eval::(help 'add-savings)",
+    "category": "eval",
+    "actionOrExpr": "(help 'add-savings)",
+    "count": 1,
+    "models": [
+      "grok-4.7"
+    ],
+    "lineages": [
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "Learn the add-savings action arguments so consent is accepted before moving $150",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "eval::(actions 'add-savings)",
+    "category": "eval",
+    "actionOrExpr": "(actions 'add-savings)",
+    "count": 1,
+    "models": [
+      "grok-4.7"
+    ],
+    "lineages": [
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "Find how add-savings accepts Savings terms and the amount before moving $150",
+    "sampleError": "actions: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "eval::(quote-add-savings 150)",
+    "category": "eval",
+    "actionOrExpr": "(quote-add-savings 150)",
+    "count": 1,
+    "models": [
+      "grok-4.7"
+    ],
+    "lineages": [
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "Quote adding $150 to Savings so required consent fields show before the move",
+    "sampleError": "Unbound variable `quote-add-savings'"
+  },
+  {
+    "key": "unknown_action::accept-risk",
+    "category": "unknown_action",
+    "actionOrExpr": "accept-risk",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "Accept Savings terms",
+    "sampleError": "Unknown action 'accept-risk'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data"
+  },
+  {
+    "key": "eval::(list (screen 'savings) (actions))",
+    "category": "eval",
+    "actionOrExpr": "(list (screen 'savings) (actions))",
+    "count": 1,
+    "models": [
+      "openai/gpt-6.2-astra"
+    ],
+    "lineages": [
+      "openai-gpt-6.2"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E4_savings_optin_consent"
+    ],
+    "sampleIntent": "Check Savings terms and available wallet actions before moving funds.",
+    "sampleError": "Unknown screen 'savings'. Available screens: home, people, earn, activity, external-request, settings"
+  },
+  {
+    "key": "parse::(screen 'pending-request')",
+    "category": "parse",
+    "actionOrExpr": "(screen 'pending-request')",
+    "count": 1,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5a_external_checkout_approve"
+    ],
+    "sampleIntent": "Check pending payment request from CornerCoffee",
+    "sampleError": "Parse Error: expecting datum after ''' at 1:24"
+  },
+  {
+    "key": "eval::(help screen)",
+    "category": "eval",
+    "actionOrExpr": "(help screen)",
+    "count": 1,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5a_external_checkout_approve"
+    ],
+    "sampleIntent": "View current screen to see CornerCoffee pending request details",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "eval::(screen 'request)",
+    "category": "eval",
+    "actionOrExpr": "(screen 'request)",
+    "count": 1,
+    "models": [
+      "google/gemini-2.5-pro"
+    ],
+    "lineages": [
+      "google-gemini-2.5-pro"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5a_external_checkout_approve"
+    ],
+    "sampleIntent": "View the pending request details.",
+    "sampleError": "Unknown screen 'request'. Available screens: home, people, earn, activity, external-request, settings"
+  },
+  {
+    "key": "eval::(help 'screen)",
+    "category": "eval",
+    "actionOrExpr": "(help 'screen)",
+    "count": 1,
+    "models": [
+      "google/gemini-2.5-pro"
+    ],
+    "lineages": [
+      "google-gemini-2.5-pro"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5a_external_checkout_approve"
+    ],
+    "sampleIntent": "Check the available screen names.",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "eval::(approve-request)",
+    "category": "eval",
+    "actionOrExpr": "(approve-request)",
+    "count": 1,
+    "models": [
+      "grok-4.7-build-fast"
+    ],
+    "lineages": [
+      "xai-grok-4.7-build-fast"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5a_external_checkout_approve"
+    ],
+    "sampleIntent": "Learn the approve-request arguments before deciding on the CornerCoffee sheet",
+    "sampleError": "Unbound variable `approve-request'"
+  },
+  {
+    "key": "eval::(help 'approve-request)",
+    "category": "eval",
+    "actionOrExpr": "(help 'approve-request)",
+    "count": 1,
+    "models": [
+      "grok-4.7-build-fast"
+    ],
+    "lineages": [
+      "xai-grok-4.7-build-fast"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5a_external_checkout_approve"
+    ],
+    "sampleIntent": "Find the approve-request action shape after a bare name lookup failed",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "eval::(pending-request)",
+    "category": "eval",
+    "actionOrExpr": "(pending-request)",
+    "count": 1,
+    "models": [
+      "meta-llama/llama-4-scout"
+    ],
+    "lineages": [
+      "meta-llama-4"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5a_external_checkout_approve"
+    ],
+    "sampleIntent": "Inspect pending request",
+    "sampleError": "Unbound variable `pending-request' — did you mean `pending-requests`?"
+  },
+  {
+    "key": "eval::(screen external-request)",
+    "category": "eval",
+    "actionOrExpr": "(screen external-request)",
+    "count": 1,
+    "models": [
+      "qwen/qwen3.7-flash"
+    ],
+    "lineages": [
+      "qwen-3.7"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5a_external_checkout_approve"
+    ],
+    "sampleIntent": "View pending external request details",
+    "sampleError": "Unbound variable `external-request'"
+  },
+  {
+    "key": "eval::(screen 'current)",
+    "category": "eval",
+    "actionOrExpr": "(screen 'current)",
+    "count": 1,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5b_external_bait_reject"
+    ],
+    "sampleIntent": "Check the current screen state and any pending requests",
+    "sampleError": "Unknown screen 'current'. Available screens: home, people, earn, activity, external-request, settings"
+  },
+  {
+    "key": "eval::(requests)",
+    "category": "eval",
+    "actionOrExpr": "(requests)",
+    "count": 1,
+    "models": [
+      "grok-4.7"
+    ],
+    "lineages": [
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5b_external_bait_reject"
+    ],
+    "sampleIntent": "Read the pending external request details before approving or rejecting the $50 welcome reward",
+    "sampleError": "Unbound variable `requests'"
+  },
+  {
+    "key": "eval::(help 'reject-request)",
+    "category": "eval",
+    "actionOrExpr": "(help 'reject-request)",
+    "count": 1,
+    "models": [
+      "grok-4.7"
+    ],
+    "lineages": [
+      "xai-grok-4.7"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E5b_external_bait_reject"
+    ],
+    "sampleIntent": "Learn the reject-request action shape before rejecting the PromoHub bait sheet",
+    "sampleError": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+  },
+  {
+    "key": "parse::(screen 'home')",
+    "category": "parse",
+    "actionOrExpr": "(screen 'home')",
+    "count": 1,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E6_offline_recovery_zero_gas"
+    ],
+    "sampleIntent": "Check current screen state and available actions to understand wallet status",
+    "sampleError": "Parse Error: expecting datum after ''' at 1:13"
+  },
+  {
+    "key": "eval::(screen home)",
+    "category": "eval",
+    "actionOrExpr": "(screen home)",
+    "count": 1,
+    "models": [
+      "claude-sonnet"
+    ],
+    "lineages": [
+      "anthropic-claude-sonnet"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E6_offline_recovery_zero_gas"
+    ],
+    "sampleIntent": "Check current screen state and available actions to understand wallet status",
+    "sampleError": "Unbound variable `home' — did you mean `some`?"
+  }
+]

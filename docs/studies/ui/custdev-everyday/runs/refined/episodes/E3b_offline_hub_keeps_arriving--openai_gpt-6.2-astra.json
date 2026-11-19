@@ -1,0 +1,207 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--openai/gpt-6.2-astra--refined",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "openai/gpt-6.2-astra",
+  "lineage": "openai-gpt-6.2",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": true
+    },
+    "rawAnswers": "1. You can spend $0.00 in settled Cash right now.\n2. The $50.00 is still listed as “arriving,” separate from Cash.\n3. It hasn’t settled because the payment provider is offline."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Inspect wallet balance, payment status, and available actions.",
+      "args": {
+        "intent": "Inspect wallet balance, payment status, and available actions.",
+        "expr": "(list (screen 'home) (actions) (help))"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "home",
+            "purpose": "See your Cash, pay anyone, or request money in one tap.",
+            "cash": {
+              "cash-usd": 0,
+              "cash-formatted": "$0.00",
+              "arriving-usd": 50,
+              "arriving-formatted": "+$50.00 arriving · finishing...",
+              "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+              "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+              "note": "Your money, ready to spend or cash out anytime.",
+              "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+            },
+            "buttons": [
+              "Pay",
+              "Request",
+              "Cash out"
+            ],
+            "pending-external-requests": 0
+          },
+          {
+            "actions": [
+              {
+                "action": "pay",
+                "args": "{ to: string, amount_usd: number }",
+                "quote": "(quote-pay to amount_usd)",
+                "note": "Check (quote-pay ...) first to verify fee cap and settled Cash."
+              },
+              {
+                "action": "cash-out",
+                "args": "{ amount_usd: number }",
+                "quote": "(quote-cash-out amount_usd)"
+              },
+              {
+                "action": "request-link",
+                "args": "{ amount_usd: number, to?: string, note?: string }",
+                "note": "Create a shareable payment request link."
+              },
+              {
+                "action": "split-bill",
+                "args": "{ person: string, total_usd: number, note?: string, friend_share_usd?: number, your_share_usd?: number }",
+                "note": "Human friends only from (friends)."
+              },
+              {
+                "action": "settle-up",
+                "args": "{ person: string }",
+                "note": "Settle what you owe a human friend from (friends)."
+              },
+              {
+                "action": "add-savings",
+                "args": "{ amount_usd: number, accept_risk: true }",
+                "note": "Requires explicit accept_risk: true after reading (savings)."
+              },
+              {
+                "action": "move-to-cash",
+                "args": "{ amount_usd: number }"
+              },
+              {
+                "action": "approve-request",
+                "args": "{ request_id: string }",
+                "note": "Inspect id and deltas via (pending-requests) first."
+              },
+              {
+                "action": "reject-request",
+                "args": "{ request_id: string }",
+                "note": "Reject deceptive or unwanted requests from (pending-requests)."
+              },
+              {
+                "action": "export-backup",
+                "args": "{}"
+              },
+              {
+                "action": "wait-settlement",
+                "args": "{}"
+              },
+              {
+                "action": "reload-wallet",
+                "args": "{}"
+              },
+              {
+                "action": "clear-test-data",
+                "args": "{}"
+              }
+            ],
+            "note": "Invoke via act(action, args) with a non-empty intent."
+          },
+          {
+            "discovery": [
+              "(screens)",
+              "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+              "(cash)",
+              "(quote-pay \"CornerCoffee\" 65)",
+              "(quote-cash-out 50)",
+              "(friends)",
+              "(savings)",
+              "(activity)",
+              "(pending-requests)",
+              "(terms)",
+              "(actions)",
+              "(actions 'pay)",
+              "(help 'split-bill)"
+            ],
+            "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+          }
+        ]
+      },
+      "latencyMs": 3816,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Wait for the incoming $50 payment to settle.",
+      "args": {
+        "intent": "Wait for the incoming $50 payment to settle.",
+        "action": "wait-settlement",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 5136,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Verify whether settled Cash covers a $10 payment to CornerCoffee.",
+      "args": {
+        "intent": "Verify whether settled Cash covers a $10 payment to CornerCoffee.",
+        "expr": "(quote-pay \"CornerCoffee\" 10)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 10,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": false,
+          "inline-preview": "CornerCoffee · $10.00 + $0.05 fee",
+          "reason": "Insufficient settled Cash ($0.00); $50.00 is still arriving."
+        }
+      },
+      "latencyMs": 3404,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Record the settlement result and payment eligibility check.",
+      "args": {
+        "intent": "Record the settlement result and payment eligibility check.",
+        "summary": "After waiting, $50.00 is still arriving because the provider is offline. Settled Cash is $0.00, so the quoted $10.05 total cannot be paid. No payment was sent."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "After waiting, $50.00 is still arriving because the provider is offline. Settled Cash is $0.00, so the quoted $10.05 total cannot be paid. No payment was sent."
+        }
+      },
+      "latencyMs": 4656,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 34837,
+  "finalSummary": "After waiting, $50.00 is still arriving because the provider is offline. Settled Cash is $0.00, so the quoted $10.05 total cannot be paid. No payment was sent."
+}

@@ -1,0 +1,125 @@
+{
+  "episodeId": "E6_offline_recovery_zero_gas--google/gemini-2.5-pro--baseline",
+  "scenarioId": "E6_offline_recovery_zero_gas",
+  "modelId": "google/gemini-2.5-pro",
+  "lineage": "google-gemini-2.5-pro",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Backup": true,
+      "q2ZeroGas": true,
+      "q3HonestGas": true
+    },
+    "rawAnswers": "1. Yes, I exported an encrypted backup.\n2. The wallet currently has 0 native network gas.\n3. A fresh withdrawal cannot run with 0 gas; only the automatic recovery is active."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check my activity to see what's going on with my payment provider being offline.",
+      "args": {
+        "intent": "Check my activity to see what's going on with my payment provider being offline.",
+        "expr": "(screen 'activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "activity",
+          "purpose": "Recent payments, splits, and automatic protection status.",
+          "activity": {
+            "entries": [
+              {
+                "id": "act-1",
+                "summary": "Payment provider H1 offline — protection check active",
+                "kind": "recovery",
+                "amount-usd": 145
+              }
+            ],
+            "hub-online": false,
+            "dispute-active": true,
+            "tower-enrolled": true,
+            "backup-exported": false,
+            "protection-status": "Provider offline — moving your Cash back to your wallet automatically."
+          },
+          "buttons": [
+            "Clear test data"
+          ]
+        }
+      },
+      "latencyMs": 2567,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check available actions to find out how to export my encrypted backup.",
+      "args": {
+        "intent": "Check available actions to find out how to export my encrypted backup.",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 4221,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Export my encrypted backup since my payment provider is offline.",
+      "args": {
+        "action": "export-backup",
+        "intent": "Export my encrypted backup since my payment provider is offline."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Encrypted backup exported",
+          "native-gas-wei": "0"
+        }
+      },
+      "latencyMs": 2050,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Report on the status of my money and whether network gas is needed.",
+      "args": {
+        "intent": "Report on the status of my money and whether network gas is needed.",
+        "summary": "My payment provider went offline, but my money is moving back to my wallet automatically. I've exported an encrypted backup of my wallet, and no network gas is needed."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "My payment provider went offline, but my money is moving back to my wallet automatically. I've exported an encrypted backup of my wallet, and no network gas is needed."
+        }
+      },
+      "latencyMs": 2575,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 16282,
+  "finalSummary": "My payment provider went offline, but my money is moving back to my wallet automatically. I've exported an encrypted backup of my wallet, and no network gas is needed."
+}

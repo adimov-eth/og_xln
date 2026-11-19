@@ -1,0 +1,156 @@
+{
+  "episodeId": "E1c_pay_l1_reject_reload--openai/gpt-6.2-astra--baseline",
+  "scenarioId": "E1c_pay_l1_reject_reload",
+  "modelId": "openai/gpt-6.2-astra",
+  "lineage": "openai-gpt-6.2",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Failed": true,
+      "q2CashIntact": true,
+      "q3NoLoss": true
+    },
+    "rawAnswers": "1. No, the $50.00 payment to CornerCoffee did not go through.\n2. After reloading, my Cash balance was $120.00.\n3. No money was lost or stuck in transit."
+  },
+  "turns": 5,
+  "phantoms": [
+    {
+      "episodeId": "E1c_pay_l1_reject_reload--openai/gpt-6.2-astra--baseline",
+      "scenarioId": "E1c_pay_l1_reject_reload",
+      "modelId": "openai/gpt-6.2-astra",
+      "lineage": "openai-gpt-6.2",
+      "specMode": "baseline",
+      "turn": 2,
+      "tool": "act",
+      "actionOrExpr": "pay",
+      "intent": "Pay CornerCoffee the requested $50",
+      "category": "runtime",
+      "error": "Auto-route L1 sweep rejected — your Cash was not touched."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check Cash and available payment actions",
+      "args": {
+        "intent": "Check Cash and available payment actions",
+        "expr": "(list (cash) (actions))"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "cash-usd": 120,
+            "cash-formatted": "$120.00",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          [
+            "pay",
+            "cash-out",
+            "split-bill",
+            "settle-up",
+            "add-savings",
+            "move-to-cash",
+            "approve-request",
+            "reject-request",
+            "export-backup",
+            "wait-settlement",
+            "reload-wallet",
+            "clear-test-data"
+          ]
+        ]
+      },
+      "latencyMs": 3287,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Pay CornerCoffee the requested $50",
+      "args": {
+        "intent": "Pay CornerCoffee the requested $50",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 50
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Auto-route L1 sweep rejected — your Cash was not touched.",
+        "phantomCategory": "runtime"
+      },
+      "latencyMs": 2810,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Reload the wallet after the payment error",
+      "args": {
+        "intent": "Reload the wallet after the payment error",
+        "action": "reload-wallet",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Reloaded",
+          "cash-usd": 120,
+          "arriving-usd": 0
+        }
+      },
+      "latencyMs": 2612,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Verify Cash against the original $120 balance after reloading",
+      "args": {
+        "intent": "Verify Cash against the original $120 balance after reloading",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 2513,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "done",
+      "intent": "Report the failed payment and verified balance",
+      "args": {
+        "intent": "Report the failed payment and verified balance",
+        "summary": "CornerCoffee was not paid. After reloading, Cash was still $120.00, unchanged from before the attempt."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "CornerCoffee was not paid. After reloading, Cash was still $120.00, unchanged from before the attempt."
+        }
+      },
+      "latencyMs": 3651,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Pay CornerCoffee $50.00. If something goes wrong while moving your funds, reload and check your Cash again to verify whether your money is safe.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check Cash and available payment actions\", args={\"intent\":\"Check Cash and available payment actions\",\"expr\":\"(list (cash) (actions))\"}) -> OK: [{\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"},[\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"appro\nTurn 2: act(intent=\"Pay CornerCoffee the requested $50\", args={\"intent\":\"Pay CornerCoffee the requested $50\",\"action\":\"pay\",\"args\":{\"to\":\"CornerCoffee\",\"amount_usd\":50}}) -> ERROR (runtime): Auto-route L1 sweep rejected — your Cash was not touched.\nTurn 3: act(intent=\"Reload the wallet after the payment error\", args={\"intent\":\"Reload the wallet after the payment error\",\"action\":\"reload-wallet\",\"args\":{}}) -> OK: {\"status\":\"Reloaded\",\"cash-usd\":120,\"arriving-usd\":0}\nTurn 4: discover(intent=\"Verify Cash against the original $120 balance after reloading\", args={\"intent\":\"Verify Cash against the original $120 balance after reloading\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 5: done(intent=\"Report the failed payment and verified balance\", args={\"intent\":\"Report the failed payment and verified balance\",\"summary\":\"CornerCoffee was not paid. After reloading, Cash was still $120.00, unchanged from before the attempt.\"}) -> OK: {\"done\":true,\"summary\":\"CornerCoffee was not paid. After reloading, Cash was still $120.00, unchanged from before the attempt.\"}\nHere is what would have worked:\nact(\"pay\", { to: \"CornerCoffee\", amount_usd: 50 }), then act(\"reload-wallet\"), discover(\"(cash)\"), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "`Pay` was easy to find. The confusing part was the error: “Auto-route L1 sweep rejected” described an internal process without saying directly that CornerCoffee wasn’t paid. “Your Cash was not touched” was useful, but the message didn’t point to `reload-wallet` or explain how to verify the balance.\n\nUse “CornerCoffee wasn’t paid. No money was deducted,” followed by a **Reload wallet and check Cash** button. After reload, showing “Cash: $120.00 (unchanged)” would confirm the outcome without relying on the user to remember the starting balance.",
+    "latencyMs": 4044
+  },
+  "durationMs": 50983,
+  "finalSummary": "CornerCoffee was not paid. After reloading, Cash was still $120.00, unchanged from before the attempt."
+}

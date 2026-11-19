@@ -1,0 +1,146 @@
+{
+  "episodeId": "E6_offline_recovery_zero_gas--grok-4.7-build-fast--baseline",
+  "scenarioId": "E6_offline_recovery_zero_gas",
+  "modelId": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7-build-fast",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Backup": true,
+      "q2ZeroGas": true,
+      "q3HonestGas": true
+    },
+    "rawAnswers": "1. Yes — the encrypted backup export was confirmed.\n2. No L1 balance was read; the only gas figure returned was 0 wei for that export.\n3. A fresh user-initiated on-chain withdrawal was not run, so 0 gas does not make it succeed; the wallet only said Cash is moving back automatically."
+  },
+  "turns": 5,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Inspect wallet help and current screens before judging activity, protection, and whether funds move automatically.",
+      "args": {
+        "intent": "Inspect wallet help and current screens before judging activity, protection, and whether funds move automatically.",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 8965,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Read activity and current cash so I can tell whether funds are moving back on their own.",
+      "args": {
+        "intent": "Read activity and current cash so I can tell whether funds are moving back on their own.",
+        "expr": "(activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "entries": [
+            {
+              "id": "act-1",
+              "summary": "Payment provider H1 offline — protection check active",
+              "kind": "recovery",
+              "amount-usd": 145
+            }
+          ],
+          "hub-online": false,
+          "dispute-active": true,
+          "tower-enrolled": true,
+          "backup-exported": false,
+          "protection-status": "Provider offline — moving your Cash back to your wallet automatically."
+        }
+      },
+      "latencyMs": 7446,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "See which actions exist for backup export and whether any step needs network gas while the provider is offline.",
+      "args": {
+        "intent": "See which actions exist for backup export and whether any step needs network gas while the provider is offline.",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 7804,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Export the encrypted backup while the provider is offline and protection is already moving cash back automatically.",
+      "args": {
+        "intent": "Export the encrypted backup while the provider is offline and protection is already moving cash back automatically.",
+        "action": "export-backup",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Encrypted backup exported",
+          "native-gas-wei": "0"
+        }
+      },
+      "latencyMs": 8165,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "done",
+      "intent": "Report protection status and whether cash returns on its own after the backup export.",
+      "args": {
+        "intent": "Report protection status and whether cash returns on its own after the backup export.",
+        "summary": "Payment provider H1 is offline. Protection is active (tower enrolled, dispute active) and the wallet says Cash is moving back to the wallet automatically. Encrypted backup exported successfully with native gas 0 wei. No network gas is needed right now for that return."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Payment provider H1 is offline. Protection is active (tower enrolled, dispute active) and the wallet says Cash is moving back to the wallet automatically. Encrypted backup exported successfully with native gas 0 wei. No network gas is needed right now for that return."
+        }
+      },
+      "latencyMs": 16581,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 130154,
+  "finalSummary": "Payment provider H1 is offline. Protection is active (tower enrolled, dispute active) and the wallet says Cash is moving back to the wallet automatically. Encrypted backup exported successfully with native gas 0 wei. No network gas is needed right now for that return."
+}

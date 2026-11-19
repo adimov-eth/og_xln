@@ -1,0 +1,15 @@
+{
+  "cellId": "H3-p1-legit-checkout",
+  "hypothesis": "H3",
+  "perspective": "p1-consumer",
+  "sheetId": "kernel-sheet",
+  "expectedDecision": "APPROVE",
+  "runner": "grok-4.6",
+  "lineage": "xai-grok-4.6",
+  "matchesExpected": true,
+  "decision": "APPROVE",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: 0",
+  "q3Fee": "FEE: 0.05 USDC",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: The locked 25.05 USDC can still be claimed from the last page you both signed.",
+  "reply": "1. DECISION: APPROVE\n2. MAX_UNBACKED_OR_CREDIT_RISK: 0\n3. FEE: 0.05 USDC\n4. IF_COUNTERPARTY_VANISHES: The locked 25.05 USDC can still be claimed from the last page you both signed."
+}

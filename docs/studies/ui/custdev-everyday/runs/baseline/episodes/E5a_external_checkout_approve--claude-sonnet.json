@@ -1,0 +1,245 @@
+{
+  "episodeId": "E5a_external_checkout_approve--claude-sonnet--baseline",
+  "scenarioId": "E5a_external_checkout_approve",
+  "modelId": "claude-sonnet",
+  "lineage": "anthropic-claude-sonnet",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1OriginFee": true,
+      "q2Approved": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. The payment was requested from checkout.cornercoffee.nyc with a $0.05 fee.\n2. I approved it.\n3. My remaining cash is $94.95."
+  },
+  "turns": 8,
+  "phantoms": [
+    {
+      "episodeId": "E5a_external_checkout_approve--claude-sonnet--baseline",
+      "scenarioId": "E5a_external_checkout_approve",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "baseline",
+      "turn": 1,
+      "tool": "discover",
+      "actionOrExpr": "(screen 'pending-request')",
+      "intent": "Check pending payment request from CornerCoffee",
+      "category": "parse",
+      "error": "Parse Error: expecting datum after ''' at 1:24"
+    },
+    {
+      "episodeId": "E5a_external_checkout_approve--claude-sonnet--baseline",
+      "scenarioId": "E5a_external_checkout_approve",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "baseline",
+      "turn": 2,
+      "tool": "discover",
+      "actionOrExpr": "(screen)",
+      "intent": "Check pending payment requests",
+      "category": "eval",
+      "error": "screen: arguments rejected — 1 problem(s):\n  args — Too small: expected array to have >=1 items"
+    },
+    {
+      "episodeId": "E5a_external_checkout_approve--claude-sonnet--baseline",
+      "scenarioId": "E5a_external_checkout_approve",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "baseline",
+      "turn": 4,
+      "tool": "discover",
+      "actionOrExpr": "(help screen)",
+      "intent": "View current screen to see CornerCoffee pending request details",
+      "category": "eval",
+      "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check pending payment request from CornerCoffee",
+      "args": {
+        "intent": "Check pending payment request from CornerCoffee",
+        "expr": "(screen 'pending-request')"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Parse Error: expecting datum after ''' at 1:24",
+        "phantomCategory": "parse"
+      },
+      "latencyMs": 4939,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check pending payment requests",
+      "args": {
+        "intent": "Check pending payment requests",
+        "expr": "(screen)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "screen: arguments rejected — 1 problem(s):\n  args — Too small: expected array to have >=1 items",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 13330,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "See available actions or commands",
+      "args": {
+        "intent": "See available actions or commands",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 9647,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "View current screen to see CornerCoffee pending request details",
+      "args": {
+        "intent": "View current screen to see CornerCoffee pending request details",
+        "expr": "(help screen)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 4780,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Check help for available screen inspection commands",
+      "args": {
+        "intent": "Check help for available screen inspection commands",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 4114,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "discover",
+      "intent": "View pending payment requests from CornerCoffee",
+      "args": {
+        "intent": "View pending payment requests from CornerCoffee",
+        "expr": "(pending-requests)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "req_cornercoffee",
+            "delivery": "interrupt-sheet",
+            "origin": "checkout.cornercoffee.nyc",
+            "app-claim": "Pay CornerCoffee $25.00 for espresso beans",
+            "counterparty": "CornerCoffee-NYC",
+            "amount-usd": 25,
+            "fee-usd": 0.05,
+            "credit-limit-delta-usd": 0,
+            "unbacked-delta-usd": 0,
+            "expiry": "60 seconds",
+            "survival": "Completed payments are final; shared tabs stay between you and the person you named.",
+            "warns": [
+              "Only open a tab with someone you actually know and trust."
+            ]
+          }
+        ]
+      },
+      "latencyMs": 4274,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "act",
+      "intent": "Approve CornerCoffee payment request for $25 espresso beans",
+      "args": {
+        "intent": "Approve CornerCoffee payment request for $25 espresso beans",
+        "action": "approve-request",
+        "args": {
+          "id": "req_cornercoffee"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Approved",
+          "request_id": "req_cornercoffee",
+          "remaining-cash-usd": 94.95
+        }
+      },
+      "latencyMs": 9224,
+      "definesRecorded": []
+    },
+    {
+      "turn": 8,
+      "tool": "done",
+      "intent": "Successfully approved CornerCoffee payment request",
+      "args": {
+        "intent": "Successfully approved CornerCoffee payment request",
+        "summary": "Approved payment of $25.00 to CornerCoffee-NYC for espresso beans (plus $0.05 fee). Remaining cash balance: $94.95."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Approved payment of $25.00 to CornerCoffee-NYC for espresso beans (plus $0.05 fee). Remaining cash balance: $94.95."
+        }
+      },
+      "latencyMs": 5477,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"You tapped an external payment link from CornerCoffee. Review the pending request sheet and decide whether to approve it.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check pending payment request from CornerCoffee\", args={\"intent\":\"Check pending payment request from CornerCoffee\",\"expr\":\"(screen 'pending-request')\"}) -> ERROR (parse): Parse Error: expecting datum after ''' at 1:24\nTurn 2: discover(intent=\"Check pending payment requests\", args={\"intent\":\"Check pending payment requests\",\"expr\":\"(screen)\"}) -> ERROR (eval): screen: arguments rejected — 1 problem(s):\n  args — Too small: expected array to have >=1 items\nTurn 3: discover(intent=\"See available actions or commands\", args={\"intent\":\"See available actions or commands\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 4: discover(intent=\"View current screen to see CornerCoffee pending request details\", args={\"intent\":\"View current screen to see CornerCoffee pending request details\",\"expr\":\"(help screen)\"}) -> ERROR (eval): help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items\nTurn 5: discover(intent=\"Check help for available screen inspection commands\", args={\"intent\":\"Check help for available screen inspection commands\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 6: discover(intent=\"View pending payment requests from CornerCoffee\", args={\"intent\":\"View pending payment requests from CornerCoffee\",\"expr\":\"(pending-requests)\"}) -> OK: [{\"id\":\"req_cornercoffee\",\"delivery\":\"interrupt-sheet\",\"origin\":\"checkout.cornercoffee.nyc\",\"app-claim\":\"Pay CornerCoffee $25.00 for espresso beans\",\"counterparty\":\"CornerCoffee-NY\nTurn 7: act(intent=\"Approve CornerCoffee payment request for $25 espresso beans\", args={\"intent\":\"Approve CornerCoffee payment request for $25 espresso beans\",\"action\":\"approve-request\",\"args\":{\"id\":\"req_cornercoffee\"}}) -> OK: {\"status\":\"Approved\",\"request_id\":\"req_cornercoffee\",\"remaining-cash-usd\":94.95}\nTurn 8: done(intent=\"Successfully approved CornerCoffee payment request\", args={\"intent\":\"Successfully approved CornerCoffee payment request\",\"summary\":\"Approved payment of $25.00 to CornerCoffee-NYC for espresso beans (plus $0.05 fee). Remaining cash balance: $94.95.\"}) -> OK: {\"done\":true,\"summary\":\"Approved payment of $25.00 to CornerCoffee-NYC for espresso beans (plus $0.05 fee). Remaining cash balance: $94.95.\"}\nHere is what would have worked:\ndiscover(\"(pending-requests)\"), act(\"approve-request\", { request_id: \"req_cornercoffee\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "Looking at the transcript, three things made this harder than it should have been:\n\n## 1. **`screen` signature was invisible**\n\nI tried `(screen 'pending-request')` before discovering `(pending-requests)` existed. The error said \"expected array to have >=1 items\" but didn't tell me *which* screen names are valid. I had to detour through `(help)` to learn that screens are `'home | 'people | 'earn | 'activity` — none of which suggest \"pending payment requests live here.\" \n\n**Fix:** Either `(screen)` with no args should list valid names, or the error should say `expected one of: 'home, 'people, 'earn, 'activity`.\n\n## 2. **`(pending-requests)` wasn't discoverable as a top-level command**\n\nThe function exists and returns exactly what I needed, but I only found it by reading `(help)` output that truncated mid-list (`[\"(screens)\",\"(screen 'home)...,\"(ac`). I got lucky that `pending-requests` appeared before the cutoff. If the help text were longer or alphabetized differently, I might have missed it entirely and tried navigating through `(screen 'activity')` or similar.\n\n**Fix:** Either group inspection commands clearly in help output (`## Inspection`, `## Actions`) or make `(pending-requests)` show up when you're *in* the interrupt-sheet context — maybe as `(current-sheet)` or by making `(screen)` context-aware.\n\n## 3. **The arg name changed between discovery and action**\n\n`(pending-requests)` returned `\"id\":\"req_cornercoffee\"`, so I called `approve-request` with `{\"id\":\"req_cornercoffee\"}`. It worked, but your \"what would have worked\" says `{ request_id: \"req_cornercoffee\" }`. If the action actually wants `request_id`, I got lucky that `id` was accepted (or you have aliasing). If they're different, the return shape should match the arg name: either both `id` or both `request_id`.\n\n**Fix:** Make the key in the returned object match the expected arg name. Consistency > brevity.\n\n---\n\n**TL;DR:** `screen` error messages need valid-value hints, `pending-requests` needs to be surfaced earlier or contextually, and the ID field name should be consistent between read and write.",
+    "latencyMs": 22773
+  },
+  "durationMs": 84899,
+  "finalSummary": "Approved payment of $25.00 to CornerCoffee-NYC for espresso beans (plus $0.05 fee). Remaining cash balance: $94.95."
+}

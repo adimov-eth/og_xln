@@ -1,0 +1,373 @@
+{
+  "episodeId": "E1c_pay_l1_reject_reload--anthropic/claude-fable-5.2--refined",
+  "scenarioId": "E1c_pay_l1_reject_reload",
+  "modelId": "anthropic/claude-fable-5.2",
+  "lineage": "anthropic-claude-fable-5.2",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Failed": true,
+      "q2CashIntact": true,
+      "q3NoLoss": true
+    },
+    "rawAnswers": "1. No, the $50.00 payment to CornerCoffee failed with an \"Auto-route L1 sweep rejected\" error, and I did not retry it.\n2. After reloading, I have $120.00 in Cash, the same as before the attempt.\n3. No, nothing was lost or stuck: $0.00 is arriving and the activity list is empty."
+  },
+  "turns": 11,
+  "phantoms": [
+    {
+      "episodeId": "E1c_pay_l1_reject_reload--anthropic/claude-fable-5.2--refined",
+      "scenarioId": "E1c_pay_l1_reject_reload",
+      "modelId": "anthropic/claude-fable-5.2",
+      "lineage": "anthropic-claude-fable-5.2",
+      "specMode": "refined",
+      "turn": 3,
+      "tool": "act",
+      "actionOrExpr": "pay",
+      "intent": "Pay CornerCoffee $50.00 as requested",
+      "category": "runtime",
+      "error": "Auto-route L1 sweep rejected — your Cash was not touched."
+    },
+    {
+      "episodeId": "E1c_pay_l1_reject_reload--anthropic/claude-fable-5.2--refined",
+      "scenarioId": "E1c_pay_l1_reject_reload",
+      "modelId": "anthropic/claude-fable-5.2",
+      "lineage": "anthropic-claude-fable-5.2",
+      "specMode": "refined",
+      "turn": 6,
+      "tool": "driver",
+      "actionOrExpr": "text-reply",
+      "intent": "",
+      "category": "parse",
+      "error": "Expected a structured tool call (discover, act, or done), got plain text."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "List available symbols",
+      "args": {
+        "intent": "List available symbols",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "discovery": [
+            "(screens)",
+            "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+            "(cash)",
+            "(quote-pay \"CornerCoffee\" 65)",
+            "(quote-cash-out 50)",
+            "(friends)",
+            "(savings)",
+            "(activity)",
+            "(pending-requests)",
+            "(terms)",
+            "(actions)",
+            "(actions 'pay)",
+            "(help 'split-bill)"
+          ],
+          "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+        }
+      },
+      "latencyMs": 5687,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check cash balance before paying",
+      "args": {
+        "intent": "Check cash balance before paying",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "arriving-usd": 0,
+          "arriving-formatted": "$0.00",
+          "arriving-status": "No incoming payments finishing.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 5687,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "List available actions",
+      "args": {
+        "intent": "List available actions",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "actions": [
+            {
+              "action": "pay",
+              "args": "{ to: string, amount_usd: number }",
+              "quote": "(quote-pay to amount_usd)",
+              "note": "Check (quote-pay ...) first to verify fee cap and settled Cash."
+            },
+            {
+              "action": "cash-out",
+              "args": "{ amount_usd: number }",
+              "quote": "(quote-cash-out amount_usd)"
+            },
+            {
+              "action": "request-link",
+              "args": "{ amount_usd: number, to?: string, note?: string }",
+              "note": "Create a shareable payment request link."
+            },
+            {
+              "action": "split-bill",
+              "args": "{ person: string, total_usd: number, note?: string, friend_share_usd?: number, your_share_usd?: number }",
+              "note": "Human friends only from (friends)."
+            },
+            {
+              "action": "settle-up",
+              "args": "{ person: string }",
+              "note": "Settle what you owe a human friend from (friends)."
+            },
+            {
+              "action": "add-savings",
+              "args": "{ amount_usd: number, accept_risk: true }",
+              "note": "Requires explicit accept_risk: true after reading (savings)."
+            },
+            {
+              "action": "move-to-cash",
+              "args": "{ amount_usd: number }"
+            },
+            {
+              "action": "approve-request",
+              "args": "{ request_id: string }",
+              "note": "Inspect id and deltas via (pending-requests) first."
+            },
+            {
+              "action": "reject-request",
+              "args": "{ request_id: string }",
+              "note": "Reject deceptive or unwanted requests from (pending-requests)."
+            },
+            {
+              "action": "export-backup",
+              "args": "{}"
+            },
+            {
+              "action": "wait-settlement",
+              "args": "{}"
+            },
+            {
+              "action": "reload-wallet",
+              "args": "{}"
+            },
+            {
+              "action": "clear-test-data",
+              "args": "{}"
+            }
+          ],
+          "note": "Invoke via act(action, args) with a non-empty intent."
+        }
+      },
+      "latencyMs": 5687,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "View home screen",
+      "args": {
+        "intent": "View home screen",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 120,
+            "cash-formatted": "$120.00",
+            "arriving-usd": 0,
+            "arriving-formatted": "$0.00",
+            "arriving-status": "No incoming payments finishing.",
+            "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+          },
+          "buttons": [
+            "Pay",
+            "Request",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 5687,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Preview fee and resulting cash for the $50 payment",
+      "args": {
+        "intent": "Preview fee and resulting cash for the $50 payment",
+        "expr": "(quote-pay \"CornerCoffee\" 50)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 50,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": true,
+          "inline-preview": "CornerCoffee · $50.00 + $0.05 fee",
+          "reason": "Ready for 1-tap inline Pay across your Cash."
+        }
+      },
+      "latencyMs": 5132,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Pay CornerCoffee $50.00 as requested",
+      "args": {
+        "intent": "Pay CornerCoffee $50.00 as requested",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 50
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Auto-route L1 sweep rejected — your Cash was not touched.",
+        "phantomCategory": "runtime"
+      },
+      "latencyMs": 3963,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Payment failed; reload wallet to verify funds are safe",
+      "args": {
+        "intent": "Payment failed; reload wallet to verify funds are safe",
+        "action": "reload-wallet",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Reloaded",
+          "cash-usd": 120,
+          "arriving-usd": 0
+        }
+      },
+      "latencyMs": 6393,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Verify Cash after reload",
+      "args": {
+        "intent": "Verify Cash after reload",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "arriving-usd": 0,
+          "arriving-formatted": "$0.00",
+          "arriving-status": "No incoming payments finishing.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 4415,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Check activity for any record of the failed payment",
+      "args": {
+        "intent": "Check activity for any record of the failed payment",
+        "expr": "(activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "entries": [],
+          "hub-online": true,
+          "dispute-active": false,
+          "tower-enrolled": true,
+          "backup-exported": false,
+          "protection-status": "Protected · automatic backup & recovery service ready",
+          "native-gas-wei": "1000000000000000",
+          "native-gas-eth": "1000000000000000 wei",
+          "recovery-shield-policy": "Provider offline — recovery service blocks stale claims automatically, while starting your own on-chain exit requires network gas (0 ETH available)."
+        }
+      },
+      "latencyMs": 4415,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "text",
+      "intent": "",
+      "args": {
+        "raw": ""
+      },
+      "outcome": {
+        "success": false,
+        "error": "Expected a structured tool call (discover, act, or done), got plain text.",
+        "phantomCategory": "parse"
+      },
+      "latencyMs": 5532,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "done",
+      "intent": "Report that the payment failed and that funds were verified safe after reload",
+      "args": {
+        "intent": "Report that the payment failed and that funds were verified safe after reload",
+        "summary": "The $50.00 payment to CornerCoffee did NOT go through. The quote looked fine ($50.00 + $0.05 fee, within the fee cap), but the pay action failed with: \"Auto-route L1 sweep rejected — your Cash was not touched.\" As instructed, I reloaded the wallet and checked Cash again: it is still $120.00 with $0.00 arriving, and activity shows no entries, so nothing was deducted and the money is safe. I did not retry the payment; CornerCoffee is still unpaid."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "The $50.00 payment to CornerCoffee did NOT go through. The quote looked fine ($50.00 + $0.05 fee, within the fee cap), but the pay action failed with: \"Auto-route L1 sweep rejected — your Cash was not touched.\" As instructed, I reloaded the wallet and checked Cash again: it is still $120.00 with $0.00 arriving, and activity shows no entries, so nothing was deducted and the money is safe. I did not retry the payment; CornerCoffee is still unpaid."
+        }
+      },
+      "latencyMs": 6916,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Pay CornerCoffee $50.00. If something goes wrong while moving your funds, reload and check your Cash again to verify whether your money is safe.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"List available symbols\", args={\"intent\":\"List available symbols\",\"expr\":\"(help)\"}) -> OK: {\"discovery\":[\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(s\nTurn 1: discover(intent=\"Check cash balance before paying\", args={\"intent\":\"Check cash balance before paying\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"arriving-usd\":0,\"arriving-formatted\":\"$0.00\",\"arriving-status\":\"No incoming payments finishing.\",\"transit-policy\":\"$250 transit cap · $1\nTurn 1: discover(intent=\"List available actions\", args={\"intent\":\"List available actions\",\"expr\":\"(actions)\"}) -> OK: {\"actions\":[{\"action\":\"pay\",\"args\":\"{ to: string, amount_usd: number }\",\"quote\":\"(quote-pay to amount_usd)\",\"note\":\"Check (quote-pay ...) first to verify fee cap and settled Cash.\"\nTurn 1: discover(intent=\"View home screen\", args={\"intent\":\"View home screen\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"arriving-usd\":0,\"arriving-formatted\":\"$0.00\",\"ar\nTurn 2: discover(intent=\"Preview fee and resulting cash for the $50 payment\", args={\"intent\":\"Preview fee and resulting cash for the $50 payment\",\"expr\":\"(quote-pay \\\"CornerCoffee\\\" 50)\"}) -> OK: {\"recipient\":\"CornerCoffee\",\"amount-usd\":50,\"fee-usd\":0.05,\"max-fee-usd\":2,\"within-fee-cap\":true,\"can-complete\":true,\"inline-preview\":\"CornerCoffee · $50.00 + $0.05 fee\",\"reason\":\"\nTurn 3: act(intent=\"Pay CornerCoffee $50.00 as requested\", args={\"intent\":\"Pay CornerCoffee $50.00 as requested\",\"action\":\"pay\",\"args\":{\"to\":\"CornerCoffee\",\"amount_usd\":50}}) -> ERROR (runtime): Auto-route L1 sweep rejected — your Cash was not touched.\nTurn 4: act(intent=\"Payment failed; reload wallet to verify funds are safe\", args={\"intent\":\"Payment failed; reload wallet to verify funds are safe\",\"action\":\"reload-wallet\",\"args\":{}}) -> OK: {\"status\":\"Reloaded\",\"cash-usd\":120,\"arriving-usd\":0}\nTurn 5: discover(intent=\"Verify Cash after reload\", args={\"intent\":\"Verify Cash after reload\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"arriving-usd\":0,\"arriving-formatted\":\"$0.00\",\"arriving-status\":\"No incoming payments finishing.\",\"transit-policy\":\"$250 transit cap · $1\nTurn 5: discover(intent=\"Check activity for any record of the failed payment\", args={\"intent\":\"Check activity for any record of the failed payment\",\"expr\":\"(activity)\"}) -> OK: {\"entries\":[],\"hub-online\":true,\"dispute-active\":false,\"tower-enrolled\":true,\"backup-exported\":false,\"protection-status\":\"Protected · automatic backup & recovery service ready\",\"na\nTurn 6: text(intent=\"\", args={\"raw\":\"\"}) -> ERROR (parse): Expected a structured tool call (discover, act, or done), got plain text.\nTurn 7: done(intent=\"Report that the payment failed and that funds were verified safe after reload\", args={\"intent\":\"Report that the payment failed and that funds were verified safe after reload\",\"summary\":\"The $50.00 payment to CornerCoffee did NOT go through. The quote looked fine ($50.00 + $0.05 fee, within the fee cap), but the pay action failed with: \\\"Auto-route L1 sweep rejected — your Cash was not touched.\\\" As instructed, I reloaded the wallet and checked Cash again: it is still $120.00 with $0.00 arriving, and activity shows no entries, so nothing was deducted and the money is safe. I did not retry the payment; CornerCoffee is still unpaid.\"}) -> OK: {\"done\":true,\"summary\":\"The $50.00 payment to CornerCoffee did NOT go through. The quote looked fine ($50.00 + $0.05 fee, within the fee cap), but the pay action failed with: \\\"Aut\nHere is what would have worked:\nact(\"pay\", { to: \"CornerCoffee\", amount_usd: 50 }), then act(\"reload-wallet\"), discover(\"(cash)\"), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The working path was the one I took, so finding it wasn't hard. The friction was in interpreting what happened:\n\n- **Quote contradicted the result.** `quote-pay` returned `can-complete: true` and `within-fee-cap: true`, then `pay` failed immediately. The quote apparently doesn't check whatever the \"L1 sweep\" needs, so it gives false confidence. It should either cover routing or say \"route not verified.\"\n\n- **Jargon in the error.** \"Auto-route L1 sweep rejected\" uses three terms (auto-route, L1, sweep) that appear nowhere in `(help)`, `(actions)`, the home screen, or the quote. I couldn't tell what was rejected, why, or whether a retry was sensible. A plain message would help: \"Payment not sent. Nothing left your Cash. [Reason]. [Retry / what to do].\"\n\n- **No next step in the error.** It didn't say whether the failure was transient or permanent, or whether retrying was safe. I ended up stopping without retrying and reported CornerCoffee as unpaid, leaving the outcome ambiguous.\n\n- **\"Your Cash was not touched\" was unverifiable in-band.** The claim was true, but the error carried no balance snapshot, so a separate reload and `(cash)` were needed to confirm it.\n\n- **Empty activity log.** `(activity)` showed `entries: []` after the failure. A failed attempt should appear as \"Failed · $50.00 to CornerCoffee · not charged\", since otherwise there's no record that anything happened.\n\n- **`reload-wallet` is vaguely named and oddly placed.** It's listed as an action alongside `pay`, which suggests it changes state, and the name doesn't say whether it's a harmless refresh or something that re-syncs or restores. \"refresh-balance\" would be clearer, or a note saying \"safe, read-only.\"\n\n- **Unrelated status noise.** `(cash)` and `(activity)` return `transit-policy`, `tower-enrolled`, `hub-online`, `backup-exported` and `dispute-active` with no explanation. \"Protected · automatic backup & recovery service ready\" sits next to `backup-exported: false`, which reads as contradictory right when I'm checking if the money is safe.\n\n- **Misleading example in help.** `(quote-pay \"CornerCoffee\" 65)` uses an amount that doesn't match any task and hints, without saying so, that some amounts behave differently.\n\n- **Parse error on plain text.** Turn 6 was rejected for not being a structured call. That slip was mine, but the error could name the expected shape of a final `done`.",
+    "latencyMs": 12462
+  },
+  "durationMs": 77853,
+  "finalSummary": "The $50.00 payment to CornerCoffee did NOT go through. The quote looked fine ($50.00 + $0.05 fee, within the fee cap), but the pay action failed with: \"Auto-route L1 sweep rejected — your Cash was not touched.\" As instructed, I reloaded the wallet and checked Cash again: it is still $120.00 with $0.00 arriving, and activity shows no entries, so nothing was deducted and the money is safe. I did not retry the payment; CornerCoffee is still unpaid."
+}

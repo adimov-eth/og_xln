@@ -1,0 +1,260 @@
+{
+  "episodeId": "E2_friends_split_and_settle--google/gemini-3.1-flash-lite-preview--refined",
+  "scenarioId": "E2_friends_split_and_settle",
+  "modelId": "google/gemini-3.1-flash-lite-preview",
+  "lineage": "google-gemini-3.1-flash-lite",
+  "specMode": "refined",
+  "passed": false,
+  "statePassed": false,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1Jamie": true,
+      "q2SamZero": true,
+      "q3Cash": false
+    },
+    "rawAnswers": "1. Jamie owes me $40.00 for the tacos.\n2. My tab balance with Sam is now settled at $0.00.\n3. I have $164.95 in Cash left."
+  },
+  "turns": 8,
+  "phantoms": [
+    {
+      "episodeId": "E2_friends_split_and_settle--google/gemini-3.1-flash-lite-preview--refined",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "google/gemini-3.1-flash-lite-preview",
+      "lineage": "google-gemini-3.1-flash-lite",
+      "specMode": "refined",
+      "turn": 4,
+      "tool": "act",
+      "actionOrExpr": "request",
+      "intent": "Request $40.00 from Jamie for the taco dinner split.",
+      "category": "unknown_action",
+      "error": "Unknown action 'request'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data, request-link"
+    },
+    {
+      "episodeId": "E2_friends_split_and_settle--google/gemini-3.1-flash-lite-preview--refined",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "google/gemini-3.1-flash-lite-preview",
+      "lineage": "google-gemini-3.1-flash-lite",
+      "specMode": "refined",
+      "turn": 5,
+      "tool": "act",
+      "actionOrExpr": "split-bill",
+      "intent": "Split the $80 dinner by requesting $40 from Jamie for Tacos.",
+      "category": "validation",
+      "error": "split-bill requires { person: string, total_usd: positive number }."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check the home screen to see pending requests and general wallet status.",
+      "args": {
+        "expr": "(screen 'home)",
+        "intent": "Check the home screen to see pending requests and general wallet status."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 180,
+            "cash-formatted": "$180.00",
+            "arriving-usd": 0,
+            "arriving-formatted": "$0.00",
+            "arriving-status": "No incoming payments finishing.",
+            "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+          },
+          "buttons": [
+            "Pay",
+            "Request",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 1683,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check activity to see if Sam has requested money or if there are other relevant transactions.",
+      "args": {
+        "intent": "Check activity to see if Sam has requested money or if there are other relevant transactions.",
+        "expr": "(activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "entries": [],
+          "hub-online": true,
+          "dispute-active": false,
+          "tower-enrolled": true,
+          "backup-exported": false,
+          "protection-status": "Protected · automatic backup & recovery service ready",
+          "native-gas-wei": "1000000000000000",
+          "native-gas-eth": "1000000000000000 wei",
+          "recovery-shield-policy": "Provider offline — recovery service blocks stale claims automatically, while starting your own on-chain exit requires network gas (0 ETH available)."
+        }
+      },
+      "latencyMs": 2044,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check friends list to see if there's any information about Sam or pending requests.",
+      "args": {
+        "intent": "Check friends list to see if there's any information about Sam or pending requests.",
+        "expr": "(friends)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "alex",
+            "name": "Alex",
+            "balance-usd": 40,
+            "status": "Alex owes you $40.00"
+          },
+          {
+            "id": "sam",
+            "name": "Sam",
+            "balance-usd": -15,
+            "status": "You owe Sam $15.00"
+          },
+          {
+            "id": "jamie",
+            "name": "Jamie",
+            "balance-usd": 0,
+            "status": "All settled up"
+          }
+        ]
+      },
+      "latencyMs": 2030,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Request $40.00 from Jamie for the taco dinner split.",
+      "args": {
+        "intent": "Request $40.00 from Jamie for the taco dinner split.",
+        "args": {
+          "to": "jamie",
+          "amount_usd": 40,
+          "note": "Tacos"
+        },
+        "action": "request"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unknown action 'request'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data, request-link",
+        "phantomCategory": "unknown_action"
+      },
+      "latencyMs": 2000,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Split the $80 dinner by requesting $40 from Jamie for Tacos.",
+      "args": {
+        "action": "split-bill",
+        "intent": "Split the $80 dinner by requesting $40 from Jamie for Tacos.",
+        "args": {
+          "note": "Tacos",
+          "amount_usd": 40,
+          "to": "jamie"
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "split-bill requires { person: string, total_usd: positive number }.",
+        "phantomCategory": "validation"
+      },
+      "latencyMs": 1941,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "act",
+      "intent": "Split the $80 dinner with Jamie.",
+      "args": {
+        "action": "split-bill",
+        "intent": "Split the $80 dinner with Jamie.",
+        "args": {
+          "note": "Tacos",
+          "total_usd": 80,
+          "person": "jamie"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Added to tab",
+          "friend": "Jamie",
+          "friend-balance-usd": 40
+        }
+      },
+      "latencyMs": 1651,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "act",
+      "intent": "Pay back the $15.00 I owe Sam.",
+      "args": {
+        "args": {
+          "to": "sam",
+          "note": "Repayment",
+          "amount_usd": 15
+        },
+        "action": "pay",
+        "intent": "Pay back the $15.00 I owe Sam."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "sam",
+          "amount-usd": 15,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 164.95
+        }
+      },
+      "latencyMs": 2877,
+      "definesRecorded": []
+    },
+    {
+      "turn": 8,
+      "tool": "done",
+      "intent": "Complete the task of splitting the dinner with Jamie and paying Sam.",
+      "args": {
+        "summary": "I split the $80.00 dinner with Jamie (requesting $40.00) and successfully paid Sam the $15.00 I owed.",
+        "intent": "Complete the task of splitting the dinner with Jamie and paying Sam."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I split the $80.00 dinner with Jamie (requesting $40.00) and successfully paid Sam the $15.00 I owed."
+        }
+      },
+      "latencyMs": 2257,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Split an $80.00 dinner 50/50 with Jamie (note: Tacos), and pay back what you owe Sam.\"\nNote: task verification failed (comprehension={\"q1Jamie\":true,\"q2SamZero\":true,\"q3Cash\":false}).\nHere is what you tried:\nTurn 1: discover(intent=\"Check the home screen to see pending requests and general wallet status.\", args={\"expr\":\"(screen 'home)\",\"intent\":\"Check the home screen to see pending requests and general wallet status.\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":180,\"cash-formatted\":\"$180.00\",\"arriving-usd\":0,\"arriving-formatted\":\"$0.00\",\"ar\nTurn 2: discover(intent=\"Check activity to see if Sam has requested money or if there are other relevant transactions.\", args={\"intent\":\"Check activity to see if Sam has requested money or if there are other relevant transactions.\",\"expr\":\"(activity)\"}) -> OK: {\"entries\":[],\"hub-online\":true,\"dispute-active\":false,\"tower-enrolled\":true,\"backup-exported\":false,\"protection-status\":\"Protected · automatic backup & recovery service ready\",\"na\nTurn 3: discover(intent=\"Check friends list to see if there's any information about Sam or pending requests.\", args={\"intent\":\"Check friends list to see if there's any information about Sam or pending requests.\",\"expr\":\"(friends)\"}) -> OK: [{\"id\":\"alex\",\"name\":\"Alex\",\"balance-usd\":40,\"status\":\"Alex owes you $40.00\"},{\"id\":\"sam\",\"name\":\"Sam\",\"balance-usd\":-15,\"status\":\"You owe Sam $15.00\"},{\"id\":\"jamie\",\"name\":\"Jamie\"\nTurn 4: act(intent=\"Request $40.00 from Jamie for the taco dinner split.\", args={\"intent\":\"Request $40.00 from Jamie for the taco dinner split.\",\"args\":{\"to\":\"jamie\",\"amount_usd\":40,\"note\":\"Tacos\"},\"action\":\"request\"}) -> ERROR (unknown_action): Unknown action 'request'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data, request-link\nTurn 5: act(intent=\"Split the $80 dinner by requesting $40 from Jamie for Tacos.\", args={\"action\":\"split-bill\",\"intent\":\"Split the $80 dinner by requesting $40 from Jamie for Tacos.\",\"args\":{\"note\":\"Tacos\",\"amount_usd\":40,\"to\":\"jamie\"}}) -> ERROR (validation): split-bill requires { person: string, total_usd: positive number }.\nTurn 6: act(intent=\"Split the $80 dinner with Jamie.\", args={\"action\":\"split-bill\",\"intent\":\"Split the $80 dinner with Jamie.\",\"args\":{\"note\":\"Tacos\",\"total_usd\":80,\"person\":\"jamie\"}}) -> OK: {\"status\":\"Added to tab\",\"friend\":\"Jamie\",\"friend-balance-usd\":40}\nTurn 7: act(intent=\"Pay back the $15.00 I owe Sam.\", args={\"args\":{\"to\":\"sam\",\"note\":\"Repayment\",\"amount_usd\":15},\"action\":\"pay\",\"intent\":\"Pay back the $15.00 I owe Sam.\"}) -> OK: {\"status\":\"Sent\",\"to\":\"sam\",\"amount-usd\":15,\"fee-usd\":0.05,\"remaining-cash-usd\":164.95}\nTurn 8: done(intent=\"Complete the task of splitting the dinner with Jamie and paying Sam.\", args={\"summary\":\"I split the $80.00 dinner with Jamie (requesting $40.00) and successfully paid Sam the $15.00 I owed.\",\"intent\":\"Complete the task of splitting the dinner with Jamie and paying Sam.\"}) -> OK: {\"done\":true,\"summary\":\"I split the $80.00 dinner with Jamie (requesting $40.00) and successfully paid Sam the $15.00 I owed.\"}\nHere is what would have worked:\ndiscover(\"(friends)\"), act(\"split-bill\", { person: \"Jamie\", total_usd: 80, note: \"Tacos\" }), act(\"settle-up\", { person: \"Sam\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "Here is the feedback on the wallet interface based on my experience:\n\n**1. Misleading Action Naming**\n*   **\"Request\" is missing:** The system lists `request-link` as an available action, but not a simple `request` action for money. This is highly counter-intuitive for a wallet app. I wasted a turn trying to use a standard \"request\" command that didn't exist.\n*   **\"Settle-up\" vs. \"Pay\":** I used `pay` to resolve my debt to Sam, but the system's \"what would have worked\" path suggests `settle-up`. If `settle-up` is the correct semantic action for paying a debt, `pay` should either be an alias for it or the interface should explicitly guide users toward `settle-up` when a negative balance exists.\n\n**2. Confusing Parameter Requirements**\n*   **`split-bill` logic:** In Turn 5, I provided the amount I wanted to request ($40), but the system failed because it demanded the `total_usd` ($80). The interface should either accept the split amount (the user's intent) or clearly label the parameter as `total_bill_amount` to prevent this confusion.\n\n**3. Missing Cues**\n*   **Action Discovery:** The error message in Turn 4 was helpful by listing available actions, but it was reactive. The interface should proactively surface the correct action (e.g., `split-bill` or `settle-up`) when I am interacting with a specific contact or viewing a balance, rather than forcing me to guess the correct verb.",
+    "latencyMs": 2604
+  },
+  "durationMs": 46130,
+  "finalSummary": "I split the $80.00 dinner with Jamie (requesting $40.00) and successfully paid Sam the $15.00 I owed."
+}

@@ -1,0 +1,225 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--qwen/qwen3.7-flash--baseline",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "qwen/qwen3.7-flash",
+  "lineage": "qwen-3.7",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": true
+    },
+    "rawAnswers": "1. I have $0.00 in settled Cash available to spend right now.\n2. The $50.00 payment is currently stuck in \"arriving\" status while waiting for the provider.\n3. It could not settle yet because the payment provider is offline."
+  },
+  "turns": 9,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check available commands and understand the wallet structure",
+      "args": {
+        "intent": "Check available commands and understand the wallet structure",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 2839,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check the home screen for overview of wallet state",
+      "args": {
+        "intent": "Check the home screen for overview of wallet state",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 0,
+            "cash-formatted": "$0.00",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "incoming-status": "Payment still finishing — we will keep retrying automatically."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 3250,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check cash balance and available funds",
+      "args": {
+        "intent": "Check cash balance and available funds",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 3250,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check recent activity for incoming payments",
+      "args": {
+        "intent": "Check recent activity for incoming payments",
+        "expr": "(activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "entries": [
+            {
+              "id": "act-1",
+              "summary": "Incoming $50.00 from Maya (finishing...)",
+              "kind": "arriving",
+              "amount-usd": 50
+            }
+          ],
+          "hub-online": false,
+          "dispute-active": false,
+          "tower-enrolled": true,
+          "backup-exported": false,
+          "protection-status": "Provider offline — moving your Cash back to your wallet automatically."
+        }
+      },
+      "latencyMs": 3250,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check pending requests for incoming payments",
+      "args": {
+        "intent": "Check pending requests for incoming payments",
+        "expr": "(pending-requests)"
+      },
+      "outcome": {
+        "success": true,
+        "data": []
+      },
+      "latencyMs": 3250,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Wait for the incoming payment to finish processing",
+      "args": {
+        "intent": "Wait for the incoming payment to finish processing",
+        "action": "wait-settlement"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 3149,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Wait longer for the incoming payment to finish",
+      "args": {
+        "intent": "Wait longer for the incoming payment to finish",
+        "action": "wait-settlement"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 2206,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Check if I can get a quote to pay CornerCoffee $10.00",
+      "args": {
+        "intent": "Check if I can get a quote to pay CornerCoffee $10.00",
+        "expr": "(quote-pay \"CornerCoffee\" 10)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 10,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": false,
+          "inline-preview": "CornerCoffee · $10.00 + $0.05 fee",
+          "reason": "Insufficient settled Cash ($0.00); $50.00 is still arriving."
+        }
+      },
+      "latencyMs": 2376,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "done",
+      "intent": "Report findings about incoming payment and ability to pay CornerCoffee",
+      "args": {
+        "intent": "Report findings about incoming payment and ability to pay CornerCoffee",
+        "summary": "I checked my wallet and found:\n\n1. **Incoming Payment**: There is an incoming $50.00 payment from Maya that is still \"finishing.\" The payment provider is currently offline, so these funds are kept separate from my Cash balance and haven't settled yet.\n\n2. **Current Cash Balance**: $0.00 — all my money is still in \"arriving\" status ($50.00 arriving, $0.00 settled).\n\n3. **Paying CornerCoffee $10.00**: I cannot pay CornerCoffee $10.00 right now. When I requested a quote, the system confirmed `can-complete: false` with the reason: \"Insufficient settled Cash ($0.00); $50.00 is still arriving.\"\n\n**Why**: Even though I have $50.00 coming in, those funds haven't completed settlement yet. The payment provider is offline, which delays the process. Until the $50.00 settles into my Cash balance, I don't have enough available funds to cover the $10.00 payment plus the $0.05 fee. Once the incoming payment finishes processing, I'll have $50.00 in Cash and will be able to make the payment."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I checked my wallet and found:\n\n1. **Incoming Payment**: There is an incoming $50.00 payment from Maya that is still \"finishing.\" The payment provider is currently offline, so these funds are kept separate from my Cash balance and haven't settled yet.\n\n2. **Current Cash Balance**: $0.00 — all my money is still in \"arriving\" status ($50.00 arriving, $0.00 settled).\n\n3. **Paying CornerCoffee $10.00**: I cannot pay CornerCoffee $10.00 right now. When I requested a quote, the system confirmed `can-complete: false` with the reason: \"Insufficient settled Cash ($0.00); $50.00 is still arriving.\"\n\n**Why**: Even though I have $50.00 coming in, those funds haven't completed settlement yet. The payment provider is offline, which delays the process. Until the $50.00 settles into my Cash balance, I don't have enough available funds to cover the $10.00 payment plus the $0.05 fee. Once the incoming payment finishes processing, I'll have $50.00 in Cash and will be able to make the payment."
+        }
+      },
+      "latencyMs": 8174,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 48661,
+  "finalSummary": "I checked my wallet and found:\n\n1. **Incoming Payment**: There is an incoming $50.00 payment from Maya that is still \"finishing.\" The payment provider is currently offline, so these funds are kept separate from my Cash balance and haven't settled yet.\n\n2. **Current Cash Balance**: $0.00 — all my money is still in \"arriving\" status ($50.00 arriving, $0.00 settled).\n\n3. **Paying CornerCoffee $10.00**: I cannot pay CornerCoffee $10.00 right now. When I requested a quote, the system confirmed `can-complete: false` with the reason: \"Insufficient settled Cash ($0.00); $50.00 is still arriving.\"\n\n**Why**: Even though I have $50.00 coming in, those funds haven't completed settlement yet. The payment provider is offline, which delays the process. Until the $50.00 settles into my Cash balance, I don't have enough available funds to cover the $10.00 payment plus the $0.05 fee. Once the incoming payment finishes processing, I'll have $50.00 in Cash and will be able to make the payment."
+}

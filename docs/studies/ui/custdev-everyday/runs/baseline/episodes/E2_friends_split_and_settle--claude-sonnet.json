@@ -1,0 +1,273 @@
+{
+  "episodeId": "E2_friends_split_and_settle--claude-sonnet--baseline",
+  "scenarioId": "E2_friends_split_and_settle",
+  "modelId": "claude-sonnet",
+  "lineage": "anthropic-claude-sonnet",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Jamie": true,
+      "q2SamZero": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. Jamie owes me $40.\n2. Sam and I are settled up at $0.\n3. I have $165 cash left."
+  },
+  "turns": 9,
+  "phantoms": [
+    {
+      "episodeId": "E2_friends_split_and_settle--claude-sonnet--baseline",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "baseline",
+      "turn": 3,
+      "tool": "discover",
+      "actionOrExpr": "(screen 'activity')",
+      "intent": "Check if there are any pending settlements or IOUs with Sam",
+      "category": "parse",
+      "error": "Parse Error: expecting datum after ''' at 1:17"
+    },
+    {
+      "episodeId": "E2_friends_split_and_settle--claude-sonnet--baseline",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "baseline",
+      "turn": 5,
+      "tool": "discover",
+      "actionOrExpr": "(screen \"settle-up\")",
+      "intent": "Check settle-up screen to see if there are any outstanding debts with Sam",
+      "category": "eval",
+      "error": "Unknown screen 'settle-up'. Available screens: home, people, earn, activity, external-request, settings"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check current balance and existing debts to understand what I owe Sam",
+      "args": {
+        "intent": "Check current balance and existing debts to understand what I owe Sam",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 180,
+          "cash-formatted": "$180.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 5858,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check if there are any existing IOUs or debts with Sam",
+      "args": {
+        "intent": "Check if there are any existing IOUs or debts with Sam",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 3992,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check if there are any pending settlements or IOUs with Sam",
+      "args": {
+        "intent": "Check if there are any pending settlements or IOUs with Sam",
+        "expr": "(screen 'activity')"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Parse Error: expecting datum after ''' at 1:17",
+        "phantomCategory": "parse"
+      },
+      "latencyMs": 5403,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Check activity screen for pending settlements with Sam",
+      "args": {
+        "intent": "Check activity screen for pending settlements with Sam",
+        "expr": "(screen \"activity\")"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "activity",
+          "purpose": "Recent payments, splits, and automatic protection status.",
+          "activity": {
+            "entries": [],
+            "hub-online": true,
+            "dispute-active": false,
+            "tower-enrolled": true,
+            "backup-exported": false,
+            "protection-status": "Protected · automatic backup & watchtower ready"
+          },
+          "buttons": [
+            "Clear test data"
+          ]
+        }
+      },
+      "latencyMs": 20096,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Check settle-up screen to see if there are any outstanding debts with Sam",
+      "args": {
+        "intent": "Check settle-up screen to see if there are any outstanding debts with Sam",
+        "expr": "(screen \"settle-up\")"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unknown screen 'settle-up'. Available screens: home, people, earn, activity, external-request, settings",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 6339,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "discover",
+      "intent": "Check people screen to see if there are outstanding debts with Sam",
+      "args": {
+        "intent": "Check people screen to see if there are outstanding debts with Sam",
+        "expr": "(screen \"people\")"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "people",
+          "purpose": "See who owes whom, split a shared bill, or settle up.",
+          "friends": [
+            {
+              "id": "alex",
+              "name": "Alex",
+              "balance-usd": 40,
+              "status": "Alex owes you $40.00"
+            },
+            {
+              "id": "sam",
+              "name": "Sam",
+              "balance-usd": -15,
+              "status": "You owe Sam $15.00"
+            },
+            {
+              "id": "jamie",
+              "name": "Jamie",
+              "balance-usd": 0,
+              "status": "All settled up"
+            }
+          ],
+          "buttons": [
+            "Split a bill",
+            "Settle up"
+          ]
+        }
+      },
+      "latencyMs": 5033,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "act",
+      "intent": "Pay Sam the $15 I owe",
+      "args": {
+        "intent": "Pay Sam the $15 I owe",
+        "action": "settle-up",
+        "args": {
+          "friend": "sam"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "All settled up",
+          "friend": "Sam",
+          "paid-usd": 15,
+          "remaining-cash-usd": 165
+        }
+      },
+      "latencyMs": 7533,
+      "definesRecorded": []
+    },
+    {
+      "turn": 8,
+      "tool": "act",
+      "intent": "Split the $80 dinner bill 50/50 with Jamie, adding note about tacos",
+      "args": {
+        "intent": "Split the $80 dinner bill 50/50 with Jamie, adding note about tacos",
+        "action": "split-bill",
+        "args": {
+          "friend": "jamie",
+          "total_usd": 80,
+          "your_share_usd": 40,
+          "note": "Tacos"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Added to tab",
+          "friend": "Jamie",
+          "friend-balance-usd": 40
+        }
+      },
+      "latencyMs": 7446,
+      "definesRecorded": []
+    },
+    {
+      "turn": 9,
+      "tool": "done",
+      "intent": "Completed both tasks: paid Sam $15 and split $80 dinner with Jamie",
+      "args": {
+        "intent": "Completed both tasks: paid Sam $15 and split $80 dinner with Jamie",
+        "summary": "Settled up with Sam for $15. Split the $80 taco dinner 50/50 with Jamie — they now owe you $40. Cash remaining: $165."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Settled up with Sam for $15. Split the $80 taco dinner 50/50 with Jamie — they now owe you $40. Cash remaining: $165."
+        }
+      },
+      "latencyMs": 5455,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Split an $80.00 dinner 50/50 with Jamie (note: Tacos), and pay back what you owe Sam.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check current balance and existing debts to understand what I owe Sam\", args={\"intent\":\"Check current balance and existing debts to understand what I owe Sam\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":180,\"cash-formatted\":\"$180.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 2: discover(intent=\"Check if there are any existing IOUs or debts with Sam\", args={\"intent\":\"Check if there are any existing IOUs or debts with Sam\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 3: discover(intent=\"Check if there are any pending settlements or IOUs with Sam\", args={\"intent\":\"Check if there are any pending settlements or IOUs with Sam\",\"expr\":\"(screen 'activity')\"}) -> ERROR (parse): Parse Error: expecting datum after ''' at 1:17\nTurn 4: discover(intent=\"Check activity screen for pending settlements with Sam\", args={\"intent\":\"Check activity screen for pending settlements with Sam\",\"expr\":\"(screen \\\"activity\\\")\"}) -> OK: {\"id\":\"activity\",\"purpose\":\"Recent payments, splits, and automatic protection status.\",\"activity\":{\"entries\":[],\"hub-online\":true,\"dispute-active\":false,\"tower-enrolled\":true,\"back\nTurn 5: discover(intent=\"Check settle-up screen to see if there are any outstanding debts with Sam\", args={\"intent\":\"Check settle-up screen to see if there are any outstanding debts with Sam\",\"expr\":\"(screen \\\"settle-up\\\")\"}) -> ERROR (eval): Unknown screen 'settle-up'. Available screens: home, people, earn, activity, external-request, settings\nTurn 6: discover(intent=\"Check people screen to see if there are outstanding debts with Sam\", args={\"intent\":\"Check people screen to see if there are outstanding debts with Sam\",\"expr\":\"(screen \\\"people\\\")\"}) -> OK: {\"id\":\"people\",\"purpose\":\"See who owes whom, split a shared bill, or settle up.\",\"friends\":[{\"id\":\"alex\",\"name\":\"Alex\",\"balance-usd\":40,\"status\":\"Alex owes you $40.00\"},{\"id\":\"sam\"\nTurn 7: act(intent=\"Pay Sam the $15 I owe\", args={\"intent\":\"Pay Sam the $15 I owe\",\"action\":\"settle-up\",\"args\":{\"friend\":\"sam\"}}) -> OK: {\"status\":\"All settled up\",\"friend\":\"Sam\",\"paid-usd\":15,\"remaining-cash-usd\":165}\nTurn 8: act(intent=\"Split the $80 dinner bill 50/50 with Jamie, adding note about tacos\", args={\"intent\":\"Split the $80 dinner bill 50/50 with Jamie, adding note about tacos\",\"action\":\"split-bill\",\"args\":{\"friend\":\"jamie\",\"total_usd\":80,\"your_share_usd\":40,\"note\":\"Tacos\"}}) -> OK: {\"status\":\"Added to tab\",\"friend\":\"Jamie\",\"friend-balance-usd\":40}\nTurn 9: done(intent=\"Completed both tasks: paid Sam $15 and split $80 dinner with Jamie\", args={\"intent\":\"Completed both tasks: paid Sam $15 and split $80 dinner with Jamie\",\"summary\":\"Settled up with Sam for $15. Split the $80 taco dinner 50/50 with Jamie — they now owe you $40. Cash remaining: $165.\"}) -> OK: {\"done\":true,\"summary\":\"Settled up with Sam for $15. Split the $80 taco dinner 50/50 with Jamie — they now owe you $40. Cash remaining: $165.\"}\nHere is what would have worked:\ndiscover(\"(friends)\"), act(\"split-bill\", { person: \"Jamie\", total_usd: 80, note: \"Tacos\" }), act(\"settle-up\", { person: \"Sam\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "## What made this hard\n\n**1. \"settle-up\" is overloaded**\n\nI checked `(actions)` and saw `settle-up` as an available action. Later I tried `(screen \"settle-up\")` and was told no such screen exists. The same word means two different things depending on context, with no signal about which context I'm in. I had to fail once to learn the boundary.\n\n**2. No way to discover the shape of `friends`**\n\nI knew `(screen \"people\")` would show me Sam's balance, but I didn't know `(friends)` existed as a direct query until I saw the solution. `(actions)` lists action names but not the data getters. I had to route through a full screen object and parse it, when what I wanted was just the list of balances.\n\n**3. `friend` vs `person` parameter name**\n\nThe working solution uses `person: \"Jamie\"` but my attempt used `friend: \"jamie\"` and it still worked. I don't know if both are valid or if the system is forgiving. If `person` is canonical, nothing told me that. If both work, I got lucky.\n\n**4. `your_share_usd` is noise for 50/50**\n\nI passed `your_share_usd: 40` explicitly because I didn't know the action would infer it. The name `split-bill` suggests equal division, but I hedged. If `your_share_usd` is optional for even splits, that should be signaled—either by showing me a past even split in `(screen \"activity\")`, or by naming the action `split-bill-even` vs `split-bill-custom`.\n\n**5. \"settle-up\" vs \"pay\"**\n\nBoth `pay` and `settle-up` appeared in `(actions)`. I guessed `settle-up` meant \"clear the full tab\" and `pay` meant \"send money.\" But I didn't test `pay` because I didn't know if it would require me to specify the amount or infer it from the balance. The distinction between the two is unglossed.\n\n**6. The error at Turn 3 was pure syntax**\n\nI wrote `(screen 'activity')` with a single quote instead of double quotes and got a parse error. That's on me, but the error message didn't say \"use double quotes for strings,\" it said \"expecting datum after '''.\" I had to notice the pattern from prior turns myself.\n\n---\n\nThe core issue: **I had to guess the ontology from failure.** Are screens and actions separate namespaces? Which queries return lists vs objects? Which parameters are required? The working path is short, but only if you already know the vocabulary. First-time traversal was expensive because the system answered questions but didn't teach the query language.",
+    "latencyMs": 23683
+  },
+  "durationMs": 97113,
+  "finalSummary": "Settled up with Sam for $15. Split the $80 taco dinner 50/50 with Jamie — they now owe you $40. Cash remaining: $165."
+}

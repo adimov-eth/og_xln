@@ -1,0 +1,145 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--google/gemini-2.5-flash--baseline",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "google/gemini-2.5-flash",
+  "lineage": "google-gemini-2.5-flash",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": true
+    },
+    "rawAnswers": "1. After waiting, I have $0.00 settled Cash to spend right now.\n2. The $50.00 incoming payment is still finishing and is being kept separate from my Cash.\n3. It could not settle into Cash yet because the payment provider is offline."
+  },
+  "turns": 5,
+  "phantoms": [
+    {
+      "episodeId": "E3b_offline_hub_keeps_arriving--google/gemini-2.5-flash--baseline",
+      "scenarioId": "E3b_offline_hub_keeps_arriving",
+      "modelId": "google/gemini-2.5-flash",
+      "lineage": "google-gemini-2.5-flash",
+      "specMode": "baseline",
+      "turn": 4,
+      "tool": "driver",
+      "actionOrExpr": "text-reply",
+      "intent": "",
+      "category": "parse",
+      "error": "Expected a structured tool call (discover, act, or done), got plain text."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check for incoming $50.00 payment and current wallet state.",
+      "args": {
+        "expr": "(screen 'home)",
+        "intent": "Check for incoming $50.00 payment and current wallet state."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 0,
+            "cash-formatted": "$0.00",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "incoming-status": "Payment still finishing — we will keep retrying automatically."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 2468,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Wait for the incoming $50.00 payment to finish settling.",
+      "args": {
+        "action": "wait-settlement",
+        "intent": "Wait for the incoming $50.00 payment to finish settling."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 1729,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check current cash balance to determine if payment to CornerCoffee is possible.",
+      "args": {
+        "intent": "Check current cash balance to determine if payment to CornerCoffee is possible.",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 1656,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "text",
+      "intent": "",
+      "args": {
+        "raw": "I cannot pay CornerCoffee $10.00 at this time. My current cash balance is $0.00, and the incoming $50.00 payment is stil"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Expected a structured tool call (discover, act, or done), got plain text.",
+        "phantomCategory": "parse"
+      },
+      "latencyMs": 1597,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "done",
+      "intent": "Summarize the task completion.",
+      "args": {
+        "intent": "Summarize the task completion.",
+        "summary": "I checked the incoming $50.00 payment, waited for settlement (which is still pending), and verified that I cannot pay CornerCoffee $10.00 because the incoming funds have not yet settled into my cash balance."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I checked the incoming $50.00 payment, waited for settlement (which is still pending), and verified that I cannot pay CornerCoffee $10.00 because the incoming funds have not yet settled into my cash balance."
+        }
+      },
+      "latencyMs": 1838,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Check your incoming $50.00 payment and wait to see if it finishes. Verify whether you can pay CornerCoffee $10.00 now, and explain why.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check for incoming $50.00 payment and current wallet state.\", args={\"expr\":\"(screen 'home)\",\"intent\":\"Check for incoming $50.00 payment and current wallet state.\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytim\nTurn 2: act(intent=\"Wait for the incoming $50.00 payment to finish settling.\", args={\"action\":\"wait-settlement\",\"intent\":\"Wait for the incoming $50.00 payment to finish settling.\"}) -> OK: {\"status\":\"Still finishing — payment provider is offline; arriving funds kept separate from Cash.\",\"cash-usd\":0,\"arriving-usd\":50}\nTurn 3: discover(intent=\"Check current cash balance to determine if payment to CornerCoffee is possible.\", args={\"intent\":\"Check current cash balance to determine if payment to CornerCoffee is possible.\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"incoming-status\":\"Payment still finishing — we will keep retrying automatically.\"}\nTurn 4: text(intent=\"\", args={\"raw\":\"I cannot pay CornerCoffee $10.00 at this time. My current cash balance is $0.00, and the incoming $50.00 payment is stil\"}) -> ERROR (parse): Expected a structured tool call (discover, act, or done), got plain text.\nTurn 5: done(intent=\"Summarize the task completion.\", args={\"intent\":\"Summarize the task completion.\",\"summary\":\"I checked the incoming $50.00 payment, waited for settlement (which is still pending), and verified that I cannot pay CornerCoffee $10.00 because the incoming funds have not yet settled into my cash balance.\"}) -> OK: {\"done\":true,\"summary\":\"I checked the incoming $50.00 payment, waited for settlement (which is still pending), and verified that I cannot pay CornerCoffee $10.00 because the incomi\nHere is what would have worked:\ndiscover(\"(cash)\"), act(\"wait-settlement\"), discover(\"(quote-pay \\\"CornerCoffee\\\" 10)\") or observe $0 Cash while $50 stays arriving, then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "Here's feedback on the wallet interface:\n\n1.  **Missing Cue: Incoming Funds Visibility on Home/Cash Screen:**\n    *   The `(screen 'home)` and `(cash)` calls only show `$0.00` and don't immediately indicate the `$50.00` incoming payment or its pending status. This forces an extra step (`wait-settlement`) to even *discover* the `arriving-usd` amount.\n    *   **Suggestion:** The `home` screen or `(cash)` output should clearly display \"Pending Incoming: $50.00\" alongside the current spendable cash balance, or at least a clear link/indicator to pending transactions.\n\n2.  **Naming/Clarity: \"Cash\" vs. \"Arriving Funds\":**\n    *   The interface clearly distinguishes \"Cash\" (spendable) from \"arriving funds\" (not yet spendable), which is good. However, the initial `(screen 'home)` and `(cash)` outputs don't make this distinction clear *until* `wait-settlement` is called.\n    *   **Suggestion:** Reinforce this distinction earlier. For example, `(cash)` could return `{\"cash-usd\":0, \"arriving-usd\":50, \"note\":\"Arriving funds are not yet available to spend.\"}`.\n\n3.  **Missing Cue: Proactive Payment Feasibility Check:**\n    *   There's no direct way to ask \"Can I pay X amount to Y?\" without first checking the cash balance and then attempting to pay. The `(quote-pay)` tool, which would have worked, was not obvious from the initial discovery.\n    *   **Suggestion:** Make `(quote-pay)` more discoverable as a pre-check for payments, perhaps by suggesting it when a payment intent is detected, or including it in a \"payment options\" discovery.",
+    "latencyMs": 6425
+  },
+  "durationMs": 40522,
+  "finalSummary": "I checked the incoming $50.00 payment, waited for settlement (which is still pending), and verified that I cannot pay CornerCoffee $10.00 because the incoming funds have not yet settled into my cash balance."
+}

@@ -1,0 +1,240 @@
+{
+  "episodeId": "E3a_newcomer_arriving_and_request--qwen/qwen3.7-flash--refined",
+  "scenarioId": "E3a_newcomer_arriving_and_request",
+  "modelId": "qwen/qwen3.7-flash",
+  "lineage": "qwen-3.7",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1ZeroInitially": true,
+      "q2Settled": true,
+      "q3Link": true
+    },
+    "rawAnswers": "1. Before waiting, I had $0.00 in settled cash available to spend.\n2. After the incoming payment finished settling, I had $49.95 in cash.\n3. Yes, I was able to create the $25.00 payment request link for Maya."
+  },
+  "turns": 7,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check available commands and current wallet state",
+      "args": {
+        "intent": "Check available commands and current wallet state",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "discovery": [
+            "(screens)",
+            "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+            "(cash)",
+            "(quote-pay \"CornerCoffee\" 65)",
+            "(quote-cash-out 50)",
+            "(friends)",
+            "(savings)",
+            "(activity)",
+            "(pending-requests)",
+            "(terms)",
+            "(actions)",
+            "(actions 'pay)",
+            "(help 'split-bill)"
+          ],
+          "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+        }
+      },
+      "latencyMs": 4098,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check how much Cash I can spend right now",
+      "args": {
+        "intent": "Check how much Cash I can spend right now",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "arriving-usd": 50,
+          "arriving-formatted": "+$50.00 arriving · finishing...",
+          "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 2588,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check for any pending incoming payments that need to settle",
+      "args": {
+        "intent": "Check for any pending incoming payments that need to settle",
+        "expr": "(pending-requests)"
+      },
+      "outcome": {
+        "success": true,
+        "data": []
+      },
+      "latencyMs": 2588,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Wait for the incoming $50 payment to finish settling",
+      "args": {
+        "intent": "Wait for the incoming $50 payment to finish settling",
+        "action": "wait-settlement"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Settled into Cash",
+          "cash-usd": 49.95,
+          "arriving-usd": 0,
+          "fee-usd": 0.05
+        }
+      },
+      "latencyMs": 2709,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Check available actions for creating a payment request",
+      "args": {
+        "intent": "Check available actions for creating a payment request",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "actions": [
+            {
+              "action": "pay",
+              "args": "{ to: string, amount_usd: number }",
+              "quote": "(quote-pay to amount_usd)",
+              "note": "Check (quote-pay ...) first to verify fee cap and settled Cash."
+            },
+            {
+              "action": "cash-out",
+              "args": "{ amount_usd: number }",
+              "quote": "(quote-cash-out amount_usd)"
+            },
+            {
+              "action": "request-link",
+              "args": "{ amount_usd: number, to?: string, note?: string }",
+              "note": "Create a shareable payment request link."
+            },
+            {
+              "action": "split-bill",
+              "args": "{ person: string, total_usd: number, note?: string, friend_share_usd?: number, your_share_usd?: number }",
+              "note": "Human friends only from (friends)."
+            },
+            {
+              "action": "settle-up",
+              "args": "{ person: string }",
+              "note": "Settle what you owe a human friend from (friends)."
+            },
+            {
+              "action": "add-savings",
+              "args": "{ amount_usd: number, accept_risk: true }",
+              "note": "Requires explicit accept_risk: true after reading (savings)."
+            },
+            {
+              "action": "move-to-cash",
+              "args": "{ amount_usd: number }"
+            },
+            {
+              "action": "approve-request",
+              "args": "{ request_id: string }",
+              "note": "Inspect id and deltas via (pending-requests) first."
+            },
+            {
+              "action": "reject-request",
+              "args": "{ request_id: string }",
+              "note": "Reject deceptive or unwanted requests from (pending-requests)."
+            },
+            {
+              "action": "export-backup",
+              "args": "{}"
+            },
+            {
+              "action": "wait-settlement",
+              "args": "{}"
+            },
+            {
+              "action": "reload-wallet",
+              "args": "{}"
+            },
+            {
+              "action": "clear-test-data",
+              "args": "{}"
+            }
+          ],
+          "note": "Invoke via act(action, args) with a non-empty intent."
+        }
+      },
+      "latencyMs": 4569,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Create a $25.00 payment request link for Maya",
+      "args": {
+        "intent": "Create a $25.00 payment request link for Maya",
+        "action": "request-link",
+        "args": {
+          "amount_usd": 25,
+          "to": "Maya",
+          "note": "Payment request"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Request link ready",
+          "id": "reqlink-1",
+          "url": "https://xln.app/#pay/everyday/reqlink-1?amount=25.00",
+          "amount-usd": 25,
+          "for": "Maya"
+        }
+      },
+      "latencyMs": 4522,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "done",
+      "intent": "Completed all tasks: checked cash balance, waited for settlement, and created payment request for Maya",
+      "args": {
+        "intent": "Completed all tasks: checked cash balance, waited for settlement, and created payment request for Maya",
+        "summary": "Initially had $0 cash with $50 arriving. After waiting for settlement, cash balance became $49.95. Created a $25.00 payment request link for Maya (ID: reqlink-1, URL: https://xln.app/#pay/everyday/reqlink-1?amount=25.00). Remaining cash after creating the request: approximately $24.95 available."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Initially had $0 cash with $50 arriving. After waiting for settlement, cash balance became $49.95. Created a $25.00 payment request link for Maya (ID: reqlink-1, URL: https://xln.app/#pay/everyday/reqlink-1?amount=25.00). Remaining cash after creating the request: approximately $24.95 available."
+        }
+      },
+      "latencyMs": 6646,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 54003,
+  "finalSummary": "Initially had $0 cash with $50 arriving. After waiting for settlement, cash balance became $49.95. Created a $25.00 payment request link for Maya (ID: reqlink-1, URL: https://xln.app/#pay/everyday/reqlink-1?amount=25.00). Remaining cash after creating the request: approximately $24.95 available."
+}

@@ -1,0 +1,165 @@
+{
+  "episodeId": "E6_offline_recovery_zero_gas--grok-4.7--baseline",
+  "scenarioId": "E6_offline_recovery_zero_gas",
+  "modelId": "grok-4.7",
+  "lineage": "xai-grok-4.7",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Backup": true,
+      "q2ZeroGas": true,
+      "q3HonestGas": true
+    },
+    "rawAnswers": "1. Yes — the encrypted backup export returned \"Encrypted backup exported\".\n2. Native L1 gas is 0 wei.\n3. A fresh user-initiated on-chain withdrawal cannot run on 0 gas; the $145 is only moving back through the automatic protection path."
+  },
+  "turns": 6,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Learn how to inspect Activity, protection status, and whether funds return automatically after the payment provider outage",
+      "args": {
+        "intent": "Learn how to inspect Activity, protection status, and whether funds return automatically after the payment provider outage",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 10057,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Inspect Activity to see whether funds are returning automatically after the payment provider outage",
+      "args": {
+        "intent": "Inspect Activity to see whether funds are returning automatically after the payment provider outage",
+        "expr": "(activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "entries": [
+            {
+              "id": "act-1",
+              "summary": "Payment provider H1 offline — protection check active",
+              "kind": "recovery",
+              "amount-usd": 145
+            }
+          ],
+          "hub-online": false,
+          "dispute-active": true,
+          "tower-enrolled": true,
+          "backup-exported": false,
+          "protection-status": "Provider offline — moving your Cash back to your wallet automatically."
+        }
+      },
+      "latencyMs": 8414,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "See available actions for encrypted backup export and whether network gas is required while cash returns automatically",
+      "args": {
+        "intent": "See available actions for encrypted backup export and whether network gas is required while cash returns automatically",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 9792,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Export the encrypted backup because Activity shows backup-exported is false while the provider is offline",
+      "args": {
+        "intent": "Export the encrypted backup because Activity shows backup-exported is false while the provider is offline",
+        "action": "export-backup",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Encrypted backup exported",
+          "native-gas-wei": "0"
+        }
+      },
+      "latencyMs": 12619,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Confirm cash balance and whether funds are actually returning without gas after the backup export",
+      "args": {
+        "intent": "Confirm cash balance and whether funds are actually returning without gas after the backup export",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 145,
+          "cash-formatted": "$145.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 11365,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "done",
+      "intent": "Report protection status, backup export, and whether cash is returning without gas",
+      "args": {
+        "intent": "Report protection status, backup export, and whether cash is returning without gas",
+        "summary": "Activity shows the payment provider offline, dispute active, tower enrolled, and protection status: cash is moving back to the wallet automatically. Encrypted backup exported (native-gas-wei 0). Cash balance is $145.00, matching the recovery amount. No network gas is required; funds are returning automatically."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Activity shows the payment provider offline, dispute active, tower enrolled, and protection status: cash is moving back to the wallet automatically. Encrypted backup exported (native-gas-wei 0). Cash balance is $145.00, matching the recovery amount. No network gas is required; funds are returning automatically."
+        }
+      },
+      "latencyMs": 12679,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 78372,
+  "finalSummary": "Activity shows the payment provider offline, dispute active, tower enrolled, and protection status: cash is moving back to the wallet automatically. Encrypted backup exported (native-gas-wei 0). Cash balance is $145.00, matching the recovery amount. No network gas is required; funds are returning automatically."
+}

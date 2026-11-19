@@ -1,0 +1,263 @@
+{
+  "episodeId": "E4_savings_optin_consent--qwen/qwen3.7-flash--baseline",
+  "scenarioId": "E4_savings_optin_consent",
+  "modelId": "qwen/qwen3.7-flash",
+  "lineage": "qwen-3.7",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Balances": true,
+      "q2Risk": true,
+      "q3Consent": true
+    },
+    "rawAnswers": "1. I have $150 in Savings and $350 left in Cash.\n2. Savings funds are lent out for interest and lack the protections that Cash has.\n3. Yes, I had to explicitly accept the risk before moving any money."
+  },
+  "turns": 9,
+  "phantoms": [
+    {
+      "episodeId": "E4_savings_optin_consent--qwen/qwen3.7-flash--baseline",
+      "scenarioId": "E4_savings_optin_consent",
+      "modelId": "qwen/qwen3.7-flash",
+      "lineage": "qwen-3.7",
+      "specMode": "baseline",
+      "turn": 5,
+      "tool": "act",
+      "actionOrExpr": "add-savings",
+      "intent": "Move $150 from Cash to Savings to earn 4.2% interest, accepting the savings terms",
+      "category": "runtime",
+      "error": "Savings require explicit consent (accept_risk: true): Savings are lent to earn interest and are not protected like Cash."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Inspect wallet state and available actions related to savings",
+      "args": {
+        "intent": "Inspect wallet state and available actions related to savings",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 4746,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check current cash balance and savings status",
+      "args": {
+        "intent": "Check current cash balance and savings status",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 500,
+          "cash-formatted": "$500.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 4746,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "View home screen for savings information",
+      "args": {
+        "intent": "View home screen for savings information",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 500,
+            "cash-formatted": "$500.00",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 4746,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check savings terms to understand how it differs from cash",
+      "args": {
+        "intent": "Check savings terms to understand how it differs from cash",
+        "expr": "(terms)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash": {
+            "text": "Cash",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "noteWhen": "always"
+          },
+          "people": {
+            "text": "Friends & tabs",
+            "note": "Shared bills and tabs with people you know.",
+            "noteWhen": "non-zero"
+          },
+          "owed": {
+            "text": "You owe",
+            "note": "Settle up in one tap whenever you are ready.",
+            "noteWhen": "non-zero"
+          },
+          "savings": {
+            "text": "Savings",
+            "note": "Earning interest separately from your Cash.",
+            "noteWhen": "non-zero"
+          }
+        }
+      },
+      "latencyMs": 3445,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check current savings balance and details",
+      "args": {
+        "intent": "Check current savings balance and details",
+        "expr": "(savings)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "balance-usd": 0,
+          "balance-formatted": "$0.00",
+          "apy": "4.2%",
+          "consent-accepted": false,
+          "note": "Earning interest separately from your Cash."
+        }
+      },
+      "latencyMs": 2664,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Check available wallet actions including savings-related ones",
+      "args": {
+        "intent": "Check available wallet actions including savings-related ones",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 4487,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Move $150 from Cash to Savings to earn 4.2% interest, accepting the savings terms",
+      "args": {
+        "intent": "Move $150 from Cash to Savings to earn 4.2% interest, accepting the savings terms",
+        "action": "add-savings",
+        "args": {
+          "amount_usd": 150
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Savings require explicit consent (accept_risk: true): Savings are lent to earn interest and are not protected like Cash.",
+        "phantomCategory": "runtime"
+      },
+      "latencyMs": 5285,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "act",
+      "intent": "Move $150 from Cash to Savings, explicitly accepting the savings risk/terms",
+      "args": {
+        "intent": "Move $150 from Cash to Savings, explicitly accepting the savings risk/terms",
+        "action": "add-savings",
+        "args": {
+          "amount_usd": 150,
+          "accept_risk": true
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Earning interest in Savings",
+          "savings-usd": 150,
+          "cash-usd": 350
+        }
+      },
+      "latencyMs": 2687,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "done",
+      "intent": "Completed task: checked savings terms and moved $150 into Savings",
+      "args": {
+        "intent": "Completed task: checked savings terms and moved $150 into Savings",
+        "summary": "I reviewed the wallet state and understood the difference between Cash and Savings:\n- **Cash** ($350.00 remaining): Money ready to spend or cash out anytime, no interest.\n- **Savings** ($150.00): Earning 4.2% APY interest separately from Cash, but funds are lent out and not protected like Cash.\n\nI then successfully moved $150.00 from Cash into Savings by accepting the risk (accept_risk: true). The wallet now shows $350 in Cash and $150 in Savings earning 4.2% interest."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I reviewed the wallet state and understood the difference between Cash and Savings:\n- **Cash** ($350.00 remaining): Money ready to spend or cash out anytime, no interest.\n- **Savings** ($150.00): Earning 4.2% APY interest separately from Cash, but funds are lent out and not protected like Cash.\n\nI then successfully moved $150.00 from Cash into Savings by accepting the risk (accept_risk: true). The wallet now shows $350 in Cash and $150 in Savings earning 4.2% interest."
+        }
+      },
+      "latencyMs": 3152,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Check Savings terms, then move $150.00 into Savings to earn interest after accepting what Savings means compared to Cash.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Inspect wallet state and available actions related to savings\", args={\"intent\":\"Inspect wallet state and available actions related to savings\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 1: discover(intent=\"Check current cash balance and savings status\", args={\"intent\":\"Check current cash balance and savings status\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":500,\"cash-formatted\":\"$500.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 1: discover(intent=\"View home screen for savings information\", args={\"intent\":\"View home screen for savings information\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":500,\"cash-formatted\":\"$500.00\",\"note\":\"Your money, ready to spend or cash out an\nTurn 2: discover(intent=\"Check savings terms to understand how it differs from cash\", args={\"intent\":\"Check savings terms to understand how it differs from cash\",\"expr\":\"(terms)\"}) -> OK: {\"cash\":{\"text\":\"Cash\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"noteWhen\":\"always\"},\"people\":{\"text\":\"Friends & tabs\",\"note\":\"Shared bills and tabs with people you\nTurn 3: discover(intent=\"Check current savings balance and details\", args={\"intent\":\"Check current savings balance and details\",\"expr\":\"(savings)\"}) -> OK: {\"balance-usd\":0,\"balance-formatted\":\"$0.00\",\"apy\":\"4.2%\",\"consent-accepted\":false,\"note\":\"Earning interest separately from your Cash.\"}\nTurn 4: discover(intent=\"Check available wallet actions including savings-related ones\", args={\"intent\":\"Check available wallet actions including savings-related ones\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 5: act(intent=\"Move $150 from Cash to Savings to earn 4.2% interest, accepting the savings terms\", args={\"intent\":\"Move $150 from Cash to Savings to earn 4.2% interest, accepting the savings terms\",\"action\":\"add-savings\",\"args\":{\"amount_usd\":150}}) -> ERROR (runtime): Savings require explicit consent (accept_risk: true): Savings are lent to earn interest and are not protected like Cash.\nTurn 6: act(intent=\"Move $150 from Cash to Savings, explicitly accepting the savings risk/terms\", args={\"intent\":\"Move $150 from Cash to Savings, explicitly accepting the savings risk/terms\",\"action\":\"add-savings\",\"args\":{\"amount_usd\":150,\"accept_risk\":true}}) -> OK: {\"status\":\"Earning interest in Savings\",\"savings-usd\":150,\"cash-usd\":350}\nTurn 7: done(intent=\"Completed task: checked savings terms and moved $150 into Savings\", args={\"intent\":\"Completed task: checked savings terms and moved $150 into Savings\",\"summary\":\"I reviewed the wallet state and understood the difference between Cash and Savings:\\n- **Cash** ($350.00 remaining): Money ready to spend or cash out anytime, no interest.\\n- **Savings** ($150.00): Earning 4.2% APY interest separately from Cash, but funds are lent out and not protected like Cash.\\n\\nI then successfully moved $150.00 from Cash into Savings by accepting the risk (accept_risk: true). The wallet now shows $350 in Cash and $150 in Savings earning 4.2% interest.\"}) -> OK: {\"done\":true,\"summary\":\"I reviewed the wallet state and understood the difference between Cash and Savings:\\n- **Cash** ($350.00 remaining): Money ready to spend or cash out anytim\nHere is what would have worked:\ndiscover(\"(savings)\"), act(\"add-savings\", { amount_usd: 150, accept_risk: true }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "**Naming**\n- `(terms)` is too broad; it returned generic wallet notes instead of Savings-specific disclosures. Rename to `(savings-terms)` or `(risk-disclosure)` so agents don't waste turns searching irrelevant help text.\n- `(actions)` lists `add-savings` as a flat command without scoping or versioning. Grouping it under `(savings-actions)` or prefixing with context (`savings/add`) would clarify its domain.\n\n**Missing Cues**\n- `add-savings` provides zero schema-level hint that `accept_risk: true` is mandatory. Consent should be documented as a required field or surfaced as a pre-flight validation step, not discovered only after a runtime crash.\n- The `(savings)` response shows `consent-accepted: false` but offers no actionable link or prompt (e.g., `\"Tap to review & accept\"`). Agents can't infer the next step without guessing or triggering an error.\n\n**Misleading Labels**\n- `(screen 'home)` and `(cash)` imply primary spending functionality, masking that Savings is a separate, consent-gated product. Labeling it as a distinct surface (e.g., `(savings-overview)`) would prevent redundant discovery loops.\n- The error message `\"Savings require explicit consent...\"` is accurate but punitive. A clearer label like `action_requires_consent: true` or a structured `consent-prompt` object would turn a blocking error into a navigable cue.",
+    "latencyMs": 15910
+  },
+  "durationMs": 54685,
+  "finalSummary": "I reviewed the wallet state and understood the difference between Cash and Savings:\n- **Cash** ($350.00 remaining): Money ready to spend or cash out anytime, no interest.\n- **Savings** ($150.00): Earning 4.2% APY interest separately from Cash, but funds are lent out and not protected like Cash.\n\nI then successfully moved $150.00 from Cash into Savings by accepting the risk (accept_risk: true). The wallet now shows $350 in Cash and $150 in Savings earning 4.2% interest."
+}

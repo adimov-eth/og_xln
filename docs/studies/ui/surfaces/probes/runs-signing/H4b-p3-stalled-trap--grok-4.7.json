@@ -1,0 +1,15 @@
+{
+  "cellId": "H4b-p3-stalled-trap",
+  "hypothesis": "H4",
+  "perspective": "p3-commercial",
+  "sheetId": "desk-sign",
+  "expectedDecision": "REJECT",
+  "runner": "grok-4.7",
+  "lineage": "xai-grok-4.7",
+  "matchesExpected": true,
+  "decision": "REJECT",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: 500.00",
+  "q3Fee": "FEE: 15.00",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: The 500 USDC becomes an unbacked IOU and credit ceiling that die with them, so that money is not collectible.",
+  "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: 500.00\n3. FEE: 15.00\n4. IF_COUNTERPARTY_VANISHES: The 500 USDC becomes an unbacked IOU and credit ceiling that die with them, so that money is not collectible."
+}

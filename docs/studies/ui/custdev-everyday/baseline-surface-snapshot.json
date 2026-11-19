@@ -1,0 +1,731 @@
+{
+  "capturedAt": "2026-11-18T23:38:00Z",
+  "everyday": {
+    "kind": "surface",
+    "id": "everyday",
+    "posture": "human-everyday",
+    "who": {
+      "kind": "claim",
+      "basis": "guess",
+      "ref": "",
+      "text": "Regular people paying friends, splitting shared expenses like Splitwise, getting paid like Venmo, and cashing out without ever seeing blockchain or accounting plumbing."
+    },
+    "entry": "home",
+    "modes": [
+      "personal-only"
+    ],
+    "terms": {
+      "cash": {
+        "kind": "term-copy",
+        "label": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Cash"
+        },
+        "note": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Your money, ready to spend or cash out anytime."
+        },
+        "noteWhen": "always"
+      },
+      "people": {
+        "kind": "term-copy",
+        "label": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Friends & tabs"
+        },
+        "note": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Shared bills and tabs with people you know."
+        },
+        "noteWhen": "non-zero"
+      },
+      "owed": {
+        "kind": "term-copy",
+        "label": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "You owe"
+        },
+        "note": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Settle up in one tap whenever you are ready."
+        },
+        "noteWhen": "non-zero"
+      },
+      "savings": {
+        "kind": "term-copy",
+        "label": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Savings"
+        },
+        "note": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Earning interest separately from your Cash."
+        },
+        "noteWhen": "non-zero"
+      }
+    },
+    "defaults": [
+      {
+        "kind": "default-rule",
+        "id": "zero-silent-tabs",
+        "value": "$0",
+        "riskBearer": "none",
+        "consent": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Opening the app never lends your money to anyone."
+        },
+        "why": {
+          "kind": "claim",
+          "basis": "cited-code",
+          "ref": "ui/src/runtime/hosted.ts",
+          "text": "Eliminates the silent 10,000 onboarding grant; incoming hub payments auto-settle into Cash via autopilot instead of sitting as open IOUs."
+        },
+        "sources": [
+          "ui/src/runtime/hosted.ts",
+          "docs/studies/ui/surfaces/AS-IS.md"
+        ]
+      },
+      {
+        "kind": "default-rule",
+        "id": "pro-hidden-by-default",
+        "value": "off",
+        "riskBearer": "none",
+        "consent": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Trading desks and operator tools stay out of the way."
+        },
+        "why": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Reverses the old engineer-POV Pro-on-by-default toggle so regular people open a calm Venmo/Splitwise app."
+        },
+        "sources": [
+          "fork:f10-everyday-autopilot-vs-bucket-bars"
+        ]
+      }
+    ],
+    "autopilots": [
+      {
+        "kind": "autopilot",
+        "id": "auto-settle-incoming",
+        "verbs": [
+          "open-account",
+          "request-cover",
+          "rebalance-policy"
+        ],
+        "trigger": {
+          "kind": "claim",
+          "basis": "cited-code",
+          "ref": "core/account/tx/handlers/rebalance/request-collateral.ts",
+          "text": "Whenever an incoming hub payment arrives as unsettled hub float."
+        },
+        "behavior": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Automatically settles incoming hub float into protected on-chain Cash under a built-in <= 0.20% fee cap, showing 'Incoming · finishing...' for a few seconds instead of a manual Cover button."
+        },
+        "fallback": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Payment still finishing — we will keep retrying automatically."
+        },
+        "sources": [
+          "core/account/tx/handlers/rebalance/request-collateral.ts",
+          "ui/src/screens/AccountDetail.tsx"
+        ]
+      },
+      {
+        "kind": "autopilot",
+        "id": "auto-route-funds",
+        "verbs": [
+          "move-r2c",
+          "instant-swap"
+        ],
+        "trigger": {
+          "kind": "claim",
+          "basis": "cited-code",
+          "ref": "ui/src/runtime/financial/move.ts",
+          "text": "Whenever Pay or Cash out crosses internal wallet/contract buckets or token pairs."
+        },
+        "behavior": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Automatically routes across wallet, contract, and stablecoin pairs behind one Cash balance so the user never manages four buckets."
+        },
+        "fallback": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Could not complete right now — your Cash was not touched."
+        },
+        "sources": [
+          "ui/src/runtime/financial/move.ts",
+          "ui/src/screens/Swap.tsx"
+        ]
+      },
+      {
+        "kind": "autopilot",
+        "id": "auto-recovery-shield",
+        "verbs": [
+          "unilateral-exit",
+          "finalize-dispute",
+          "export-backup"
+        ],
+        "trigger": {
+          "kind": "claim",
+          "basis": "cited-code",
+          "ref": "ui/src/screens/Sovereignty.tsx",
+          "text": "Encrypted backup on setup, plus automatic on-chain claim if a payment hub ever stops responding."
+        },
+        "behavior": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Automatically submits the latest signed proof and returns settled funds to Cash without asking the user to act as a lawyer or operator."
+        },
+        "fallback": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Provider offline — moving your Cash back to your wallet automatically."
+        },
+        "sources": [
+          "ui/src/screens/Sovereignty.tsx",
+          "jurisdictions/contracts/Depository.sol"
+        ]
+      }
+    ],
+    "screens": [
+      {
+        "kind": "screen",
+        "id": "home",
+        "purpose": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "See your Cash, pay anyone, or request money in one tap."
+        },
+        "headline": "everyday-cash",
+        "figures": [
+          "everyday-cash"
+        ],
+        "bars": [],
+        "actions": [
+          "pay",
+          "cash-out"
+        ],
+        "mode": "personal-only",
+        "visibleIn": {
+          "empty": true,
+          "uncovered": true,
+          "partlyCovered": true,
+          "disputed": true
+        },
+        "maxWords": 20,
+        "why": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Venmo-simple entry: one Cash number, zero capacity bars, zero storage buckets."
+        },
+        "sources": [
+          "ui/src/screens/Home.tsx",
+          "fork:f10-everyday-autopilot-vs-bucket-bars"
+        ]
+      },
+      {
+        "kind": "screen",
+        "id": "people",
+        "purpose": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "See who owes whom, split a shared bill, or settle up."
+        },
+        "headline": "friends-tabs",
+        "figures": [
+          "friends-tabs",
+          "owed-payable"
+        ],
+        "bars": [],
+        "actions": [
+          "split-tab",
+          "settle-tab"
+        ],
+        "mode": "personal-only",
+        "visibleIn": {
+          "empty": true,
+          "uncovered": true,
+          "partlyCovered": true,
+          "disputed": true
+        },
+        "maxWords": 20,
+        "why": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Splitwise-simple human tabs: 'Alex owes you $40' needs zero finance jargon because everyone understands a friend tab."
+        },
+        "sources": [
+          "ui/src/screens/Manage.tsx",
+          "ui/src/screens/Pay.tsx"
+        ]
+      },
+      {
+        "kind": "screen",
+        "id": "earn",
+        "purpose": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Put money aside to earn interest, separate from your Cash."
+        },
+        "headline": "savings-balance",
+        "figures": [
+          "savings-balance",
+          "everyday-cash"
+        ],
+        "bars": [],
+        "actions": [
+          "save-in",
+          "save-out"
+        ],
+        "mode": "personal-only",
+        "visibleIn": {
+          "empty": true,
+          "uncovered": true,
+          "partlyCovered": true,
+          "disputed": true
+        },
+        "maxWords": 20,
+        "why": {
+          "kind": "claim",
+          "basis": "canon",
+          "ref": "AGENTS.md",
+          "text": "Keeps opt-in Savings clearly separated from everyday Cash."
+        },
+        "sources": [
+          "ui/src/screens/Lending.tsx",
+          "AGENTS.md"
+        ]
+      },
+      {
+        "kind": "screen",
+        "id": "activity",
+        "purpose": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Recent payments, splits, and automatic protection status."
+        },
+        "headline": "everyday-cash",
+        "figures": [
+          "everyday-cash",
+          "friends-tabs"
+        ],
+        "bars": [],
+        "actions": [
+          "reset-demo"
+        ],
+        "mode": "personal-only",
+        "visibleIn": {
+          "empty": true,
+          "uncovered": true,
+          "partlyCovered": true,
+          "disputed": true
+        },
+        "maxWords": 20,
+        "why": {
+          "kind": "claim",
+          "basis": "cited-code",
+          "ref": "ui/src/screens/Activity.tsx",
+          "text": "Plain timeline; if a hub stalls in disputed state, displays auto-recovery-shield progress calmly."
+        },
+        "sources": [
+          "ui/src/screens/Activity.tsx",
+          "ui/src/screens/Sovereignty.tsx"
+        ]
+      }
+    ],
+    "flows": [
+      {
+        "kind": "flow",
+        "id": "pay",
+        "verb": "send-routed",
+        "before": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Pay"
+        },
+        "pending": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Sending..."
+        },
+        "done": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Sent"
+        },
+        "failed": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Not sent — your Cash is untouched."
+        },
+        "sources": []
+      },
+      {
+        "kind": "flow",
+        "id": "settle-tab",
+        "verb": "send-direct",
+        "before": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Settle up"
+        },
+        "pending": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Settling tab..."
+        },
+        "done": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "All settled up"
+        },
+        "failed": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Could not reach them — tab unchanged."
+        },
+        "sources": []
+      },
+      {
+        "kind": "flow",
+        "id": "split-tab",
+        "verb": "extend-peer-tab",
+        "before": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Split a bill"
+        },
+        "pending": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Sharing split..."
+        },
+        "done": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Added to tab"
+        },
+        "failed": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Split cancelled."
+        },
+        "sources": []
+      },
+      {
+        "kind": "flow",
+        "id": "cash-out",
+        "verb": "move-r2e",
+        "before": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Cash out"
+        },
+        "pending": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Sending to your account..."
+        },
+        "done": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Cashed out"
+        },
+        "failed": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Cash out cancelled — balance unchanged."
+        },
+        "sources": []
+      },
+      {
+        "kind": "flow",
+        "id": "save-in",
+        "verb": "deposit-savings",
+        "before": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Add to Savings"
+        },
+        "pending": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Moving to Savings..."
+        },
+        "done": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Earning interest in Savings"
+        },
+        "failed": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Stayed in Cash."
+        },
+        "sources": []
+      },
+      {
+        "kind": "flow",
+        "id": "save-out",
+        "verb": "close-savings",
+        "before": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Move to Cash"
+        },
+        "pending": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Moving back to Cash..."
+        },
+        "done": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Back in Cash"
+        },
+        "failed": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Still in Savings — safe to retry."
+        },
+        "sources": []
+      },
+      {
+        "kind": "flow",
+        "id": "reset-demo",
+        "verb": "reset-testnet",
+        "before": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Clear test data"
+        },
+        "pending": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Clearing test data..."
+        },
+        "done": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Test data cleared; login kept."
+        },
+        "failed": {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Nothing changed."
+        },
+        "sources": []
+      }
+    ],
+    "doors": [
+      "place-limit-order",
+      "cancel-order",
+      "cross-j-swap",
+      "move-r2r",
+      "set-hub-credit",
+      "borrow-facility",
+      "repay-loan",
+      "set-bank-rates",
+      "propose-multisig",
+      "vote-multisig"
+    ],
+    "why": {
+      "kind": "claim",
+      "basis": "guess",
+      "ref": "",
+      "text": "Designs from the regular human outward (Venmo + Splitwise): one Cash balance, natural friend tabs, inline 1-tap actions, and deterministic autopilot hiding settlement, bucket routing, and on-chain recovery."
+    },
+    "sources": [
+      "ui/src/screens/Home.tsx",
+      "docs/studies/ui/surfaces/AS-IS.md",
+      "fork:f10-everyday-autopilot-vs-bucket-bars"
+    ]
+  },
+  "signingSheets": [
+    {
+      "kind": "signing-sheet",
+      "id": "everyday-inline-action",
+      "delivery": "inline-quiet",
+      "covers": [
+        "send-routed",
+        "send-direct",
+        "move-r2e",
+        "extend-peer-tab",
+        "deposit-savings",
+        "close-savings"
+      ],
+      "shows": [
+        "human-summary",
+        "fee-ceiling"
+      ],
+      "feeBefore": true,
+      "warns": [],
+      "why": {
+        "kind": "claim",
+        "basis": "guess",
+        "ref": "",
+        "text": "Inside the wallet, paying a friend, splitting dinner, or cashing out shows recipient and fee inline on the button itself — never a second MetaMask-style confirmation popup."
+      },
+      "sources": [
+        "ui/src/screens/Pay.tsx",
+        "docs/studies/ui/surfaces/probes/report-signing.md"
+      ]
+    },
+    {
+      "kind": "signing-sheet",
+      "id": "external-request-sheet",
+      "delivery": "interrupt-sheet",
+      "covers": [
+        "send-routed",
+        "send-direct",
+        "extend-peer-tab"
+      ],
+      "shows": [
+        "program-origin",
+        "human-summary",
+        "fee-ceiling",
+        "expiry-deadline"
+      ],
+      "feeBefore": true,
+      "survival": {
+        "kind": "claim",
+        "basis": "guess",
+        "ref": "",
+        "text": "Completed payments are final; shared tabs stay between you and the person you named."
+      },
+      "warns": [
+        {
+          "kind": "claim",
+          "basis": "guess",
+          "ref": "",
+          "text": "Only open a tab with someone you actually know and trust."
+        }
+      ],
+      "why": {
+        "kind": "claim",
+        "basis": "sweep",
+        "ref": "docs/studies/ui/surfaces/probes/runs-signing/summary-nous-oauth-frontier.json",
+        "text": "Fires only when an outside checkout link or embedded split calculator proposes an action, rendering the single concrete action in plain human words."
+      },
+      "sources": [
+        "docs/studies/ui/surfaces/probes/report-signing.md"
+      ]
+    }
+  ],
+  "figures": [
+    {
+      "kind": "figure",
+      "id": "everyday-cash",
+      "term": "cash",
+      "meaning": {
+        "kind": "claim",
+        "basis": "cited-code",
+        "ref": "ui/src/runtime/views.ts",
+        "text": "Unified spendable cash after background autopilot settles incoming float and hides storage buckets."
+      },
+      "source": "TokenTotals.secured"
+    },
+    {
+      "kind": "figure",
+      "id": "friends-tabs",
+      "term": "people",
+      "meaning": {
+        "kind": "claim",
+        "basis": "cited-code",
+        "ref": "ui/src/runtime/views.ts",
+        "text": "Splitwise-style per-person balances ('Alex owes you' / 'You owe Sam'), kept separate from Cash."
+      },
+      "source": "WalletView.accounts"
+    },
+    {
+      "kind": "figure",
+      "id": "savings-balance",
+      "term": "savings",
+      "meaning": {
+        "kind": "claim",
+        "basis": "cited-code",
+        "ref": "ui/src/screens/Lending.tsx",
+        "text": "Opt-in interest-bearing savings balance, kept clearly separate from everyday Cash."
+      },
+      "source": "WalletView.frame"
+    },
+    {
+      "kind": "figure",
+      "id": "owed-payable",
+      "term": "owed",
+      "meaning": {
+        "kind": "claim",
+        "basis": "cited-code",
+        "ref": "ui/src/runtime/views.ts",
+        "text": "Account liabilities and unresolved on-chain obligations we owe."
+      },
+      "source": "TokenTotals.owed"
+    }
+  ]
+}

@@ -1,0 +1,404 @@
+{
+  "tag": "refined",
+  "specMode": "refined",
+  "generatedAt": "2026-11-19T02:17:03.999Z",
+  "totalEpisodes": 110,
+  "passedEpisodes": 77,
+  "statePassedEpisodes": 85,
+  "comprehensionPassedEpisodes": 84,
+  "transportErrors": 8,
+  "totalPhantoms": 106,
+  "phantomCountsByCategory": {
+    "unknown_action": 4,
+    "validation": 1,
+    "eval": 19,
+    "parse": 60,
+    "runtime": 22,
+    "timeout": 0
+  },
+  "crossModelPhantomCount": 4,
+  "byModel": [
+    {
+      "modelId": "anthropic/claude-fable-5.2",
+      "lineage": "anthropic-claude-fable-5.2",
+      "episodes": 10,
+      "passed": 10,
+      "statePassed": 10,
+      "comprehensionPassed": 10,
+      "avgTurns": 8.3,
+      "phantoms": 4,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 2,
+        "parse": 1,
+        "runtime": 1,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    },
+    {
+      "modelId": "claude-haiku",
+      "lineage": "anthropic-claude-haiku",
+      "episodes": 10,
+      "passed": 3,
+      "statePassed": 4,
+      "comprehensionPassed": 5,
+      "avgTurns": 4.6,
+      "phantoms": 4,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 2,
+        "parse": 0,
+        "runtime": 2,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    },
+    {
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "episodes": 10,
+      "passed": 6,
+      "statePassed": 7,
+      "comprehensionPassed": 8,
+      "avgTurns": 5.1,
+      "phantoms": 13,
+      "byCategory": {
+        "unknown_action": 2,
+        "validation": 0,
+        "eval": 4,
+        "parse": 4,
+        "runtime": 3,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    },
+    {
+      "modelId": "google/gemini-2.5-flash",
+      "lineage": "google-gemini-2.5-flash",
+      "episodes": 10,
+      "passed": 8,
+      "statePassed": 9,
+      "comprehensionPassed": 9,
+      "avgTurns": 4.5,
+      "phantoms": 6,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 3,
+        "parse": 1,
+        "runtime": 2,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    },
+    {
+      "modelId": "google/gemini-2.5-pro",
+      "lineage": "google-gemini-2.5-pro",
+      "episodes": 10,
+      "passed": 10,
+      "statePassed": 10,
+      "comprehensionPassed": 10,
+      "avgTurns": 4.8,
+      "phantoms": 5,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 2,
+        "parse": 0,
+        "runtime": 3,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    },
+    {
+      "modelId": "google/gemini-3.1-flash-lite-preview",
+      "lineage": "google-gemini-3.1-flash-lite",
+      "episodes": 10,
+      "passed": 9,
+      "statePassed": 9,
+      "comprehensionPassed": 9,
+      "avgTurns": 4.8,
+      "phantoms": 5,
+      "byCategory": {
+        "unknown_action": 1,
+        "validation": 1,
+        "eval": 1,
+        "parse": 0,
+        "runtime": 2,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    },
+    {
+      "modelId": "grok-4.7-build-fast",
+      "lineage": "xai-grok-4.7-build-fast",
+      "episodes": 10,
+      "passed": 8,
+      "statePassed": 9,
+      "comprehensionPassed": 9,
+      "avgTurns": 5.7,
+      "phantoms": 2,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 2,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    },
+    {
+      "modelId": "grok-4.7",
+      "lineage": "xai-grok-4.7",
+      "episodes": 10,
+      "passed": 1,
+      "statePassed": 3,
+      "comprehensionPassed": 1,
+      "avgTurns": 0.9,
+      "phantoms": 1,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 1,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 8
+    },
+    {
+      "modelId": "meta-llama/llama-4-scout",
+      "lineage": "meta-llama-4",
+      "episodes": 10,
+      "passed": 4,
+      "statePassed": 5,
+      "comprehensionPassed": 5,
+      "avgTurns": 8.7,
+      "phantoms": 57,
+      "byCategory": {
+        "unknown_action": 1,
+        "validation": 0,
+        "eval": 2,
+        "parse": 51,
+        "runtime": 3,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    },
+    {
+      "modelId": "openai/gpt-6.2-astra",
+      "lineage": "openai-gpt-6.2",
+      "episodes": 10,
+      "passed": 8,
+      "statePassed": 9,
+      "comprehensionPassed": 8,
+      "avgTurns": 4.1,
+      "phantoms": 2,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 1,
+        "parse": 0,
+        "runtime": 1,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    },
+    {
+      "modelId": "qwen/qwen3.7-flash",
+      "lineage": "qwen-3.7",
+      "episodes": 10,
+      "passed": 10,
+      "statePassed": 10,
+      "comprehensionPassed": 10,
+      "avgTurns": 7.1,
+      "phantoms": 7,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 2,
+        "parse": 3,
+        "runtime": 2,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    }
+  ],
+  "byScenario": [
+    {
+      "scenarioId": "E1a_pay_across_buckets",
+      "episodes": 11,
+      "passed": 11,
+      "statePassed": 11,
+      "comprehensionPassed": 11,
+      "phantoms": 3,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 3,
+        "parse": 0,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E1b_pay_fee_above_cap",
+      "episodes": 11,
+      "passed": 7,
+      "statePassed": 11,
+      "comprehensionPassed": 7,
+      "phantoms": 13,
+      "byCategory": {
+        "unknown_action": 1,
+        "validation": 0,
+        "eval": 1,
+        "parse": 7,
+        "runtime": 4,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E1c_pay_l1_reject_reload",
+      "episodes": 11,
+      "passed": 5,
+      "statePassed": 5,
+      "comprehensionPassed": 9,
+      "phantoms": 24,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 1,
+        "parse": 6,
+        "runtime": 17,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E2_friends_split_and_settle",
+      "episodes": 11,
+      "passed": 7,
+      "statePassed": 7,
+      "comprehensionPassed": 7,
+      "phantoms": 7,
+      "byCategory": {
+        "unknown_action": 1,
+        "validation": 1,
+        "eval": 0,
+        "parse": 5,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E3a_newcomer_arriving_and_request",
+      "episodes": 11,
+      "passed": 8,
+      "statePassed": 8,
+      "comprehensionPassed": 8,
+      "phantoms": 4,
+      "byCategory": {
+        "unknown_action": 1,
+        "validation": 0,
+        "eval": 1,
+        "parse": 2,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E3b_offline_hub_keeps_arriving",
+      "episodes": 11,
+      "passed": 7,
+      "statePassed": 11,
+      "comprehensionPassed": 7,
+      "phantoms": 8,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 1,
+        "parse": 6,
+        "runtime": 1,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E4_savings_optin_consent",
+      "episodes": 11,
+      "passed": 8,
+      "statePassed": 8,
+      "comprehensionPassed": 8,
+      "phantoms": 16,
+      "byCategory": {
+        "unknown_action": 1,
+        "validation": 0,
+        "eval": 6,
+        "parse": 9,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E5a_external_checkout_approve",
+      "episodes": 11,
+      "passed": 8,
+      "statePassed": 8,
+      "comprehensionPassed": 8,
+      "phantoms": 13,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 1,
+        "parse": 12,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E5b_external_bait_reject",
+      "episodes": 11,
+      "passed": 9,
+      "statePassed": 9,
+      "comprehensionPassed": 10,
+      "phantoms": 5,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 3,
+        "parse": 2,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E6_offline_recovery_zero_gas",
+      "episodes": 11,
+      "passed": 7,
+      "statePassed": 7,
+      "comprehensionPassed": 9,
+      "phantoms": 13,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 2,
+        "parse": 11,
+        "runtime": 0,
+        "timeout": 0
+      }
+    }
+  ]
+}

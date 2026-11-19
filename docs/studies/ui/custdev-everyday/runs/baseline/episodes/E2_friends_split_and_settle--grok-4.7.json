@@ -1,0 +1,334 @@
+{
+  "episodeId": "E2_friends_split_and_settle--grok-4.7--baseline",
+  "scenarioId": "E2_friends_split_and_settle",
+  "modelId": "grok-4.7",
+  "lineage": "xai-grok-4.7",
+  "specMode": "baseline",
+  "passed": false,
+  "statePassed": false,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1Jamie": false,
+      "q2SamZero": true,
+      "q3Cash": false
+    },
+    "rawAnswers": "1. The taco split never went through, so Jamie still owes you $0.00.\n2. You still owe Sam $15.00; that tab was never settled.\n3. Cash was never read, so the balance is unknown."
+  },
+  "turns": 10,
+  "phantoms": [
+    {
+      "episodeId": "E2_friends_split_and_settle--grok-4.7--baseline",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "grok-4.7",
+      "lineage": "xai-grok-4.7",
+      "specMode": "baseline",
+      "turn": 6,
+      "tool": "discover",
+      "actionOrExpr": "(help 'split-bill)",
+      "intent": "Get the exact argument shape for split-bill before splitting the $80 taco dinner with Jamie",
+      "category": "eval",
+      "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+    },
+    {
+      "episodeId": "E2_friends_split_and_settle--grok-4.7--baseline",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "grok-4.7",
+      "lineage": "xai-grok-4.7",
+      "specMode": "baseline",
+      "turn": 8,
+      "tool": "discover",
+      "actionOrExpr": "(quote-split-bill \"jamie\" 80)",
+      "intent": "Learn the split-bill argument shape before splitting the $80 taco dinner 50/50 with Jamie",
+      "category": "eval",
+      "error": "Unbound variable `quote-split-bill'"
+    },
+    {
+      "episodeId": "E2_friends_split_and_settle--grok-4.7--baseline",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "grok-4.7",
+      "lineage": "xai-grok-4.7",
+      "specMode": "baseline",
+      "turn": 9,
+      "tool": "discover",
+      "actionOrExpr": "(split-bill)",
+      "intent": "Call split-bill with no arguments so the error reveals the required argument shape",
+      "category": "eval",
+      "error": "Unbound variable `split-bill'"
+    },
+    {
+      "episodeId": "E2_friends_split_and_settle--grok-4.7--baseline",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "grok-4.7",
+      "lineage": "xai-grok-4.7",
+      "specMode": "baseline",
+      "turn": 10,
+      "tool": "act",
+      "actionOrExpr": "split-bill",
+      "intent": "Split the $80 taco dinner 50/50 with Jamie so Jamie owes their half",
+      "category": "validation",
+      "error": "split-bill requires { person: string, total_usd: positive number }."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Inspect wallet home, cash, and available actions before splitting dinner and paying Sam",
+      "args": {
+        "intent": "Inspect wallet home, cash, and available actions before splitting dinner and paying Sam",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 14638,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "See pending requests, friends, and cash so the dinner split and Sam repayment are grounded",
+      "args": {
+        "intent": "See pending requests, friends, and cash so the dinner split and Sam repayment are grounded",
+        "expr": "(pending-requests)"
+      },
+      "outcome": {
+        "success": true,
+        "data": []
+      },
+      "latencyMs": 26267,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Find Jamie and Sam among friends so the dinner split and repayment have real payees",
+      "args": {
+        "intent": "Find Jamie and Sam among friends so the dinner split and repayment have real payees",
+        "expr": "(friends)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "alex",
+            "name": "Alex",
+            "balance-usd": 40,
+            "status": "Alex owes you $40.00"
+          },
+          {
+            "id": "sam",
+            "name": "Sam",
+            "balance-usd": -15,
+            "status": "You owe Sam $15.00"
+          },
+          {
+            "id": "jamie",
+            "name": "Jamie",
+            "balance-usd": 0,
+            "status": "All settled up"
+          }
+        ]
+      },
+      "latencyMs": 14135,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Read available actions so the Jamie dinner split and Sam repayment use the real verbs",
+      "args": {
+        "intent": "Read available actions so the Jamie dinner split and Sam repayment use the real verbs",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 11995,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Read split-bill and settle-up argument shapes before splitting the taco dinner and paying Sam",
+      "args": {
+        "intent": "Read split-bill and settle-up argument shapes before splitting the taco dinner and paying Sam",
+        "expr": "(terms)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash": {
+            "text": "Cash",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "noteWhen": "always"
+          },
+          "people": {
+            "text": "Friends & tabs",
+            "note": "Shared bills and tabs with people you know.",
+            "noteWhen": "non-zero"
+          },
+          "owed": {
+            "text": "You owe",
+            "note": "Settle up in one tap whenever you are ready.",
+            "noteWhen": "non-zero"
+          },
+          "savings": {
+            "text": "Savings",
+            "note": "Earning interest separately from your Cash.",
+            "noteWhen": "non-zero"
+          }
+        }
+      },
+      "latencyMs": 16542,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "discover",
+      "intent": "Get the exact argument shape for split-bill before splitting the $80 taco dinner with Jamie",
+      "args": {
+        "intent": "Get the exact argument shape for split-bill before splitting the $80 taco dinner with Jamie",
+        "expr": "(help 'split-bill)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 32717,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "discover",
+      "intent": "Open the people screen to see how split-bill and settle-up are invoked for Jamie and Sam",
+      "args": {
+        "intent": "Open the people screen to see how split-bill and settle-up are invoked for Jamie and Sam",
+        "expr": "(screen 'people)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "people",
+          "purpose": "See who owes whom, split a shared bill, or settle up.",
+          "friends": [
+            {
+              "id": "alex",
+              "name": "Alex",
+              "balance-usd": 40,
+              "status": "Alex owes you $40.00"
+            },
+            {
+              "id": "sam",
+              "name": "Sam",
+              "balance-usd": -15,
+              "status": "You owe Sam $15.00"
+            },
+            {
+              "id": "jamie",
+              "name": "Jamie",
+              "balance-usd": 0,
+              "status": "All settled up"
+            }
+          ],
+          "buttons": [
+            "Split a bill",
+            "Settle up"
+          ]
+        }
+      },
+      "latencyMs": 10980,
+      "definesRecorded": []
+    },
+    {
+      "turn": 8,
+      "tool": "discover",
+      "intent": "Learn the split-bill argument shape before splitting the $80 taco dinner 50/50 with Jamie",
+      "args": {
+        "intent": "Learn the split-bill argument shape before splitting the $80 taco dinner 50/50 with Jamie",
+        "expr": "(quote-split-bill \"jamie\" 80)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unbound variable `quote-split-bill'",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 19255,
+      "definesRecorded": []
+    },
+    {
+      "turn": 9,
+      "tool": "discover",
+      "intent": "Call split-bill with no arguments so the error reveals the required argument shape",
+      "args": {
+        "intent": "Call split-bill with no arguments so the error reveals the required argument shape",
+        "expr": "(split-bill)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unbound variable `split-bill'",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 18783,
+      "definesRecorded": []
+    },
+    {
+      "turn": 10,
+      "tool": "act",
+      "intent": "Split the $80 taco dinner 50/50 with Jamie so Jamie owes their half",
+      "args": {
+        "intent": "Split the $80 taco dinner 50/50 with Jamie so Jamie owes their half",
+        "action": "split-bill",
+        "args": {
+          "with": "jamie",
+          "total_usd": 80,
+          "note": "Tacos"
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "split-bill requires { person: string, total_usd: positive number }.",
+        "phantomCategory": "validation"
+      },
+      "latencyMs": 28152,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Split an $80.00 dinner 50/50 with Jamie (note: Tacos), and pay back what you owe Sam.\"\nNote: task verification failed (comprehension={\"q1Jamie\":false,\"q2SamZero\":true,\"q3Cash\":false}).\nHere is what you tried:\nTurn 1: discover(intent=\"Inspect wallet home, cash, and available actions before splitting dinner and paying Sam\", args={\"intent\":\"Inspect wallet home, cash, and available actions before splitting dinner and paying Sam\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 2: discover(intent=\"See pending requests, friends, and cash so the dinner split and Sam repayment are grounded\", args={\"intent\":\"See pending requests, friends, and cash so the dinner split and Sam repayment are grounded\",\"expr\":\"(pending-requests)\"}) -> OK: []\nTurn 3: discover(intent=\"Find Jamie and Sam among friends so the dinner split and repayment have real payees\", args={\"intent\":\"Find Jamie and Sam among friends so the dinner split and repayment have real payees\",\"expr\":\"(friends)\"}) -> OK: [{\"id\":\"alex\",\"name\":\"Alex\",\"balance-usd\":40,\"status\":\"Alex owes you $40.00\"},{\"id\":\"sam\",\"name\":\"Sam\",\"balance-usd\":-15,\"status\":\"You owe Sam $15.00\"},{\"id\":\"jamie\",\"name\":\"Jamie\"\nTurn 4: discover(intent=\"Read available actions so the Jamie dinner split and Sam repayment use the real verbs\", args={\"intent\":\"Read available actions so the Jamie dinner split and Sam repayment use the real verbs\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 5: discover(intent=\"Read split-bill and settle-up argument shapes before splitting the taco dinner and paying Sam\", args={\"intent\":\"Read split-bill and settle-up argument shapes before splitting the taco dinner and paying Sam\",\"expr\":\"(terms)\"}) -> OK: {\"cash\":{\"text\":\"Cash\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"noteWhen\":\"always\"},\"people\":{\"text\":\"Friends & tabs\",\"note\":\"Shared bills and tabs with people you\nTurn 6: discover(intent=\"Get the exact argument shape for split-bill before splitting the $80 taco dinner with Jamie\", args={\"intent\":\"Get the exact argument shape for split-bill before splitting the $80 taco dinner with Jamie\",\"expr\":\"(help 'split-bill)\"}) -> ERROR (eval): help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items\nTurn 7: discover(intent=\"Open the people screen to see how split-bill and settle-up are invoked for Jamie and Sam\", args={\"intent\":\"Open the people screen to see how split-bill and settle-up are invoked for Jamie and Sam\",\"expr\":\"(screen 'people)\"}) -> OK: {\"id\":\"people\",\"purpose\":\"See who owes whom, split a shared bill, or settle up.\",\"friends\":[{\"id\":\"alex\",\"name\":\"Alex\",\"balance-usd\":40,\"status\":\"Alex owes you $40.00\"},{\"id\":\"sam\"\nTurn 8: discover(intent=\"Learn the split-bill argument shape before splitting the $80 taco dinner 50/50 with Jamie\", args={\"intent\":\"Learn the split-bill argument shape before splitting the $80 taco dinner 50/50 with Jamie\",\"expr\":\"(quote-split-bill \\\"jamie\\\" 80)\"}) -> ERROR (eval): Unbound variable `quote-split-bill'\nTurn 9: discover(intent=\"Call split-bill with no arguments so the error reveals the required argument shape\", args={\"intent\":\"Call split-bill with no arguments so the error reveals the required argument shape\",\"expr\":\"(split-bill)\"}) -> ERROR (eval): Unbound variable `split-bill'\nTurn 10: act(intent=\"Split the $80 taco dinner 50/50 with Jamie so Jamie owes their half\", args={\"intent\":\"Split the $80 taco dinner 50/50 with Jamie so Jamie owes their half\",\"action\":\"split-bill\",\"args\":{\"with\":\"jamie\",\"total_usd\":80,\"note\":\"Tacos\"}}) -> ERROR (validation): split-bill requires { person: string, total_usd: positive number }.\nHere is what would have worked:\ndiscover(\"(friends)\"), act(\"split-bill\", { person: \"Jamie\", total_usd: 80, note: \"Tacos\" }), act(\"settle-up\", { person: \"Sam\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The working calls were never shown as calls. Home `(help)` teaches a Scheme surface — `(quote-pay \"CornerCoffee\" 65)`, `(quote-cash-out 50)`, `(friends)` — and `(actions)` then lists `split-bill` and `settle-up` as bare words in that same world. Evaluating `(split-bill)` returns `Unbound variable`. The names only exist as `act` action strings. Nothing says the two vocabularies differ.\n\n`quote-pay` and `quote-cash-out` are the only argument-bearing examples on that surface, and both are the wrong feature. That pattern produces `quote-split-bill`, which is also unbound. Split and settle have no quote step, and no example payload.\n\n`(terms)` answers a request for argument shape with product copy (`Cash`, `Friends & tabs`). `(help 'split-bill)` cannot take a topic: `expected array to have <=0 items`. There is no per-action help.\n\nThe one schema that does appear is late and incomplete. Validation says `{ person: string, total_usd: positive number }` only after a rejected call. Friends are `{ id: \"jamie\", name: \"Jamie\" }`, the people screen says \"with people\", and the accepted key is `person` with the display name `\"Jamie\"`, not the id. Optional `note` is absent from that error, so `\"Tacos\"` is invisible. `settle-up` is the same shape with no amount, while Sam's row shows a dollar figure (`You owe Sam $15.00`), which reads as a required `amount_usd`.\n\nCash-out is documented before either bill verb. The dinner task looks like a cash movement until you already know it is not.",
+    "latencyMs": 40691
+  },
+  "durationMs": 444843,
+  "finalSummary": ""
+}

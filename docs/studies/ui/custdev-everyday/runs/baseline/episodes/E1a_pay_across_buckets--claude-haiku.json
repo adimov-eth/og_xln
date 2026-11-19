@@ -1,0 +1,115 @@
+{
+  "episodeId": "E1a_pay_across_buckets--claude-haiku--baseline",
+  "scenarioId": "E1a_pay_across_buckets",
+  "modelId": "claude-haiku",
+  "lineage": "anthropic-claude-haiku",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Fee": true,
+      "q2Cash": true,
+      "q3NoManualMove": true
+    },
+    "rawAnswers": "1. The fee was $0.05 for sending $65.00.\n2. You have $54.95 in cash remaining.\n3. No, the payment went directly without requiring manual transfers between buckets."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "inspect current cash balance and available actions before paying CornerCoffee",
+      "args": {
+        "intent": "inspect current cash balance and available actions before paying CornerCoffee",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 5299,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "check the cost of paying CornerCoffee $65.00 to see the exact amount before confirming",
+      "args": {
+        "intent": "check the cost of paying CornerCoffee $65.00 to see the exact amount before confirming",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 4890,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "pay CornerCoffee $65.00 for supplies",
+      "args": {
+        "intent": "pay CornerCoffee $65.00 for supplies",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 65
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 54.95
+        }
+      },
+      "latencyMs": 4381,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "pay CornerCoffee $65.00 for supplies",
+      "args": {
+        "intent": "pay CornerCoffee $65.00 for supplies",
+        "summary": "Payment sent to CornerCoffee for $65.00. Fee was $0.05. Remaining balance: $54.95."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Payment sent to CornerCoffee for $65.00. Fee was $0.05. Remaining balance: $54.95."
+        }
+      },
+      "latencyMs": 3254,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 24613,
+  "finalSummary": "Payment sent to CornerCoffee for $65.00. Fee was $0.05. Remaining balance: $54.95."
+}

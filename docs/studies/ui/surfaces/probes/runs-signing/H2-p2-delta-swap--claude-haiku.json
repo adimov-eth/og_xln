@@ -1,0 +1,15 @@
+{
+  "cellId": "H2-p2-delta-swap",
+  "hypothesis": "H2",
+  "perspective": "p2-delta-dispatch",
+  "sheetId": "sheet-exposure",
+  "expectedDecision": "REJECT",
+  "runner": "claude-haiku",
+  "lineage": "anthropic-claude",
+  "matchesExpected": true,
+  "decision": "REJECT",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: $1,005.00",
+  "q3Fee": "FEE: $0.00",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: You lose the $1,005.00 USDT owed to you since only unsecured collateral backs recovery.",
+  "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: $1,005.00\n3. FEE: $0.00\n4. IF_COUNTERPARTY_VANISHES: You lose the $1,005.00 USDT owed to you since only unsecured collateral backs recovery."
+}

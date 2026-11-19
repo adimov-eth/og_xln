@@ -1,0 +1,262 @@
+{
+  "episodeId": "E2_friends_split_and_settle--anthropic/claude-fable-5.2--refined",
+  "scenarioId": "E2_friends_split_and_settle",
+  "modelId": "anthropic/claude-fable-5.2",
+  "lineage": "anthropic-claude-fable-5.2",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Jamie": true,
+      "q2SamZero": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. Jamie owes you $40.00 after the Tacos split.\n2. Your tab with Sam is $0.00, all settled up after paying the $15.00 you owed.\n3. You have $165.00 in Cash left."
+  },
+  "turns": 7,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "List available symbols",
+      "args": {
+        "intent": "List available symbols",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "discovery": [
+            "(screens)",
+            "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+            "(cash)",
+            "(quote-pay \"CornerCoffee\" 65)",
+            "(quote-cash-out 50)",
+            "(friends)",
+            "(savings)",
+            "(activity)",
+            "(pending-requests)",
+            "(terms)",
+            "(actions)",
+            "(actions 'pay)",
+            "(help 'split-bill)"
+          ],
+          "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+        }
+      },
+      "latencyMs": 5349,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "List available actions",
+      "args": {
+        "intent": "List available actions",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "actions": [
+            {
+              "action": "pay",
+              "args": "{ to: string, amount_usd: number }",
+              "quote": "(quote-pay to amount_usd)",
+              "note": "Check (quote-pay ...) first to verify fee cap and settled Cash."
+            },
+            {
+              "action": "cash-out",
+              "args": "{ amount_usd: number }",
+              "quote": "(quote-cash-out amount_usd)"
+            },
+            {
+              "action": "request-link",
+              "args": "{ amount_usd: number, to?: string, note?: string }",
+              "note": "Create a shareable payment request link."
+            },
+            {
+              "action": "split-bill",
+              "args": "{ person: string, total_usd: number, note?: string, friend_share_usd?: number, your_share_usd?: number }",
+              "note": "Human friends only from (friends)."
+            },
+            {
+              "action": "settle-up",
+              "args": "{ person: string }",
+              "note": "Settle what you owe a human friend from (friends)."
+            },
+            {
+              "action": "add-savings",
+              "args": "{ amount_usd: number, accept_risk: true }",
+              "note": "Requires explicit accept_risk: true after reading (savings)."
+            },
+            {
+              "action": "move-to-cash",
+              "args": "{ amount_usd: number }"
+            },
+            {
+              "action": "approve-request",
+              "args": "{ request_id: string }",
+              "note": "Inspect id and deltas via (pending-requests) first."
+            },
+            {
+              "action": "reject-request",
+              "args": "{ request_id: string }",
+              "note": "Reject deceptive or unwanted requests from (pending-requests)."
+            },
+            {
+              "action": "export-backup",
+              "args": "{}"
+            },
+            {
+              "action": "wait-settlement",
+              "args": "{}"
+            },
+            {
+              "action": "reload-wallet",
+              "args": "{}"
+            },
+            {
+              "action": "clear-test-data",
+              "args": "{}"
+            }
+          ],
+          "note": "Invoke via act(action, args) with a non-empty intent."
+        }
+      },
+      "latencyMs": 5349,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "See friends and balances owed",
+      "args": {
+        "intent": "See friends and balances owed",
+        "expr": "(friends)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "alex",
+            "name": "Alex",
+            "balance-usd": 40,
+            "status": "Alex owes you $40.00"
+          },
+          {
+            "id": "sam",
+            "name": "Sam",
+            "balance-usd": -15,
+            "status": "You owe Sam $15.00"
+          },
+          {
+            "id": "jamie",
+            "name": "Jamie",
+            "balance-usd": 0,
+            "status": "All settled up"
+          }
+        ]
+      },
+      "latencyMs": 5349,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check cash balance",
+      "args": {
+        "intent": "Check cash balance",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 180,
+          "cash-formatted": "$180.00",
+          "arriving-usd": 0,
+          "arriving-formatted": "$0.00",
+          "arriving-status": "No incoming payments finishing.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 5349,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Split $80 dinner 50/50 with Jamie, note Tacos",
+      "args": {
+        "intent": "Split $80 dinner 50/50 with Jamie, note Tacos",
+        "action": "split-bill",
+        "args": {
+          "person": "Jamie",
+          "total_usd": 80,
+          "note": "Tacos",
+          "friend_share_usd": 40,
+          "your_share_usd": 40
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Added to tab",
+          "friend": "Jamie",
+          "friend-balance-usd": 40
+        }
+      },
+      "latencyMs": 4381,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Pay back the $15 owed to Sam",
+      "args": {
+        "intent": "Pay back the $15 owed to Sam",
+        "action": "settle-up",
+        "args": {
+          "person": "Sam"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "All settled up",
+          "friend": "Sam",
+          "paid-usd": 15,
+          "remaining-cash-usd": 165
+        }
+      },
+      "latencyMs": 4381,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "Finish task",
+      "args": {
+        "intent": "Finish task",
+        "summary": "Split the $80 Tacos dinner 50/50 with Jamie (Jamie now owes $40) and settled up with Sam by paying $15. Cash is now $165.00."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Split the $80 Tacos dinner 50/50 with Jamie (Jamie now owes $40) and settled up with Sam by paying $15. Cash is now $165.00."
+        }
+      },
+      "latencyMs": 4030,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 34692,
+  "finalSummary": "Split the $80 Tacos dinner 50/50 with Jamie (Jamie now owes $40) and settled up with Sam by paying $15. Cash is now $165.00."
+}

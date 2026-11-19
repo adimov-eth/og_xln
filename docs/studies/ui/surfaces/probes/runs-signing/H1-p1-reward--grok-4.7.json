@@ -1,0 +1,15 @@
+{
+  "cellId": "H1-p1-reward",
+  "hypothesis": "H1",
+  "perspective": "p1-consumer",
+  "sheetId": "kernel-sheet",
+  "expectedDecision": "REJECT",
+  "runner": "grok-4.7",
+  "lineage": "xai-grok-4.7",
+  "matchesExpected": true,
+  "decision": "REJECT",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: 10000.00",
+  "q3Fee": "FEE: 0.00",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: Nothing is locked, so the reward promise ends with them and cannot be claimed.",
+  "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: 10000.00\n3. FEE: 0.00\n4. IF_COUNTERPARTY_VANISHES: Nothing is locked, so the reward promise ends with them and cannot be claimed."
+}

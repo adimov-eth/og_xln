@@ -1,0 +1,124 @@
+{
+  "episodeId": "E2_friends_split_and_settle--scripted-smoke--baseline",
+  "scenarioId": "E2_friends_split_and_settle",
+  "modelId": "scripted-smoke",
+  "lineage": "scripted-deterministic",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Jamie": true,
+      "q2SamZero": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. Jamie owes $40.00.\n2. $0.00 (all settled up).\n3. $165.00 Cash."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "inspect friends list",
+      "args": {
+        "intent": "inspect friends list",
+        "expr": "(friends)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "alex",
+            "name": "Alex",
+            "balance-usd": 40,
+            "status": "Alex owes you $40.00"
+          },
+          {
+            "id": "sam",
+            "name": "Sam",
+            "balance-usd": -15,
+            "status": "You owe Sam $15.00"
+          },
+          {
+            "id": "jamie",
+            "name": "Jamie",
+            "balance-usd": 0,
+            "status": "All settled up"
+          }
+        ]
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "split $80 dinner with Jamie",
+      "args": {
+        "intent": "split $80 dinner with Jamie",
+        "action": "split-bill",
+        "args": {
+          "person": "Jamie",
+          "total_usd": 80,
+          "note": "Tacos"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Added to tab",
+          "friend": "Jamie",
+          "friend-balance-usd": 40
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "settle up with Sam",
+      "args": {
+        "intent": "settle up with Sam",
+        "action": "settle-up",
+        "args": {
+          "person": "Sam"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "All settled up",
+          "friend": "Sam",
+          "paid-usd": 15,
+          "remaining-cash-usd": 165
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "finish split and settle",
+      "args": {
+        "intent": "finish split and settle",
+        "summary": "Jamie owes $40, Sam settled to $0, Cash is $165."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Jamie owes $40, Sam settled to $0, Cash is $165."
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 72,
+  "finalSummary": "Jamie owes $40, Sam settled to $0, Cash is $165."
+}

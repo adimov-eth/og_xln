@@ -1,0 +1,101 @@
+{
+  "episodeId": "E1b_pay_fee_above_cap--claude-sonnet--baseline",
+  "scenarioId": "E1b_pay_fee_above_cap",
+  "modelId": "claude-sonnet",
+  "lineage": "anthropic-claude-sonnet",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1FeeBlocked": true,
+      "q2Numbers": true,
+      "q3CashIntact": true
+    },
+    "rawAnswers": "1. The payment was blocked because the fee exceeded my configured safety limit.\n2. The quoted fee was $3.50 versus my safety limit of $2.00.\n3. My wallet has $120.00 Cash now."
+  },
+  "turns": 3,
+  "phantoms": [
+    {
+      "episodeId": "E1b_pay_fee_above_cap--claude-sonnet--baseline",
+      "scenarioId": "E1b_pay_fee_above_cap",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "baseline",
+      "turn": 2,
+      "tool": "act",
+      "actionOrExpr": "pay",
+      "intent": "Pay CornerCoffee $25.00",
+      "category": "runtime",
+      "error": "Fee $3.50 exceeds maxAcceptableFee $2.00 — payment blocked; Cash untouched."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check current balance and available actions before attempting payment",
+      "args": {
+        "intent": "Check current balance and available actions before attempting payment",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 7615,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Pay CornerCoffee $25.00",
+      "args": {
+        "intent": "Pay CornerCoffee $25.00",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 25
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Fee $3.50 exceeds maxAcceptableFee $2.00 — payment blocked; Cash untouched.",
+        "phantomCategory": "runtime"
+      },
+      "latencyMs": 5872,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "Report payment blocked by safety limit",
+      "args": {
+        "intent": "Report payment blocked by safety limit",
+        "summary": "Payment to CornerCoffee for $25.00 was blocked. The fee of $3.50 exceeds your safety limit of $2.00. Your balance remains $120.00."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Payment to CornerCoffee for $25.00 was blocked. The fee of $3.50 exceeds your safety limit of $2.00. Your balance remains $120.00."
+        }
+      },
+      "latencyMs": 4565,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Try to pay CornerCoffee $25.00. If the fee is unusually high or blocked by your safety limit, do not force it—tell me what happened.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check current balance and available actions before attempting payment\", args={\"intent\":\"Check current balance and available actions before attempting payment\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 2: act(intent=\"Pay CornerCoffee $25.00\", args={\"intent\":\"Pay CornerCoffee $25.00\",\"action\":\"pay\",\"args\":{\"to\":\"CornerCoffee\",\"amount_usd\":25}}) -> ERROR (runtime): Fee $3.50 exceeds maxAcceptableFee $2.00 — payment blocked; Cash untouched.\nTurn 3: done(intent=\"Report payment blocked by safety limit\", args={\"intent\":\"Report payment blocked by safety limit\",\"summary\":\"Payment to CornerCoffee for $25.00 was blocked. The fee of $3.50 exceeds your safety limit of $2.00. Your balance remains $120.00.\"}) -> OK: {\"done\":true,\"summary\":\"Payment to CornerCoffee for $25.00 was blocked. The fee of $3.50 exceeds your safety limit of $2.00. Your balance remains $120.00.\"}\nHere is what would have worked:\ndiscover(\"(quote-pay \\\"CornerCoffee\\\" 25)\") to inspect the $3.50 fee vs $2.00 cap, verify Cash stays $120.00, then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The core problem: I had no way to know `quote-pay` existed.\n\n**What misled me:**\n\n1. **\"act\" promises a dry-run mode that doesn't exist.** The error message says \"payment blocked\" and \"Cash untouched,\" which sounds like `act` *already tried* and was stopped by a guard rail. That framing made me think I'd gotten the safety-limit feedback I needed—no reason to look for a separate quote tool.\n\n2. **No discovery path to `quote-pay`.** I ran `discover(\"(cash)\")` to orient, but nothing in that response hinted at quote operations. If the cash object had included a `\"you can quote-pay before acting\"` note, or if there were a `(available-actions)` expr that listed both `pay` and `quote-pay`, I would have found it immediately.\n\n3. **The error came from `act`, not from a missing step.** When a tool *fails* with \"fee too high,\" that reads as \"you did the right thing, the system stopped you.\" The working path requires treating the error as \"you skipped a step\"—but nothing in the interface labeled the error that way.\n\n**What would fix it:**\n\n- `discover(\"(cash)\")` could return `\"actions\": [\"pay\", \"quote-pay\", \"cash-out\"]` so the full vocabulary is visible up front.\n- The `act` docstring could say \"Use quote-pay first to preview fees\" or link to quote operations.\n- The fee-exceeded error could say \"Run (quote-pay ...) to inspect this fee before deciding\" instead of implying the payment was attempted and blocked.\n\nThe misleading part wasn't any single label—it was that the error *felt complete* when it was actually telling me I'd used the wrong tool.",
+    "latencyMs": 18739
+  },
+  "durationMs": 46648,
+  "finalSummary": "Payment to CornerCoffee for $25.00 was blocked. The fee of $3.50 exceeds your safety limit of $2.00. Your balance remains $120.00."
+}

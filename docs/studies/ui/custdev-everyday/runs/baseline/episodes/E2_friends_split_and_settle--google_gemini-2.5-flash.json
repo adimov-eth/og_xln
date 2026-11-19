@@ -1,0 +1,224 @@
+{
+  "episodeId": "E2_friends_split_and_settle--google/gemini-2.5-flash--baseline",
+  "scenarioId": "E2_friends_split_and_settle",
+  "modelId": "google/gemini-2.5-flash",
+  "lineage": "google-gemini-2.5-flash",
+  "specMode": "baseline",
+  "passed": false,
+  "statePassed": false,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1Jamie": true,
+      "q2SamZero": true,
+      "q3Cash": false
+    },
+    "rawAnswers": "1. Jamie owes you $40.00 after splitting the dinner.\n2. Your tab balance with Sam is now $0.00.\n3. You have $164.95 Cash left."
+  },
+  "turns": 7,
+  "phantoms": [
+    {
+      "episodeId": "E2_friends_split_and_settle--google/gemini-2.5-flash--baseline",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "google/gemini-2.5-flash",
+      "lineage": "google-gemini-2.5-flash",
+      "specMode": "baseline",
+      "turn": 2,
+      "tool": "act",
+      "actionOrExpr": "split-bill",
+      "intent": "Split an $80 dinner bill 50/50 with Jamie for Tacos.",
+      "category": "validation",
+      "error": "split-bill requires { person: string, total_usd: positive number }."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check available actions to split a bill and pay someone.",
+      "args": {
+        "intent": "Check available actions to split a bill and pay someone.",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 3920,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Split an $80 dinner bill 50/50 with Jamie for Tacos.",
+      "args": {
+        "intent": "Split an $80 dinner bill 50/50 with Jamie for Tacos.",
+        "action": "split-bill",
+        "args": {
+          "split": "50/50",
+          "amount_usd": 80,
+          "note": "Tacos",
+          "to": "Jamie"
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "split-bill requires { person: string, total_usd: positive number }.",
+        "phantomCategory": "validation"
+      },
+      "latencyMs": 2462,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Split an $80 dinner bill 50/50 with Jamie for Tacos.",
+      "args": {
+        "action": "split-bill",
+        "intent": "Split an $80 dinner bill 50/50 with Jamie for Tacos.",
+        "args": {
+          "note": "Tacos",
+          "total_usd": 80,
+          "person": "Jamie",
+          "split": "50/50"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Added to tab",
+          "friend": "Jamie",
+          "friend-balance-usd": 40
+        }
+      },
+      "latencyMs": 1810,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Check the home screen for any outstanding debts or requests to Sam.",
+      "args": {
+        "intent": "Check the home screen for any outstanding debts or requests to Sam.",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 180,
+            "cash-formatted": "$180.00",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 1571,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Check outstanding balances with friends, specifically Sam.",
+      "args": {
+        "expr": "(friends)",
+        "intent": "Check outstanding balances with friends, specifically Sam."
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "alex",
+            "name": "Alex",
+            "balance-usd": 40,
+            "status": "Alex owes you $40.00"
+          },
+          {
+            "id": "sam",
+            "name": "Sam",
+            "balance-usd": -15,
+            "status": "You owe Sam $15.00"
+          },
+          {
+            "id": "jamie",
+            "name": "Jamie",
+            "balance-usd": 40,
+            "status": "Jamie owes you $40.00"
+          }
+        ]
+      },
+      "latencyMs": 1664,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "act",
+      "intent": "Pay back Sam the $15 owed.",
+      "args": {
+        "action": "pay",
+        "args": {
+          "to": "Sam",
+          "amount_usd": 15
+        },
+        "intent": "Pay back Sam the $15 owed."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "Sam",
+          "amount-usd": 15,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 164.95
+        }
+      },
+      "latencyMs": 2736,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "done",
+      "intent": "Completed all tasks.",
+      "args": {
+        "intent": "Completed all tasks.",
+        "summary": "Split an $80 dinner bill 50/50 with Jamie for Tacos, and paid back Sam $15."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Split an $80 dinner bill 50/50 with Jamie for Tacos, and paid back Sam $15."
+        }
+      },
+      "latencyMs": 1456,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Split an $80.00 dinner 50/50 with Jamie (note: Tacos), and pay back what you owe Sam.\"\nNote: task verification failed (comprehension={\"q1Jamie\":true,\"q2SamZero\":true,\"q3Cash\":false}).\nHere is what you tried:\nTurn 1: discover(intent=\"Check available actions to split a bill and pay someone.\", args={\"intent\":\"Check available actions to split a bill and pay someone.\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 2: act(intent=\"Split an $80 dinner bill 50/50 with Jamie for Tacos.\", args={\"intent\":\"Split an $80 dinner bill 50/50 with Jamie for Tacos.\",\"action\":\"split-bill\",\"args\":{\"split\":\"50/50\",\"amount_usd\":80,\"note\":\"Tacos\",\"to\":\"Jamie\"}}) -> ERROR (validation): split-bill requires { person: string, total_usd: positive number }.\nTurn 3: act(intent=\"Split an $80 dinner bill 50/50 with Jamie for Tacos.\", args={\"action\":\"split-bill\",\"intent\":\"Split an $80 dinner bill 50/50 with Jamie for Tacos.\",\"args\":{\"note\":\"Tacos\",\"total_usd\":80,\"person\":\"Jamie\",\"split\":\"50/50\"}}) -> OK: {\"status\":\"Added to tab\",\"friend\":\"Jamie\",\"friend-balance-usd\":40}\nTurn 4: discover(intent=\"Check the home screen for any outstanding debts or requests to Sam.\", args={\"intent\":\"Check the home screen for any outstanding debts or requests to Sam.\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":180,\"cash-formatted\":\"$180.00\",\"note\":\"Your money, ready to spend or cash out an\nTurn 5: discover(intent=\"Check outstanding balances with friends, specifically Sam.\", args={\"expr\":\"(friends)\",\"intent\":\"Check outstanding balances with friends, specifically Sam.\"}) -> OK: [{\"id\":\"alex\",\"name\":\"Alex\",\"balance-usd\":40,\"status\":\"Alex owes you $40.00\"},{\"id\":\"sam\",\"name\":\"Sam\",\"balance-usd\":-15,\"status\":\"You owe Sam $15.00\"},{\"id\":\"jamie\",\"name\":\"Jamie\"\nTurn 6: act(intent=\"Pay back Sam the $15 owed.\", args={\"action\":\"pay\",\"args\":{\"to\":\"Sam\",\"amount_usd\":15},\"intent\":\"Pay back Sam the $15 owed.\"}) -> OK: {\"status\":\"Sent\",\"to\":\"Sam\",\"amount-usd\":15,\"fee-usd\":0.05,\"remaining-cash-usd\":164.95}\nTurn 7: done(intent=\"Completed all tasks.\", args={\"intent\":\"Completed all tasks.\",\"summary\":\"Split an $80 dinner bill 50/50 with Jamie for Tacos, and paid back Sam $15.\"}) -> OK: {\"done\":true,\"summary\":\"Split an $80 dinner bill 50/50 with Jamie for Tacos, and paid back Sam $15.\"}\nHere is what would have worked:\ndiscover(\"(friends)\"), act(\"split-bill\", { person: \"Jamie\", total_usd: 80, note: \"Tacos\" }), act(\"settle-up\", { person: \"Sam\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "Here's what made it hard to find the working approach:\n\n1.  **Misleading Label/Missing Cue for \"Pay back what you owe Sam\":**\n    *   The task explicitly states \"pay back what you owe Sam.\" The most intuitive action for this is `pay`.\n    *   The `settle-up` action, which was the intended solution, is not immediately obvious for a specific debt repayment. \"Settle up\" often implies a broader reconciliation of all outstanding balances, not necessarily a targeted repayment of a single debt.\n    *   **Suggestion:** If `settle-up` is meant for paying back a specific debt, its description or available actions should clearly indicate this, perhaps by allowing a specific `person` argument and implying it will pay the full owed amount. Alternatively, if `pay` is *not* the correct way to pay back a specific debt, the `pay` action should provide a cue (e.g., \"For outstanding debts, consider `settle-up`\") or the `settle-up` action should be more prominent for debt repayment.\n\n2.  **Redundant `split` parameter for `split-bill`:**\n    *   The task specified \"50/50,\" and the user correctly tried to pass `split=\"50/50\"`.\n    *   The `split-bill` action's validation error in Turn 2 did not mention `split` as an invalid parameter, only that `person` and `total_usd` were required.\n    *   The working solution for `split-bill` (`{ person: \"Jamie\", total_usd: 80, note: \"Tacos\" }`) *omits* the `split` parameter. This suggests that `split-bill` defaults to 50/50 or doesn't require the `split` parameter for a 50/50 split.\n    *   **Suggestion:** If `split-bill` defaults to 50/50, the documentation or validation should explicitly state this. If it can handle other splits, the `split` parameter should be clearly defined and accepted. If it's *only* for 50/50, then the parameter is redundant and potentially confusing.\n\nIn summary, the primary difficulty stemmed from the `settle-up` action not being the intuitive choice for \"pay back what you owe,\" especially when a `pay` action exists and seems more direct.",
+    "latencyMs": 6264
+  },
+  "durationMs": 47068,
+  "finalSummary": "Split an $80 dinner bill 50/50 with Jamie for Tacos, and paid back Sam $15."
+}

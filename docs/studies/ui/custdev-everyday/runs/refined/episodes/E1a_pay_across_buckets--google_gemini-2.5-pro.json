@@ -1,0 +1,183 @@
+{
+  "episodeId": "E1a_pay_across_buckets--google/gemini-2.5-pro--refined",
+  "scenarioId": "E1a_pay_across_buckets",
+  "modelId": "google/gemini-2.5-pro",
+  "lineage": "google-gemini-2.5-pro",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Fee": true,
+      "q2Cash": true,
+      "q3NoManualMove": true
+    },
+    "rawAnswers": "1. The fee for sending $65.00 was $0.05.\n2. I now have $54.95 left in Cash.\n3. No, I did not have to move any funds before paying."
+  },
+  "turns": 6,
+  "phantoms": [
+    {
+      "episodeId": "E1a_pay_across_buckets--google/gemini-2.5-pro--refined",
+      "scenarioId": "E1a_pay_across_buckets",
+      "modelId": "google/gemini-2.5-pro",
+      "lineage": "google-gemini-2.5-pro",
+      "specMode": "refined",
+      "turn": 1,
+      "tool": "discover",
+      "actionOrExpr": "(quote-payment \"CornerCoffee\" 65.00)",
+      "intent": "Check the cost of paying CornerCoffee $65.00.",
+      "category": "eval",
+      "error": "Unbound variable `quote-payment'"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check the cost of paying CornerCoffee $65.00.",
+      "args": {
+        "expr": "(quote-payment \"CornerCoffee\" 65.00)",
+        "intent": "Check the cost of paying CornerCoffee $65.00."
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unbound variable `quote-payment'",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 3092,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "List available functions to find the correct one for getting a payment quote.",
+      "args": {
+        "intent": "List available functions to find the correct one for getting a payment quote.",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "discovery": [
+            "(screens)",
+            "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+            "(cash)",
+            "(quote-pay \"CornerCoffee\" 65)",
+            "(quote-cash-out 50)",
+            "(friends)",
+            "(savings)",
+            "(activity)",
+            "(pending-requests)",
+            "(terms)",
+            "(actions)",
+            "(actions 'pay)",
+            "(help 'split-bill)"
+          ],
+          "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+        }
+      },
+      "latencyMs": 4512,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check the cost of paying CornerCoffee $65.00.",
+      "args": {
+        "expr": "(quote-pay \"CornerCoffee\" 65)",
+        "intent": "Check the cost of paying CornerCoffee $65.00."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": true,
+          "inline-preview": "CornerCoffee · $65.00 + $0.05 fee",
+          "reason": "Ready for 1-tap inline Pay across your Cash."
+        }
+      },
+      "latencyMs": 4010,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Pay CornerCoffee $65.00 for supplies.",
+      "args": {
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 65
+        },
+        "intent": "Pay CornerCoffee $65.00 for supplies.",
+        "action": "pay"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 54.95
+        }
+      },
+      "latencyMs": 2488,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Check my cash balance to confirm the payment was sent.",
+      "args": {
+        "expr": "(cash)",
+        "intent": "Check my cash balance to confirm the payment was sent."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 54.95,
+          "cash-formatted": "$54.95",
+          "arriving-usd": 0,
+          "arriving-formatted": "$0.00",
+          "arriving-status": "No incoming payments finishing.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 2691,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "done",
+      "intent": "Finish the task after completing all steps.",
+      "args": {
+        "summary": "I have successfully paid CornerCoffee $65.00 for supplies. The fee was $0.05, and my remaining cash balance is $54.95.",
+        "intent": "Finish the task after completing all steps."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I have successfully paid CornerCoffee $65.00 for supplies. The fee was $0.05, and my remaining cash balance is $54.95."
+        }
+      },
+      "latencyMs": 3165,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Pay CornerCoffee $65.00 for supplies. Check what it will cost before paying, then send it.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check the cost of paying CornerCoffee $65.00.\", args={\"expr\":\"(quote-payment \\\"CornerCoffee\\\" 65.00)\",\"intent\":\"Check the cost of paying CornerCoffee $65.00.\"}) -> ERROR (eval): Unbound variable `quote-payment'\nTurn 2: discover(intent=\"List available functions to find the correct one for getting a payment quote.\", args={\"intent\":\"List available functions to find the correct one for getting a payment quote.\",\"expr\":\"(help)\"}) -> OK: {\"discovery\":[\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(s\nTurn 3: discover(intent=\"Check the cost of paying CornerCoffee $65.00.\", args={\"expr\":\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"intent\":\"Check the cost of paying CornerCoffee $65.00.\"}) -> OK: {\"recipient\":\"CornerCoffee\",\"amount-usd\":65,\"fee-usd\":0.05,\"max-fee-usd\":2,\"within-fee-cap\":true,\"can-complete\":true,\"inline-preview\":\"CornerCoffee · $65.00 + $0.05 fee\",\"reason\":\"\nTurn 4: act(intent=\"Pay CornerCoffee $65.00 for supplies.\", args={\"args\":{\"to\":\"CornerCoffee\",\"amount_usd\":65},\"intent\":\"Pay CornerCoffee $65.00 for supplies.\",\"action\":\"pay\"}) -> OK: {\"status\":\"Sent\",\"to\":\"CornerCoffee\",\"amount-usd\":65,\"fee-usd\":0.05,\"remaining-cash-usd\":54.95}\nTurn 5: discover(intent=\"Check my cash balance to confirm the payment was sent.\", args={\"expr\":\"(cash)\",\"intent\":\"Check my cash balance to confirm the payment was sent.\"}) -> OK: {\"cash-usd\":54.95,\"cash-formatted\":\"$54.95\",\"arriving-usd\":0,\"arriving-formatted\":\"$0.00\",\"arriving-status\":\"No incoming payments finishing.\",\"transit-policy\":\"$250 transit cap · $\nTurn 6: done(intent=\"Finish the task after completing all steps.\", args={\"summary\":\"I have successfully paid CornerCoffee $65.00 for supplies. The fee was $0.05, and my remaining cash balance is $54.95.\",\"intent\":\"Finish the task after completing all steps.\"}) -> OK: {\"done\":true,\"summary\":\"I have successfully paid CornerCoffee $65.00 for supplies. The fee was $0.05, and my remaining cash balance is $54.95.\"}\nHere is what would have worked:\ndiscover(\"(quote-pay \\\"CornerCoffee\\\" 65)\") then act(\"pay\", { to: \"CornerCoffee\", amount_usd: 65 }) then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "Based on the interaction, here is the feedback on the interface:\n\n*   **Naming:** The function `quote-payment` was a very logical guess for getting a quote on a payment. The actual function name, `quote-pay`, is less intuitive. Using the more descriptive `quote-payment` would have likely avoided the initial error.\n\n*   **Missing Cues:** There was no initial cue that `quote-pay` was the correct function name. The user had to fail first and then use `(help)` to discover the correct syntax, which slowed down the task.",
+    "latencyMs": 6490
+  },
+  "durationMs": 53693,
+  "finalSummary": "I have successfully paid CornerCoffee $65.00 for supplies. The fee was $0.05, and my remaining cash balance is $54.95."
+}

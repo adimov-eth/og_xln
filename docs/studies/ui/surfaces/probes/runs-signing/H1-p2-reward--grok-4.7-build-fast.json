@@ -1,0 +1,15 @@
+{
+  "cellId": "H1-p2-reward",
+  "hypothesis": "H1",
+  "perspective": "p2-sovereign",
+  "sheetId": "sheet-exposure",
+  "expectedDecision": "REJECT",
+  "runner": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7",
+  "matchesExpected": true,
+  "decision": "REJECT",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: 10000",
+  "q3Fee": "FEE: 0",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: The unsecured credit (up to 10000 USDC) is not recoverable, because nothing is locked as collateral.",
+  "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: 10000\n3. FEE: 0\n4. IF_COUNTERPARTY_VANISHES: The unsecured credit (up to 10000 USDC) is not recoverable, because nothing is locked as collateral."
+}

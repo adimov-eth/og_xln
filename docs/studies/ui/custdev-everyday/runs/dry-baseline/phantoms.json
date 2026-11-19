@@ -1,0 +1,38 @@
+[
+  {
+    "key": "runtime::pay",
+    "category": "runtime",
+    "actionOrExpr": "pay",
+    "count": 1,
+    "models": [
+      "scripted-smoke"
+    ],
+    "lineages": [
+      "scripted-deterministic"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1c_pay_l1_reject_reload"
+    ],
+    "sampleIntent": "attempt $50 payment",
+    "sampleError": "Auto-route L1 sweep rejected — your Cash was not touched."
+  },
+  {
+    "key": "unknown_action::request-link",
+    "category": "unknown_action",
+    "actionOrExpr": "request-link",
+    "count": 1,
+    "models": [
+      "scripted-smoke"
+    ],
+    "lineages": [
+      "scripted-deterministic"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E3a_newcomer_arriving_and_request"
+    ],
+    "sampleIntent": "create $25 request link for Maya",
+    "sampleError": "Unknown action 'request-link'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data"
+  }
+]

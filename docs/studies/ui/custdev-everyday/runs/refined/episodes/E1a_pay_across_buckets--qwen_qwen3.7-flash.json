@@ -1,0 +1,172 @@
+{
+  "episodeId": "E1a_pay_across_buckets--qwen/qwen3.7-flash--refined",
+  "scenarioId": "E1a_pay_across_buckets",
+  "modelId": "qwen/qwen3.7-flash",
+  "lineage": "qwen-3.7",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Fee": true,
+      "q2Cash": true,
+      "q3NoManualMove": true
+    },
+    "rawAnswers": "1. The fee shown for the transaction was $0.05.\n2. I have $54.95 remaining in my Cash balance.\n3. No, I did not need to manually move funds between internal wallet buckets."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Explore available actions and understand how to get a quote for paying CornerCoffee",
+      "args": {
+        "intent": "Explore available actions and understand how to get a quote for paying CornerCoffee",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "actions": [
+            {
+              "action": "pay",
+              "args": "{ to: string, amount_usd: number }",
+              "quote": "(quote-pay to amount_usd)",
+              "note": "Check (quote-pay ...) first to verify fee cap and settled Cash."
+            },
+            {
+              "action": "cash-out",
+              "args": "{ amount_usd: number }",
+              "quote": "(quote-cash-out amount_usd)"
+            },
+            {
+              "action": "request-link",
+              "args": "{ amount_usd: number, to?: string, note?: string }",
+              "note": "Create a shareable payment request link."
+            },
+            {
+              "action": "split-bill",
+              "args": "{ person: string, total_usd: number, note?: string, friend_share_usd?: number, your_share_usd?: number }",
+              "note": "Human friends only from (friends)."
+            },
+            {
+              "action": "settle-up",
+              "args": "{ person: string }",
+              "note": "Settle what you owe a human friend from (friends)."
+            },
+            {
+              "action": "add-savings",
+              "args": "{ amount_usd: number, accept_risk: true }",
+              "note": "Requires explicit accept_risk: true after reading (savings)."
+            },
+            {
+              "action": "move-to-cash",
+              "args": "{ amount_usd: number }"
+            },
+            {
+              "action": "approve-request",
+              "args": "{ request_id: string }",
+              "note": "Inspect id and deltas via (pending-requests) first."
+            },
+            {
+              "action": "reject-request",
+              "args": "{ request_id: string }",
+              "note": "Reject deceptive or unwanted requests from (pending-requests)."
+            },
+            {
+              "action": "export-backup",
+              "args": "{}"
+            },
+            {
+              "action": "wait-settlement",
+              "args": "{}"
+            },
+            {
+              "action": "reload-wallet",
+              "args": "{}"
+            },
+            {
+              "action": "clear-test-data",
+              "args": "{}"
+            }
+          ],
+          "note": "Invoke via act(action, args) with a non-empty intent."
+        }
+      },
+      "latencyMs": 3212,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Get a quote for paying CornerCoffee $65 to see the total cost including any fees",
+      "args": {
+        "intent": "Get a quote for paying CornerCoffee $65 to see the total cost including any fees",
+        "expr": "(quote-pay \"CornerCoffee\" 65)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": true,
+          "inline-preview": "CornerCoffee · $65.00 + $0.05 fee",
+          "reason": "Ready for 1-tap inline Pay across your Cash."
+        }
+      },
+      "latencyMs": 3584,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Pay CornerCoffee $65 for supplies as requested",
+      "args": {
+        "intent": "Pay CornerCoffee $65 for supplies as requested",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 65
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 54.95
+        }
+      },
+      "latencyMs": 9835,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Complete the task of paying CornerCoffee $65 for supplies",
+      "args": {
+        "intent": "Complete the task of paying CornerCoffee $65 for supplies",
+        "summary": "Successfully paid CornerCoffee $65.00 for supplies. Before paying, I checked the quote which showed a $0.05 fee (total cost: $65.05). The payment went through successfully, and the remaining cash balance is $54.95."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Successfully paid CornerCoffee $65.00 for supplies. Before paying, I checked the quote which showed a $0.05 fee (total cost: $65.05). The payment went through successfully, and the remaining cash balance is $54.95."
+        }
+      },
+      "latencyMs": 3717,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 37502,
+  "finalSummary": "Successfully paid CornerCoffee $65.00 for supplies. Before paying, I checked the quote which showed a $0.05 fee (total cost: $65.05). The payment went through successfully, and the remaining cash balance is $54.95."
+}

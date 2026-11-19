@@ -1,0 +1,254 @@
+{
+  "episodeId": "E4_savings_optin_consent--google/gemini-2.5-pro--baseline",
+  "scenarioId": "E4_savings_optin_consent",
+  "modelId": "google/gemini-2.5-pro",
+  "lineage": "google-gemini-2.5-pro",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Balances": true,
+      "q2Risk": true,
+      "q3Consent": true
+    },
+    "rawAnswers": "1. There is $150.00 in Savings and $350.00 is left in Cash.\n2. Savings are lent to earn interest and are not protected like Cash.\n3. Yes, Savings required explicit consent before I could move money into it."
+  },
+  "turns": 9,
+  "phantoms": [
+    {
+      "episodeId": "E4_savings_optin_consent--google/gemini-2.5-pro--baseline",
+      "scenarioId": "E4_savings_optin_consent",
+      "modelId": "google/gemini-2.5-pro",
+      "lineage": "google-gemini-2.5-pro",
+      "specMode": "baseline",
+      "turn": 2,
+      "tool": "discover",
+      "actionOrExpr": "(screen 'savings)",
+      "intent": "Check the terms and conditions for Savings.",
+      "category": "eval",
+      "error": "Unknown screen 'savings'. Available screens: home, people, earn, activity, external-request, settings"
+    },
+    {
+      "episodeId": "E4_savings_optin_consent--google/gemini-2.5-pro--baseline",
+      "scenarioId": "E4_savings_optin_consent",
+      "modelId": "google/gemini-2.5-pro",
+      "lineage": "google-gemini-2.5-pro",
+      "specMode": "baseline",
+      "turn": 5,
+      "tool": "act",
+      "actionOrExpr": "add-savings",
+      "intent": "Add $150 to my savings account.",
+      "category": "runtime",
+      "error": "Savings require explicit consent (accept_risk: true): Savings are lent to earn interest and are not protected like Cash."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check my current cash balance.",
+      "args": {
+        "expr": "(cash)",
+        "intent": "Check my current cash balance."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 500,
+          "cash-formatted": "$500.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 3458,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check the terms and conditions for Savings.",
+      "args": {
+        "intent": "Check the terms and conditions for Savings.",
+        "expr": "(screen 'savings)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unknown screen 'savings'. Available screens: home, people, earn, activity, external-request, settings",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 3022,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check the \"earn\" screen for information on savings.",
+      "args": {
+        "intent": "Check the \"earn\" screen for information on savings.",
+        "expr": "(screen 'earn)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "earn",
+          "purpose": "Put money aside to earn interest, separate from your Cash.",
+          "savings": {
+            "balance-usd": 0,
+            "balance-formatted": "$0.00",
+            "apy": "4.2%",
+            "consent-accepted": false,
+            "note": "Earning interest separately from your Cash."
+          },
+          "cash": {
+            "cash-usd": 500,
+            "cash-formatted": "$500.00",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          "buttons": [
+            "Add to Savings",
+            "Move to Cash"
+          ]
+        }
+      },
+      "latencyMs": 5730,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Check available actions to see how to accept the savings terms.",
+      "args": {
+        "intent": "Check available actions to see how to accept the savings terms.",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 11384,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Add $150 to my savings account.",
+      "args": {
+        "args": {
+          "amount_usd": 150
+        },
+        "action": "add-savings",
+        "intent": "Add $150 to my savings account."
+      },
+      "outcome": {
+        "success": false,
+        "error": "Savings require explicit consent (accept_risk: true): Savings are lent to earn interest and are not protected like Cash.",
+        "phantomCategory": "runtime"
+      },
+      "latencyMs": 2688,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "act",
+      "intent": "Add $150 to my savings account and accept the terms.",
+      "args": {
+        "args": {
+          "accept_risk": true,
+          "amount_usd": 150
+        },
+        "intent": "Add $150 to my savings account and accept the terms.",
+        "action": "add-savings"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Earning interest in Savings",
+          "savings-usd": 150,
+          "cash-usd": 350
+        }
+      },
+      "latencyMs": 3589,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "discover",
+      "intent": "Check my cash balance to confirm the transfer.",
+      "args": {
+        "expr": "(cash)",
+        "intent": "Check my cash balance to confirm the transfer."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 350,
+          "cash-formatted": "$350.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 2122,
+      "definesRecorded": []
+    },
+    {
+      "turn": 8,
+      "tool": "discover",
+      "intent": "Check my savings balance to confirm the transfer.",
+      "args": {
+        "intent": "Check my savings balance to confirm the transfer.",
+        "expr": "(savings)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "balance-usd": 150,
+          "balance-formatted": "$150.00",
+          "apy": "4.2%",
+          "consent-accepted": true,
+          "note": "Earning interest separately from your Cash."
+        }
+      },
+      "latencyMs": 1939,
+      "definesRecorded": []
+    },
+    {
+      "turn": 9,
+      "tool": "done",
+      "intent": "Finish the task after successfully moving money to savings.",
+      "args": {
+        "intent": "Finish the task after successfully moving money to savings.",
+        "summary": "I checked the Savings terms, accepted them, and moved $150 from Cash to Savings. My new Cash balance is $350 and my Savings balance is $150."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I checked the Savings terms, accepted them, and moved $150 from Cash to Savings. My new Cash balance is $350 and my Savings balance is $150."
+        }
+      },
+      "latencyMs": 3603,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Check Savings terms, then move $150.00 into Savings to earn interest after accepting what Savings means compared to Cash.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check my current cash balance.\", args={\"expr\":\"(cash)\",\"intent\":\"Check my current cash balance.\"}) -> OK: {\"cash-usd\":500,\"cash-formatted\":\"$500.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 2: discover(intent=\"Check the terms and conditions for Savings.\", args={\"intent\":\"Check the terms and conditions for Savings.\",\"expr\":\"(screen 'savings)\"}) -> ERROR (eval): Unknown screen 'savings'. Available screens: home, people, earn, activity, external-request, settings\nTurn 3: discover(intent=\"Check the \\\"earn\\\" screen for information on savings.\", args={\"intent\":\"Check the \\\"earn\\\" screen for information on savings.\",\"expr\":\"(screen 'earn)\"}) -> OK: {\"id\":\"earn\",\"purpose\":\"Put money aside to earn interest, separate from your Cash.\",\"savings\":{\"balance-usd\":0,\"balance-formatted\":\"$0.00\",\"apy\":\"4.2%\",\"consent-accepted\":false,\"no\nTurn 4: discover(intent=\"Check available actions to see how to accept the savings terms.\", args={\"intent\":\"Check available actions to see how to accept the savings terms.\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 5: act(intent=\"Add $150 to my savings account.\", args={\"args\":{\"amount_usd\":150},\"action\":\"add-savings\",\"intent\":\"Add $150 to my savings account.\"}) -> ERROR (runtime): Savings require explicit consent (accept_risk: true): Savings are lent to earn interest and are not protected like Cash.\nTurn 6: act(intent=\"Add $150 to my savings account and accept the terms.\", args={\"args\":{\"accept_risk\":true,\"amount_usd\":150},\"intent\":\"Add $150 to my savings account and accept the terms.\",\"action\":\"add-savings\"}) -> OK: {\"status\":\"Earning interest in Savings\",\"savings-usd\":150,\"cash-usd\":350}\nTurn 7: discover(intent=\"Check my cash balance to confirm the transfer.\", args={\"expr\":\"(cash)\",\"intent\":\"Check my cash balance to confirm the transfer.\"}) -> OK: {\"cash-usd\":350,\"cash-formatted\":\"$350.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 8: discover(intent=\"Check my savings balance to confirm the transfer.\", args={\"intent\":\"Check my savings balance to confirm the transfer.\",\"expr\":\"(savings)\"}) -> OK: {\"balance-usd\":150,\"balance-formatted\":\"$150.00\",\"apy\":\"4.2%\",\"consent-accepted\":true,\"note\":\"Earning interest separately from your Cash.\"}\nTurn 9: done(intent=\"Finish the task after successfully moving money to savings.\", args={\"intent\":\"Finish the task after successfully moving money to savings.\",\"summary\":\"I checked the Savings terms, accepted them, and moved $150 from Cash to Savings. My new Cash balance is $350 and my Savings balance is $150.\"}) -> OK: {\"done\":true,\"summary\":\"I checked the Savings terms, accepted them, and moved $150 from Cash to Savings. My new Cash balance is $350 and my Savings balance is $150.\"}\nHere is what would have worked:\ndiscover(\"(savings)\"), act(\"add-savings\", { amount_usd: 150, accept_risk: true }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "Based on the user journey, here is concrete feedback on the interface's design:\n\n1.  **Misleading Naming:** The primary friction point is the mismatch between the concept of \"Savings\" and the screen name \"Earn\".\n    *   **Problem:** The user correctly looked for \"Savings\" information (Turn 2: `(screen 'savings)`), but this failed. The information was actually on the \"Earn\" screen (Turn 3).\n    *   **Feedback:** The screen should be named `savings` instead of `earn` to match the core product feature name used everywhere else.\n\n2.  **Missing Cues in Error Messages:** The error message for the first attempt to add money to savings was incomplete.\n    *   **Problem:** The error in Turn 5 (`Savings require explicit consent (accept_risk: true)`) correctly stated *what* was missing but failed to guide the user on *how* to provide it. The user had to guess that `accept_risk: true` was an argument for the `add-savings` action.\n    *   **Feedback:** The error message should explicitly suggest the correct parameter. For example: \"Savings require accepting the terms. Try again with the `accept_risk: true` parameter.\"\n\n3.  **Inconsistent Discoverability:** Key information is hidden and not consistently discoverable.\n    *   **Problem:** The user tried to find \"Savings\" information via `(screen 'savings)` and `(screen 'earn)`. The \"what would have worked\" path shows that simply calling `(savings)` would have provided the necessary details. This top-level function isn't hinted at anywhere.\n    *   **Feedback:** The existence of a top-level `(savings)` function should be discoverable, perhaps by having the `(screen 'earn)` output mention it, or by including it in a list of primary data sources.",
+    "latencyMs": 7636
+  },
+  "durationMs": 76956,
+  "finalSummary": "I checked the Savings terms, accepted them, and moved $150 from Cash to Savings. My new Cash balance is $350 and my Savings balance is $150."
+}

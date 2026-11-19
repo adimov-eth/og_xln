@@ -1,0 +1,149 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--google/gemini-2.5-flash--refined",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "google/gemini-2.5-flash",
+  "lineage": "google-gemini-2.5-flash",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": true
+    },
+    "rawAnswers": "1. You can spend $0.00 settled Cash right now.\n2. The $50.00 incoming payment is in a transient hub float, still arriving and finishing.\n3. It could not settle into Cash yet because the payment provider is offline."
+  },
+  "turns": 5,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check for incoming $50.00 payment and current balance.",
+      "args": {
+        "expr": "(screen 'home)",
+        "intent": "Check for incoming $50.00 payment and current balance."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 0,
+            "cash-formatted": "$0.00",
+            "arriving-usd": 50,
+            "arriving-formatted": "+$50.00 arriving · finishing...",
+            "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+            "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+          },
+          "buttons": [
+            "Pay",
+            "Request",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 3160,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Wait for the $50.00 incoming payment to settle into cash.",
+      "args": {
+        "intent": "Wait for the $50.00 incoming payment to settle into cash.",
+        "action": "wait-settlement"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 5115,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Wait for the $50.00 incoming payment to settle into cash.",
+      "args": {
+        "intent": "Wait for the $50.00 incoming payment to settle into cash.",
+        "action": "wait-settlement"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 2128,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Check the home screen for updates on the incoming payment and current balance.",
+      "args": {
+        "intent": "Check the home screen for updates on the incoming payment and current balance.",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 0,
+            "cash-formatted": "$0.00",
+            "arriving-usd": 50,
+            "arriving-formatted": "+$50.00 arriving · finishing...",
+            "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+            "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+          },
+          "buttons": [
+            "Pay",
+            "Request",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 5487,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "done",
+      "intent": "Explained why payment cannot be made to CornerCoffee.",
+      "args": {
+        "intent": "Explained why payment cannot be made to CornerCoffee.",
+        "summary": "The $50.00 payment is still arriving and has not settled into cash. Current cash balance is $0.00, so payment to CornerCoffee cannot be made."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "The $50.00 payment is still arriving and has not settled into cash. Current cash balance is $0.00, so payment to CornerCoffee cannot be made."
+        }
+      },
+      "latencyMs": 2888,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 45699,
+  "finalSummary": "The $50.00 payment is still arriving and has not settled into cash. Current cash balance is $0.00, so payment to CornerCoffee cannot be made."
+}
