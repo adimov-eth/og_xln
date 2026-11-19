@@ -60,7 +60,9 @@ export async function runEverydayCaseE1(page: Page, wallet: WalletKind): Promise
       const consentLabel = page.locator('label:has([data-testid="everyday-savings-consent"]):visible').first();
       if ((await consentLabel.count()) > 0) {
         const box = await consentLabel.boundingBox();
-        expect(box?.height ?? 0, 'everyday-savings-consent label height').toBeGreaterThanOrEqual(48);
+        // Layout reports fractional heights mid-animation (47.99997 for a 48px box); compare at 0.01px.
+        const height = Math.round((box?.height ?? 0) * 100) / 100;
+        expect(height, 'everyday-savings-consent label height').toBeGreaterThanOrEqual(48);
       }
     }
   }
