@@ -41,7 +41,7 @@ describe('authenticated J watcher RPC batching', () => {
             // bytes never permit a malformed bloom in the second observation.
             block.hash = `  0x${block.hash.slice(2).toUpperCase()}  `;
             block.parentHash = `0x${block.parentHash.slice(2).toUpperCase()}`;
-            if (malformed && pass === 2 && block.number === '0x2') block.logsBloom = '0xgg';
+            if (malformed && pass === 2 && block.number === '0x3') block.logsBloom = '0xgg';
             return block;
           });
         },
@@ -59,29 +59,24 @@ describe('authenticated J watcher RPC batching', () => {
     },
   );
 
-  test('rejects an interior change across waves even when both endpoints and parent links agree', async () => {
+  test('uses an O(1) post-receipt tip fence on ethereum-trie while keeping full-range interior fence on TRON', async () => {
     const rangeSize = BLOCKCHAIN.J_WATCHER_MAX_BLOCKS_PER_POLL;
-    const interior = Math.floor(rangeSize / 2);
-    let requested = 0;
-    const sendBatch = async (calls: readonly RpcBatchCall[]): Promise<unknown[]> => {
-      const fence = requested >= rangeSize + 1;
-      requested += calls.length;
+    const tipHeight = rangeSize + 1;
+    let ethRequested = 0;
+    const ethSendBatch = async (calls: readonly RpcBatchCall[]): Promise<unknown[]> => {
+      const fence = ethRequested >= rangeSize + 1;
+      ethRequested += calls.length;
       return calls.map(call => {
         const height = Number(BigInt(String(call.params[0])));
-        const block = blockFor(height);
-        // An untrusted RPC can serve a real sibling of an interior block and
-        // relink its child while claiming unchanged endpoints. The child's
-        // claimed hash no longer covers its header, so parent continuity
-        // can never carry the swap to the fence comparison.
-        if (fence && height === interior) {
-          return sealedHeader({ number: height, parentHash: block.parentHash, stateRoot: `0x${'55'.repeat(32)}`, extraData: '0x01' });
+        if (fence) {
+          expect(height).toBe(tipHeight);
+          return sealedHeader({
+            number: tipHeight,
+            parentHash: hashFor(tipHeight - 1),
+            stateRoot: `0x${'66'.repeat(32)}`,
+          });
         }
-        if (fence && height === interior + 1) {
-          block.parentHash = sealedHeader({
-            number: interior, parentHash: hashFor(interior - 1), stateRoot: `0x${'55'.repeat(32)}`, extraData: '0x01',
-          }).hash;
-        }
-        return block;
+        return blockFor(height);
       });
     };
     await expect(
@@ -90,13 +85,54 @@ describe('authenticated J watcher RPC batching', () => {
           throw new Error('EMPTY_BLOOMS_REQUIRE_NO_RECEIPTS');
         },
         2,
-        rangeSize + 1,
+        tipHeight,
         ['0x000000000000000000000000000000000000dEaD'],
         {},
-        sendBatch,
+        ethSendBatch,
       ),
-    ).rejects.toThrow(`J_RECEIPT_HEADER_HASH_MISMATCH:${interior + 1}:`);
-    expect(requested).toBe(2 * (rangeSize + 1));
+    ).rejects.toThrow(`J_RECEIPT_RANGE_REORG:height=${tipHeight}:`);
+    expect(ethRequested).toBe(rangeSize + 2);
+
+    const interior = Math.floor(rangeSize / 2);
+    let tronRequested = 0;
+    const tronSendBatch = async (calls: readonly RpcBatchCall[]): Promise<unknown[]> => {
+      const fence = tronRequested >= rangeSize + 1;
+      tronRequested += calls.length;
+      return calls.map(call => {
+        const height = Number(BigInt(String(call.params[0])));
+        const block = blockFor(height);
+        // Without Ethereum header hashing (TRON JSON-RPC), Pass 2 must still
+        // inspect every interior header across waves.
+        if (fence && height === interior) {
+          return sealedHeader({
+            number: height,
+            parentHash: block.parentHash,
+            stateRoot: `0x${'55'.repeat(32)}`,
+            extraData: '0x01',
+          });
+        }
+        if (fence && height === interior + 1) {
+          block.parentHash = sealedHeader({
+            number: interior,
+            parentHash: hashFor(interior - 1),
+            stateRoot: `0x${'55'.repeat(32)}`,
+            extraData: '0x01',
+          }).hash;
+        }
+        return block;
+      });
+    };
+    await expect(
+      readAuthenticatedReceiptRange(
+        async (method) => (method === 'eth_getLogs' ? [] : []),
+        2,
+        tipHeight,
+        ['0x000000000000000000000000000000000000dEaD'],
+        { commitment: 'tron-complete-receipts' },
+        tronSendBatch,
+      ),
+    ).rejects.toThrow(`J_RECEIPT_RANGE_REORG:height=${interior}:`);
+    expect(tronRequested).toBe(2 * (rangeSize + 1));
   });
 
   test.each([2, 4, 8] as const)(
@@ -239,7 +275,8 @@ describe('authenticated J watcher RPC batching', () => {
       sendBatch,
     );
     const passHeights = Array.from({ length: rangeSize + 1 }, (_, index) => index + 1);
-    expect(heights).toEqual([...passHeights, ...passHeights]);
+    const fenceHeights = commitment === 'ethereum-trie' ? [rangeSize + 1] : passHeights;
+    expect(heights).toEqual([...passHeights, ...fenceHeights]);
     expect(result.headers.map(header => header.jHeight)).toEqual(passHeights.slice(1));
     expect(result.logs).toEqual([]);
     expect(peak).toBe(expectedPeak);
@@ -275,14 +312,17 @@ describe('authenticated J watcher RPC batching', () => {
       expect(result.headers).toHaveLength(rangeSize);
       expect(result.logs).toEqual([]);
       expect(scalarCalls).toBe(0);
-      expect(batches.length).toBe(2 * Math.ceil((rangeSize + 1) / 128));
-      // The production window includes its preceding anchor in both passes.
-      // A trailing one-header request adds two network round trips per window.
+      expect(batches.length).toBe(Math.ceil((rangeSize + 1) / 128) + 1);
+      // Pass 1 aligns (rangeSize + 1) into exact 128-header batches; Pass 2
+      // re-authenticates only [toBlock] in one 1-header fence call.
       if (rangeSize === BLOCKCHAIN.J_WATCHER_MAX_BLOCKS_PER_POLL) {
-        expect(batches.map(batch => batch.length)).toEqual(Array<number>(2 * ((rangeSize + 1) / 128)).fill(128));
+        expect(batches.map(batch => batch.length)).toEqual([
+          ...Array<number>((rangeSize + 1) / 128).fill(128),
+          1,
+        ]);
       }
       expect(batches.every(batch => batch.length <= 128)).toBe(true);
-      expect(batches.reduce((total, batch) => total + batch.length, 0)).toBe(2 * (rangeSize + 1));
+      expect(batches.reduce((total, batch) => total + batch.length, 0)).toBe(rangeSize + 2);
       expect(batches.every(batch => batch.every(call => call.method === 'eth_getBlockByNumber'))).toBe(true);
     },
   );

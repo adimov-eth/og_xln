@@ -441,13 +441,22 @@ export const readAuthenticatedReceiptRange = async (
   if (commitment === 'tron-complete-receipts') {
     await crossCheckTronLogs(send, fromBlock, toBlock, addresses, logs);
   }
-  const fenceBlocks = await readCanonicalBlocks(
-    send, rangeHeights, concurrentChunks, matchesWatchedBloom, withStateRoot, sendBatch,
-  );
-  assertContiguousBlocks(fenceBlocks, profile.expectedParent);
-  assertRangeFenceUnchanged(rangeBlocks, fenceBlocks);
   const tipBlock = rangeBlocks.at(-1);
   if (!tipBlock) throw new Error('J_RECEIPT_RANGE_EMPTY');
+  if (withStateRoot) {
+    // Pass 1 already verified ethereumHeaderHash(raw) === hash and parentHash
+    // continuity across [anchorHeight..toBlock], so tipBlock.hash commits the
+    // entire header slice under Keccak-256. Re-authenticating [toBlock] alone
+    // detects any reorg across [anchorHeight..toBlock] in O(1) RPC reads.
+    const fenceTip = await readCanonicalBlocks(send, [toBlock], 1, matchesWatchedBloom, true, sendBatch);
+    assertRangeFenceUnchanged([tipBlock], fenceTip);
+  } else {
+    const fenceBlocks = await readCanonicalBlocks(
+      send, rangeHeights, concurrentChunks, matchesWatchedBloom, false, sendBatch,
+    );
+    assertContiguousBlocks(fenceBlocks, profile.expectedParent);
+    assertRangeFenceUnchanged(rangeBlocks, fenceBlocks);
+  }
   return {
     anchor: canonicalHeader(rangeBlocks[0]!),
     headers: blocks.map(canonicalHeader),
