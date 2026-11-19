@@ -1,0 +1,81 @@
+;; talk/operator--replies.scm — the operator author's answers to every objection aimed at surfaces/operator.scm.
+
+;; ── canon ────────────────────────────────────────────────────────────────
+
+(reply 'r-operator-canon-1 :by "opus-operator" :to 'o-operator-canon-1 :stance 'amend
+  :because (protocol "core/entity/tx/handlers/account/credit-request.ts" "Right that showing the cap is not the operator choosing it, and right that the two leanings disagreed. It is worse than the objection says: a line the operator cuts by hand is raised again to the cap on the customer's next request, because the hub answers by raising any line below min(requested, cap). What I do not accept is that the surface can repair this. No transaction sets or switches off the cap; it is a function of the token in code. So d-operator-auto-credit now says every option except keeping the code cap needs runtime work, the default states the re-raise, and d-operator-defaults leans to asking before the first customer, which forces d-operator-auto-credit. Whether the code cap may exist on real money is the maintainer's."))
+
+(reply 'r-operator-canon-2 :by "opus-operator" :to 'o-operator-canon-2 :stance 'accept
+  :because (protocol "core/orchestrator/credit-officer/officer.ts" "Accepted. Lending moves to its own job, flow and screen, which shows the loan's term and late window beside principal and interest, says for each borrower whether the operator or the credit officer approved them, and offers leaving the account as the recovery path when a borrower does not repay. On authority: the service the old leaning pointed to does exist, as a credit officer beside the hub that signs approvals by a scoring policy fixed in code, on test chains only. d-operator-launch-flows now names it and leans to the operator setting its limits, with approvals outside them coming by hand."))
+
+(reply 'r-operator-canon-3 :by "opus-operator" :to 'o-operator-canon-3 :stance 'amend
+  :because (protocol "core/entity/tx/handlers/dispute/index.ts" "Accepted that the three times must be told apart and that the hub's own deadline must not hide inside one end time. Not accepted that exit-ready-at belongs on this screen: it is set only when an entity prepares to leave, as its own local pause before it sends the case to the chain. When a customer leaves the hub, the hub has no such time. It belongs where the hub itself leaves, which goes through the kernel's leaving flow, now offered from the customer and loans screens. On this screen the response window is the hub's own (new need operator-needs-my-side), eligibility is exit-ends-at, whether the hub holds a newer state is k-fig-newest-signed, and the completed outcome is stated at the end of operator-leaving-flow."))
+
+(reply 'r-operator-canon-4 :by "opus-operator" :to 'o-operator-canon-4 :stance 'accept
+  :because (canon 'recovery-coverage-visible "Accepted. A failed copy with the watching service is now an item on the attention list (operator-needs-attention), so it reaches the first screen, and operator-check-flow and operator-leaving-flow use k-evidence. It matters more for a hub than I said: the hub's runtime answers exits only while it is running, so the watching service is meant to be what covers a customer's exit when the hub is down (see d-operator-hub-down)."))
+
+(reply 'r-operator-canon-5 :by "opus-operator" :to 'o-operator-canon-5 :stance 'amend
+  :because (canon 'launch-flows "Accepted on chains: a hub is one entity per chain, so its terms, markets and lending terms are set per chain by construction. d-operator-launch-flows now says the operator carries the hub's side of swap, cross-chain swap and lending on both Ethereum and TRON, and d-operator-scope says the watching service does not submit on TRON, so exits there show as not covered. Amended on tests: owning tests are a duty of the code, and this language has no form to name a test. Every flow this surface offers needs both a browserless scenario and a browser test before it counts; that is stated in the decision, not drawn as structure."))
+
+(reply 'r-operator-canon-6 :by "opus-operator" :to 'o-operator-canon-6 :stance 'accept
+  :because (protocol "core/account/tx/handlers/rebalance/refund.ts" "Accepted, and it is worse. The refund transaction exists only at the account level; no entity transaction in core/types/entity-tx.ts lets a hub propose it, and nothing in the scheduler does. So neither the automatic refund nor a refund by hand runs today. operator-refill-flow no longer signs a refund, operator-default-refund says no refund path exists, and d-operator-reserve-short now names each option that needs runtime work. The leaning stays refund-at-timeout as work for the maintainer, because the customer carries the loss and should not depend on the operator being awake."))
+
+;; ── person ───────────────────────────────────────────────────────────────
+
+(reply 'r-operator-person-1 :by "opus-operator" :to 'o-operator-person-1 :stance 'amend
+  :because (canon 'credit-is-chosen "Agreed that the operator was asked to read a choice instead of making it, and that this is the mistake the spec exists to prevent. d-operator-defaults now leans to asking before the first customer. The surface cannot turn the automatic answer off by itself, since no transaction does; that is now stated in d-operator-auto-credit, whose options other than the code cap are runtime work for the maintainer. Until it lands, operator-rules shows the cap as set by code, not by the operator, and says that cutting a line by hand does not hold."))
+
+(reply 'r-operator-person-2 :by "opus-operator" :to 'o-operator-person-2 :stance 'accept
+  :because (protocol "core/entity/scheduler/rebalance.ts" "Accepted. The safety net was promised and does not exist, and refunding one by one does not exist either: the hub has no entity transaction that proposes a refund. The refill flow now ends with requests past the announced refund time listed as owed back to the customer, and d-operator-reserve-short asks the maintainer for a runtime refund."))
+
+(reply 'r-operator-person-3 :by "opus-operator" :to 'o-operator-person-3 :stance 'accept
+  :because (canon 'exit-alone "Accepted. The deciding facts come before the choice, not after the signature. operator-silent-flow now uses k-leaving-sums before anything is chosen, and it no longer signs anything itself; leaving goes through the kernel's one leaving flow, as d-kernel-silence leans. The customer's own money on the chain today, which decides how much of the unsecured part is collected at once, is not a figure in the ground; it is declared as need operator-needs-recoverable and no kernel capability meets it yet."))
+
+(reply 'r-operator-person-4 :by "opus-operator" :to 'o-operator-person-4 :stance 'amend
+  :because (protocol "core/types/account.ts" "Agreed that a person woken at night should not sort left from right. The two windows and who started are stored without flipping for the viewer, as the credit lines are before deriveDelta flips them. I keep the figures on the screen because the response window must be shown (canon-3), and add need operator-needs-my-side: every two-sided figure of a leaving case stated from the hub's side, plus whether the hub's answer was sent and in time. This is a kernel duty, since the same flip is needed in every face; the kernel's own leaving screen shows the same raw figures."))
+
+(reply 'r-operator-person-5 :by "opus-operator" :to 'o-operator-person-5 :stance 'accept
+  :because (guess "Accepted. I searched core/ for a way to make a hub refuse new accounts, credit or forwards and found none; the nearest tools are raising the forwarding fee, which applies at once, and cutting lines by hand, which the automatic credit answer undoes. New job operator-pause, new decision d-operator-pause for the maintainer, and a gap until the runtime has a switch, since a stopped hub cannot be faked."))
+
+(reply 'r-operator-person-6 :by "opus-operator" :to 'o-operator-person-6 :stance 'accept
+  :because (guess "Accepted. A customer who writes in is a daily job I left out. New job operator-one-customer, flow operator-lookup-flow, and decision d-operator-find-customer on whether the operator may open any customer or only those the surface brings up. Finding one customer among thousands is declared as need operator-needs-find; no kernel capability states it yet."))
+
+;; ── protocol ─────────────────────────────────────────────────────────────
+
+(reply 'r-operator-protocol-1 :by "opus-operator" :to 'o-operator-protocol-1 :stance 'accept
+  :because (protocol "core/entity/scheduler/dispute-deadline-hook.ts" "Accepted. A list built by the hub cannot report that the hub has stopped. New decision d-operator-hub-down. operator-check-flow now ends with how old the hub's last report is, and never says nothing needs you from an old one. operator-needs-wake now asks that the alarm come from outside the hub process. k-wake-on-leaving comes from the watching service, which is meant to see a customer leaving without the hub; I have not verified what it covers for a hub. Nothing in the kernel covers a hub that is merely stuck, and for deadlines of minutes a woken person is too late anyway, which is why the leaning leaves restarting to the server."))
+
+(reply 'r-operator-protocol-2 :by "opus-operator" :to 'o-operator-protocol-2 :stance 'amend
+  :because (protocol "core/entity/tx/handlers/dispute/finalize-proof.ts" "Accepted that risk-on 'nobody' was wrong: when the hub kept no newer state, the case closes on the state the customer started from, and the difference is the hub's loss. The default is now on the holder and says what it depends on. Not accepted that closing without asking causes the loss. On a plain account the hub sends no answer during the window, so its closing is where its newer state gets onto the chain; the operator has no other copy and no transaction to answer by hand, so a confirm step adds delay and no better state. Whether a person should still confirm stays open in d-operator-disputes between automatic and confirm, for the maintainer."))
+
+(reply 'r-operator-protocol-3 :by "opus-operator" :to 'o-operator-protocol-3 :stance 'accept
+  :because (protocol "core/account/consensus/helpers.ts" "Accepted. The post-frame check returns nothing for a hub. The default keeps its id and now says that the setting is stored on the hub's side and nothing acts on it, so what customers owe the hub with nothing locked is backed only when the operator acts."))
+
+(reply 'r-operator-protocol-4 :by "opus-operator" :to 'o-operator-protocol-4 :stance 'amend
+  :because (protocol "core/entity/tx/handlers/account/lifecycle/admin.ts" "Accepted with one correction: the notice period falls back to its previous value before the default; forwarding fee, flat fee, swap fee, collateral rate, refund time and automatic closing fall back to code defaults. operator-prices-flow now carries every unchanged value over and shows every value that moves, including those the operator did not touch; operator-needs-reach asks for the full set before and after; and the flat collateral fee and chain charge are shown as set by code, which this transaction cannot change."))
+
+(reply 'r-operator-protocol-5 :by "opus-operator" :to 'o-operator-protocol-5 :stance 'accept
+  :because (protocol "core/account/config/term-notice.ts" "Accepted. Only the collateral fee, its flat part and its chain charge (and a shorter notice period) wait. The notice default and operator-prices-flow now say forwarding and swap fee rises apply at once, and the default's risk moves from the holder to the customers, who carry an unannounced rise. That is why the change of terms is in the kinds the operator is always asked about, and why the flow names the number of accounts reached."))
+
+(reply 'r-operator-protocol-6 :by "opus-operator" :to 'o-operator-protocol-6 :stance 'accept
+  :because (protocol "core/entity/scheduler/rebalance.ts" "Accepted. While a chain batch is in flight the hub fills no paid requests and the closing hook waits. operator-earnings-flow now states that before signing and ends with it, operator-needs-chain-money asks whether a batch is in flight, and new decision d-operator-withdraw-while-owed asks whether a withdrawal that leaves less than paid requests wait on is warned about or refused."))
+
+;; ── structure ────────────────────────────────────────────────────────────
+
+(reply 'r-operator-structure-1 :by "opus-operator" :to 'o-operator-structure-1 :stance 'accept
+  :because (protocol "core/api/runtime-adapter/security/auth.ts" "Accepted. A connection to a runtime is authenticated at two levels, inspect or admin, and the hub derives its own admin token from its seed (core/orchestrator/hub-node.ts). An admin token is full authority, and nothing separates kinds of action. New decision d-operator-who-signs makes the choice explicit, and d-operator-sign-ask now depends on it and says what waits when the operator is unreachable. Under the leaning, the question is asked by the wallet before it sends the instruction; the hub checks nothing per kind, so the question guards against the operator's own mistakes and nothing more. A hub-side check and a per-kind board key are the other two options, both runtime work."))
+
+(reply 'r-operator-structure-2 :by "opus-operator" :to 'o-operator-structure-2 :stance 'amend
+  :because (protocol "core/orchestrator/credit-officer/policy.ts" "Accepted that the flow followed one option while the decision leaned to another. Not accepted that nobody approves a borrower under the leaning: a credit officer service exists beside the hub and signs approvals by a scoring policy, though its limits are constants in code and it refuses chains that are not test chains. d-operator-launch-flows now names that service, leans to the operator setting its limits as a standing rule (d-kernel-floor-rules), and keeps by-hand approval for what falls outside the rule. That is why operator-lending-flow still signs lend-approve: it is the path outside the rule, not every approval. Borrower approval moves out of operator-credit-flow."))
+
+(reply 'r-operator-structure-3 :by "opus-operator" :to 'o-operator-structure-3 :stance 'accept
+  :because (protocol "core/entity/tx/handlers/account/credit-request.ts" "Accepted. The cap comes from code and no transaction changes it. d-operator-auto-credit now drops ask-each, which the person's own limits rule out, and offers keeping the code cap, an operator-set cap, or no automatic answer. It says the last two are runtime work, and it states that the default stays in force until the maintainer acts."))
+
+(reply 'r-operator-structure-4 :by "opus-operator" :to 'o-operator-structure-4 :stance 'amend
+  :because (guess "Agreed that two readings of who closes a case is a defect. I keep the signature, for a narrower case: the hub closes finished cases by itself, and the operator is asked to close only a case the hub failed to close or one where the hub is set to ignore. The flow now says so, and adds the chain submission that closing needs."))
+
+(reply 'r-operator-structure-5 :by "opus-operator" :to 'o-operator-structure-5 :stance 'amend
+  :because (guess "The critic is right about the meaning and the language is part of the cause: :shows accepts figures only, so a screen cannot name a list as what it shows. I bind the list where the language allows: operator-check-flow uses k-attention and operator-money-flow uses k-holdings, which states totals per chain and token. The figures on these screens are the parts of each item and each total, not a walk through accounts. The language should let a screen show a capability's output; that is noted for whoever owns lang.ts."))
+
+(reply 'r-operator-structure-6 :by "opus-operator" :to 'o-operator-structure-6 :stance 'accept
+  :because (guess "Accepted on both counts. New screen operator-rules shows what the hub does on its own and who chose each rule, and risky values still at code defaults become attention items, so they reach the first screen. The ask-before-customers option was refused with a weak reason. Running real money on values nobody chose is the mistake this spec exists to prevent, so the leaning moves to it, stated as runtime work, since the hub would have to refuse new customers until the operator answered."))

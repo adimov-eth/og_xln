@@ -1,0 +1,19 @@
+;; talk/operator--person.scm — objections to surfaces/operator.scm from the seat of the hub operator.
+
+(objection 'o-operator-person-1 :by "sonnet-person" :to 'operator-default-auto-credit :lens "person"
+  :claim (canon 'credit-is-chosen "The surface ships, and only shows, a hub that gives every customer who asks an unsecured credit line of up to 1,000 dollars' worth per token. The operator did not choose it, and the rule says the parties choose risk and backing. On a normal day a new customer is owed unsecured money the operator never agreed to carry, and each new account adds to the total. On the worst day, when the hub's customers fail together, the loss is the sum of lines the operator learned about after the fact. The risk is marked as the operator's own and the default is kept; the operator is asked to read it, not asked first."))
+
+(objection 'o-operator-person-2 :by "sonnet-person" :to 'd-operator-reserve-short :lens "person"
+  :claim (protocol "core/entity/scheduler/rebalance.ts" "The leaning is that the hub refunds a waiting paid request by itself at its timeout, and the decision's own evidence says no code does that. The operator is therefore promised an automatic safety net that does not exist. In the refill flow the end state is that no request is waiting without anyone knowing, which today means the operator refunds each request by hand, one signature at a time, for every customer whose request was skipped. A hub short of money on the chain is exactly when many requests wait at once, and the person is the one who must clear them."))
+
+(objection 'o-operator-person-3 :by "sonnet-person" :to 'operator-silent-flow :lens "person"
+  :claim (protocol "core/account/utils.ts" "The operator is asked to choose between waiting and leaving a silent customer, but the answer to that choice, what the chain pays and what stays owed as debt that may never be paid, is only stated at the end of the flow, after the signature. The deciding fact is how much money the customer has on the chain, since what is owed beyond the collateral is collected only from that money. Neither the customer screen nor the exits screen shows it. The operator decides to leave, pays chain fees and waits the whole window, without knowing what it will recover."))
+
+(objection 'o-operator-person-4 :by "sonnet-person" :to 'operator-exits :lens "person"
+  :claim (protocol "core/types/account.ts" "The screen answers which customers are leaving and what the hub did about each, but its figures are the left and right response times and whether the left side started the case. The operator must work out from entity ids which side is the hub before any of these means anything, and it is not stated whether the hub's reply was sent in time. The person came to read a verdict per customer and is given the machine's two-sided state. Woken at night, they do that sorting under a deadline."))
+
+(objection 'o-operator-person-5 :by "sonnet-person" :to 'operator :lens "person"
+  :claim (guess "No job covers stopping. On the worst day, with a chain problem, a run of failed customers or a doubtful default found too late, the operator wants to refuse new customers, new credit and new forwarded payments until they understand it. The only stopping option appears inside the money-short decision. Everything else offered is to change terms or leave a customer one at a time, which is slow while thousands of accounts keep taking on risk."))
+
+(objection 'o-operator-person-6 :by "sonnet-person" :to 'operator-customer :lens "person"
+  :claim (guess "A customer reaches this screen only as a named largest exposure or a silent customer. There is no job for a customer who writes in, such as a payment that has not arrived or a request that is stuck, and no way to find one customer among thousands. A hub with many customers gets these every day, and the operator is left to scroll lists the surface says they will not read."))
