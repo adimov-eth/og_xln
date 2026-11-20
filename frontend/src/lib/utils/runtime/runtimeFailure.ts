@@ -69,3 +69,17 @@ export function classifyRuntimeFailure(error: unknown): RuntimeFailureClassifica
 
   return { kind: 'fatal', retryable: false, message };
 }
+
+type HaltableRuntime = {
+  infrastructure?: { halted?: boolean; fatalDebugPayload?: { message?: string } | null } | null;
+} | null | undefined;
+
+/** Why the Runtime stopped, in the user's words; null while it runs. Same copy as the React wallet. */
+export function haltedRuntimeMessage(env: HaltableRuntime): string | null {
+  const state = env?.infrastructure;
+  if (!state?.halted) return null;
+  const cause = state.fatalDebugPayload?.message ?? 'HALTED_REQUIRES_OPERATOR';
+  return /DUPLICATE_RUNTIME_CONNECTION|DIRECT_DUPLICATE_RUNTIME_SESSION/.test(cause)
+    ? 'This wallet is already open elsewhere. Close the other wallet before reopening here.'
+    : `Wallet stopped. Reopen it before continuing. (${cause})`;
+}

@@ -203,7 +203,7 @@ function showPendingResetNotice(): void {
   toasts.warning(notice, 8000);
 }
 
-export { xlnEnvironment, setXlnEnvironment } from './bootstrap/embeddedRuntimeStore';
+export { xlnEnvironment, setXlnEnvironment, runtimeHaltMessage } from './bootstrap/embeddedRuntimeStore';
 
 export const isLoading = writable<boolean>(true);
 export const error = writable<string | null>(null);

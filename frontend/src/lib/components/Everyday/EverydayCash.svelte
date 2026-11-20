@@ -23,9 +23,9 @@
   interface Props {
     projection: EverydayWalletProjection; frame: RuntimeAdapterViewFrame | null;
     externalRows: readonly EverydayExternalRow[]; nativeBalance: bigint; decimals: number; symbol: string;
-    liveEnv: RuntimeReplica | null; xln: XLNModule | null; isLive: boolean; commandReady: boolean; onRefresh: () => Promise<EverydayExternalSnapshot>;
+    liveEnv: RuntimeReplica | null; xln: XLNModule | null; isLive: boolean; commandReady: boolean; haltMessage?: string | null; onRefresh: () => Promise<EverydayExternalSnapshot>;
   }
-  let { projection, frame, externalRows, nativeBalance, decimals, symbol, liveEnv, xln, isLive, commandReady, onRefresh }: Props = $props();
+  let { projection, frame, externalRows, nativeBalance, decimals, symbol, liveEnv, xln, isLive, commandReady, haltMessage = null, onRefresh }: Props = $props();
 
   let panel = $state<'none' | 'pay' | 'request' | 'cashout'>('none');
   let payTo = $state(''); let payAmount = $state(''); let payNote = $state('');
@@ -202,7 +202,9 @@
         <span>{cashParts.major}</span>{#if cashParts.minor}<span class="ev-cents">{cashParts.minor}</span>{/if}{#if cashParts.suffix}<span class="ev-suffix">{cashParts.suffix}</span>{/if}
       </h1>
     </button>
-    {#if !commandReady}
+    {#if haltMessage}
+      <p class="ev-muted" role="alert" data-testid="everyday-halted">{haltMessage}</p>
+    {:else if !commandReady}
       <p class="ev-muted" role="status">Syncing latest balance. Sending resumes in a moment.</p>
     {:else if deltaNotice}
       <p class="ev-delta" class:is-out={!deltaNotice.positive} data-testid="everyday-cash-delta" role="status">{deltaNotice.text}</p>

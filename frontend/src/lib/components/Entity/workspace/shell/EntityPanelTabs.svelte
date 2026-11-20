@@ -17,7 +17,7 @@ import { getXLN, xlnInstance, resolveConfiguredApiBase } from "../../../../store
 import { settings } from "../../../../stores/settingsStore";
 import { runtimes } from "../../../../stores/runtimeStore";
 import { activeRuntime } from "#lib/stores/vault/vaultStore.ts";
-import { submitEntityInputs, submitRuntimeInput, xlnFunctions } from "../../../../stores/xlnStore";
+import { runtimeHaltMessage, submitEntityInputs, submitRuntimeInput, xlnFunctions } from "../../../../stores/xlnStore";
 import { runtimeControllerHandle } from "../../../../stores/runtimeControllerStore";
 import { toasts } from "../../../../stores/ui/toastStore";
 import { errorLog } from "../../../../stores/errorLogStore";
@@ -2767,7 +2767,7 @@ $: if (typeof window !== "undefined") {
     {/if}
     {#if activeIsLive}
       <RuntimeCommandGateBanner
-        ready={activeCommandsReady} reason={$runtimeControllerHandle.commandReadyReason} runtimeId={$runtimeControllerHandle.runtimeId}
+        ready={activeCommandsReady} reason={$runtimeHaltMessage ?? $runtimeControllerHandle.commandReadyReason} runtimeId={$runtimeControllerHandle.runtimeId}
         apiBase={resolveApiBase()}
       />
     {/if}

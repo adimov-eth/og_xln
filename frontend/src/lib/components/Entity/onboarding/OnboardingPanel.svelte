@@ -9,7 +9,7 @@
 import { asTokenId } from "@xln/core/protocol/units";
   import { onMount } from 'svelte';
   import { createEventDispatcher } from 'svelte';
-  import { resolveConfiguredApiBase, submitRuntimeInput, xlnFunctions } from '../../../stores/xlnStore';
+  import { resolveConfiguredApiBase, runtimeHaltMessage, submitRuntimeInput, xlnFunctions } from '../../../stores/xlnStore';
   import {
     activeRuntime,
     buildRuntimeRecoveryConfigForMode,
@@ -745,7 +745,7 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   async function finish() {
-    if (!canFinish || submitting) return;
+    if (!canFinish || submitting || $runtimeHaltMessage) return;
     submitting = true;
     error = '';
 
@@ -1095,11 +1095,13 @@ import { asTokenId } from "@xln/core/protocol/units";
           <input type="checkbox" bind:checked={termsAccepted} />
           <span>I understand this is testnet software and I accept the associated risks.</span>
         </label>
-        <button class="btn-primary" disabled={!canFinish || submitting} on:click={finish}>
+        <button class="btn-primary" disabled={!canFinish || submitting || Boolean($runtimeHaltMessage)} on:click={finish}>
           {submitting ? 'Starting...' : 'Start'}
         </button>
       </div>
-      {#if error}
+      {#if $runtimeHaltMessage}
+        <div class="error-msg" role="alert">{$runtimeHaltMessage}</div>
+      {:else if error}
         <div class="error-msg">{error}</div>
       {/if}
     </section>

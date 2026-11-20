@@ -10,7 +10,7 @@
   import type { EntityWorkspaceRuntimeFrameContext } from '../Entity/core/runtime-frame-context';
   import { activeRuntime, vaultOperations } from '#lib/stores/vault/vaultStore.ts';
   import { runtimeControllerHandle } from '#lib/stores/runtimeControllerStore.ts';
-  import { xlnFunctions, xlnInstance } from '#lib/stores/xlnStore.ts';
+  import { runtimeHaltMessage, xlnFunctions, xlnInstance } from '#lib/stores/xlnStore.ts';
   import { maybeAutoJoinEverydayHub } from '#lib/stores/everyday/everyday-hub-join.ts';
   import type { Tab } from '#lib/types/ui.ts';
   import { readHubJoinPreference } from '#lib/utils/onboarding/onboardingPreferences.ts';
@@ -182,7 +182,7 @@
 
   <main class="ev-main">
     {#if activeTab === 'cash'}
-      <EverydayCash {projection} frame={runtimeProjectionFrame} externalRows={extSnapshot.externalRows} nativeBalance={extSnapshot.nativeBalance} decimals={extSnapshot.decimals} symbol={extSnapshot.symbol} {liveEnv} xln={$xlnInstance} isLive={runtimeFrameContext.isLive} {commandReady} onRefresh={() => refreshExternal(true)} />
+      <EverydayCash {projection} frame={runtimeProjectionFrame} externalRows={extSnapshot.externalRows} nativeBalance={extSnapshot.nativeBalance} decimals={extSnapshot.decimals} symbol={extSnapshot.symbol} {liveEnv} xln={$xlnInstance} isLive={runtimeFrameContext.isLive} {commandReady} haltMessage={$runtimeHaltMessage} onRefresh={() => refreshExternal(true)} />
     {:else if activeTab === 'friends'}
       <EverydayFriends {projection} frame={runtimeProjectionFrame} externalRows={extSnapshot.externalRows} nativeBalance={extSnapshot.nativeBalance} decimals={extSnapshot.decimals} {liveEnv} xln={$xlnInstance} isLive={runtimeFrameContext.isLive} {commandReady} onRefresh={() => void refreshExternal(true)} />
     {:else if activeTab === 'savings'}
