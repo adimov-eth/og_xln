@@ -4,9 +4,10 @@
 	box-sizing: border-box;
 }
 
-/* Reserve the scrollbar's gutter so the column never shifts between short and long screens. */
+/* No reserved scrollbar gutter: the browser fills it with a flat colour that cannot match a page lit
+   from above, which leaves a band on every screen. A quiet silver thumb on a transparent track instead. */
 html {
-	scrollbar-gutter: stable;
+	scrollbar-color: color-mix(in srgb, var(--ink-3) 45%, transparent) transparent;
 }
 
 html,

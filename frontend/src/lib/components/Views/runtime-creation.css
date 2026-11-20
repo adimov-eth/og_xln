@@ -1671,9 +1671,31 @@
   }
 
   .matrix-status.error {
-    color: rgba(255, 145, 120, 0.95);
-    border: 1px solid rgba(220, 100, 60, 0.35);
-    background: rgba(220, 100, 60, 0.08);
+    white-space: pre-line;
+    color: color-mix(in srgb, var(--theme-debit, #f43f5e) 70%, var(--theme-text-primary, #e6ebf2));
+    border: 1px solid color-mix(in srgb, var(--theme-debit, #f43f5e) 30%, transparent);
+    background: color-mix(in srgb, var(--theme-debit, #f43f5e) 6%, transparent);
+  }
+
+  /* Plain sentence first; the diagnostic stays visible beneath it, quiet and copyable. */
+  .test-wallet-failure {
+    display: grid;
+    gap: 6px;
+    padding: 12px 14px;
+    text-align: left;
+  }
+  .test-wallet-failure .failure-lead {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .test-wallet-failure .failure-diagnostic {
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--theme-text-muted, #80889a);
+    overflow-wrap: anywhere;
+    user-select: text;
   }
 
   /* Desktop - wider layout */
@@ -1889,6 +1911,18 @@
 
   body:has(.brainvault-wrapper:not(.scheme-light)) {
     background: linear-gradient(180deg, #14181f 0%, #080a0e 46%, #030406 100%);
+  }
+
+  /* The root paints the canvas and, on desktops with classic scrollbars, the scrollbar; it follows the
+     entry's own scheme so a light page never gets a dark edge or a dark scrollbar. */
+  :root:has(.brainvault-wrapper.scheme-light) {
+    color-scheme: light;
+    background: #eef1f5;
+  }
+
+  :root:has(.brainvault-wrapper:not(.scheme-light)) {
+    color-scheme: dark;
+    background: #07080b linear-gradient(180deg, #14181f 0%, #080a0e 46%, #030406 100%);
   }
 
   /* Page + card surfaces */
@@ -2277,6 +2311,9 @@
   }
   .scheme-light .matrix-status {
     background: rgba(15, 23, 42, 0.03);
+    color: var(--l-text-2);
+  }
+  .scheme-light .test-wallet-failure .failure-diagnostic {
     color: var(--l-text-2);
   }
   .scheme-light .matrix-status.error {

@@ -1,6 +1,7 @@
 :root {
-  /* Reserve the scrollbar's gutter so the column never shifts between short and long screens. */
-  scrollbar-gutter: stable;
+  /* No reserved scrollbar gutter: the browser fills it with a flat colour that cannot match a page lit
+     from above, which leaves a band on every screen. A quiet silver thumb on a transparent track instead. */
+  scrollbar-color: color-mix(in srgb, var(--theme-text-muted, #80889a) 45%, transparent) transparent;
   /* One layout and one money scale for both wallets (mirrors ui/src/styles/tokens.css): the same role gets the same size everywhere.
      Hero = the total balance; lg = amount inputs; md = breakdown figures; sm = row amounts. */
   --content-max: 680px;

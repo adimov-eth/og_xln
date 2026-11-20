@@ -1,6 +1,6 @@
 <script lang="ts">
   import WalletPasswordForm from './WalletPasswordForm.svelte';
-  import { explainWalletError } from '#lib/utils/ui/walletError.ts';
+  import { explainWalletError, walletErrorLead } from '#lib/utils/ui/walletError.ts';
   import { hasPasswordVault, savePasswordVault } from '#lib/security/passwordVault.ts';
   let passwordSetupRuntimeId: string | null = null;
   let pendingPasswordOpen: (() => Promise<boolean>) | null = null;
@@ -1452,7 +1452,12 @@
           <button class="back-to-create" disabled={openingTestWallet} on:click={() => { testEntry = false; }}>
             Create or restore a personal wallet
           </button>
-          {#if derivationError}<div class="matrix-status error" role="alert">{derivationError}</div>{/if}
+          {#if derivationError}
+            <div class="matrix-status error test-wallet-failure" role="alert">
+              <p class="failure-lead">{walletErrorLead(derivationError) ?? "The test wallet didn't open. Try again; the details below say what failed."}</p>
+              <code class="failure-diagnostic">{derivationError}</code>
+            </div>
+          {/if}
         {:else}
         {#if localTestEntry && !unlockRuntimeId}
           <button class="back-to-create" on:click={() => { reset(); testEntry = true; }}>← Back to test network</button>
