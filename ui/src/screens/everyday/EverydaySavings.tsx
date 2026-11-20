@@ -129,10 +129,20 @@ export function EverydaySavings() {
     <div className="everyday-screen fade-in">
       <section className="everyday-hero-card" aria-label="Savings balance">
         <span className="everyday-label">{EVERYDAY_COPY.terms.savings.label} · separate from Cash</span>
-        <div className="everyday-cash-value is-savings" data-testid="everyday-savings-balance">
-          <span>{savingsParts.major}</span>
-          {savingsParts.minor ? <span className="everyday-cents">{savingsParts.minor}</span> : null}
-          {savingsParts.suffix ? <span className="everyday-unit-suffix">{savingsParts.suffix}</span> : null}
+        <div
+          className={`everyday-cash-value is-savings${wallet.frame ? '' : ' is-syncing'}`}
+          data-testid="everyday-savings-balance"
+          data-loading={wallet.frame ? undefined : 'true'}
+        >
+          {wallet.frame ? (
+            <>
+              <span>{savingsParts.major}</span>
+              {savingsParts.minor ? <span className="everyday-cents">{savingsParts.minor}</span> : null}
+              {savingsParts.suffix ? <span className="everyday-unit-suffix">{savingsParts.suffix}</span> : null}
+            </>
+          ) : (
+            <span aria-label="Balance loading">—</span>
+          )}
         </div>
         <p className="everyday-note">{EVERYDAY_COPY.terms.savings.note}</p>
         <span className="everyday-row-sub">

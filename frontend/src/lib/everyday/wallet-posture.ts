@@ -19,8 +19,9 @@ export const EVERYDAY_COPY = {
     },
     settleTab: {
       before: 'Settle up',
-      pending: 'Settling tab...',
-      done: 'All settled up',
+      pending: 'Settling tab…',
+      // Shown when the payment is accepted, before both legs settle; the tab row says when it is clear.
+      done: 'Sent. The tab clears once both wallets confirm.',
       failed: 'Could not reach them — tab unchanged.',
     },
     splitTab: {

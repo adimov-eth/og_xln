@@ -198,8 +198,9 @@
   <section class="ev-hero-region" class:is-sheen={sheenTick > 0} aria-label="Cash balance">
     <p class="ev-label">{terms.cash.label}</p>
     <button type="button" class="ev-balance-trigger" aria-expanded={showTruth} onclick={() => showTruth = !showTruth}>
-      <h1 class="ev-hero" class:is-syncing={!commandReady} data-testid="everyday-cash">
-        <span>{cashParts.major}</span>{#if cashParts.minor}<span class="ev-cents">{cashParts.minor}</span>{/if}{#if cashParts.suffix}<span class="ev-suffix">{cashParts.suffix}</span>{/if}
+      <!-- Before the first frame there is no balance; "$0.00" would read as a real zero. -->
+      <h1 class="ev-hero" class:is-syncing={!commandReady || !frame} data-testid="everyday-cash" data-loading={frame ? undefined : 'true'}>
+        {#if frame}<span>{cashParts.major}</span>{#if cashParts.minor}<span class="ev-cents">{cashParts.minor}</span>{/if}{#if cashParts.suffix}<span class="ev-suffix">{cashParts.suffix}</span>{/if}{:else}<span aria-label="Balance loading">—</span>{/if}
       </h1>
     </button>
     {#if haltMessage}

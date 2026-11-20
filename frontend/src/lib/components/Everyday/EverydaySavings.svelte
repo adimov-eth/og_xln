@@ -84,8 +84,8 @@
 
 <section class="ev-hero-region" aria-label="Savings balance">
   <p class="ev-label">{termsCopy.label} · separate from Cash</p>
-  <h2 class="ev-hero is-savings" data-testid="everyday-savings-balance">
-    <span>{savingsParts.major}</span>{#if savingsParts.minor}<span class="ev-cents">{savingsParts.minor}</span>{/if}{#if savingsParts.suffix}<span class="ev-suffix">{savingsParts.suffix}</span>{/if}
+  <h2 class="ev-hero is-savings" class:is-syncing={!frame} data-testid="everyday-savings-balance" data-loading={frame ? undefined : 'true'}>
+    {#if frame}<span>{savingsParts.major}</span>{#if savingsParts.minor}<span class="ev-cents">{savingsParts.minor}</span>{/if}{#if savingsParts.suffix}<span class="ev-suffix">{savingsParts.suffix}</span>{/if}{:else}<span aria-label="Balance loading">—</span>{/if}
   </h2>
   <p class="ev-muted">{termsCopy.note}</p>
   {#if bankTerms}

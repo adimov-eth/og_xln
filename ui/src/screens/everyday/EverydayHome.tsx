@@ -86,12 +86,20 @@ export function EverydayHome({
           onClick={() => setShowTruth(open => !open)}
         >
           <div
-            className={`everyday-cash-value${!commandReady ? ' is-syncing' : ''}`}
+            className={`everyday-cash-value${!commandReady || !wallet.frame ? ' is-syncing' : ''}`}
             data-testid="everyday-cash"
+            data-loading={wallet.frame ? undefined : 'true'}
           >
-            <span>{cashParts.major}</span>
-            {cashParts.minor ? <span className="everyday-cents">{cashParts.minor}</span> : null}
-            {cashParts.suffix ? <span className="everyday-unit-suffix">{cashParts.suffix}</span> : null}
+            {/* Before the first frame there is no balance; "$0.00" would read as a real zero. */}
+            {wallet.frame ? (
+              <>
+                <span>{cashParts.major}</span>
+                {cashParts.minor ? <span className="everyday-cents">{cashParts.minor}</span> : null}
+                {cashParts.suffix ? <span className="everyday-unit-suffix">{cashParts.suffix}</span> : null}
+              </>
+            ) : (
+              <span aria-label="Balance loading">—</span>
+            )}
           </div>
         </button>
 
