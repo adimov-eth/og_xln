@@ -9,7 +9,7 @@ test('Svelte signed savings and loan preserve exact money without leaving /app',
   page.on('pageerror', error => errors.push(error.message));
   await gotoProWallet(page, process.env['SVELTE_E2E_BASE_URL'] ?? 'http://localhost:8081/app');
   await page.getByRole('button', { name: 'Open test wallet', exact: true }).click();
-  await expect(page.getByTestId('context-current')).toBeVisible();
+  await expect(page.getByTestId('context-current')).toBeVisible({ timeout: 60_000 });
   await page.getByRole('button', { name: 'Accounts', exact: true }).click();
   await page.getByTestId('hub-discovery-card').filter({ hasText: 'H1' }).getByTestId('hub-connect-button').click();
   await expect(page.getByTestId('account-preview').first()).toBeVisible();

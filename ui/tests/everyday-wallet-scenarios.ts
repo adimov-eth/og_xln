@@ -8,8 +8,8 @@ import {
   attachEverydayWatchers,
   fundViaHomeFaucetAndSettle,
   openEverydayWallet,
-  parseUsdText,
   readEverydayCashValue,
+  readEverydaySavingsValue,
   readEverydayIdentity,
   readEverydaySnapshot,
   reopenEverydayWallet,
@@ -269,10 +269,15 @@ export async function runEverydayCaseE5(page: Page, browser: Browser, wallet: Wa
       )
       .toBe('0:0');
 
-    const bobAfterSettle = await readEverydaySnapshot(bob.page, wallet);
-    expect(
-      BigInt(bobBeforeSettle.hubAccounts[0]!.outCollateral) - BigInt(bobAfterSettle.hubAccounts[0]!.outCollateral),
-    ).toBeGreaterThanOrEqual(40_000_000n);
+    // The self-cycle settles in two frames by design (committed-htlc-followups.ts): the inbound
+    // leg first, the outbound hub lock one frame later. Wait for the hub spend, not the first read.
+    await expect
+      .poll(async () => {
+        const hub = (await readEverydaySnapshot(bob.page, wallet)).hubAccounts[0];
+        if (!hub) return 0n;
+        return BigInt(bobBeforeSettle.hubAccounts[0]!.outCollateral) - BigInt(hub.outCollateral);
+      }, { timeout: 25_000 })
+      .toBeGreaterThanOrEqual(40_000_000n);
 
     await page.getByTestId('nav-cash').locator('visible=true').first().click();
     await expect.poll(async () => readEverydayCashValue(page), { timeout: 25_000 }).toBeGreaterThanOrEqual(39);
@@ -301,8 +306,7 @@ export async function runEverydayCaseE6(page: Page, wallet: WalletKind): Promise
   );
 
   await page.getByTestId('nav-savings').locator('visible=true').first().click();
-  const savingsBal = page.getByTestId('everyday-savings-balance');
-  expect(parseUsdText(await savingsBal.innerText())).toBe(0);
+  expect(await readEverydaySavingsValue(page)).toBe(0);
 
   // Unhappy: unconsented or oversized Savings deposit is blocked.
   await page.getByTestId('everyday-savings-amount').fill('25');
@@ -314,24 +318,24 @@ export async function runEverydayCaseE6(page: Page, wallet: WalletKind): Promise
   if (await page.getByTestId('everyday-savings-add').isEnabled()) {
     await page.getByTestId('everyday-savings-add').click();
   }
-  expect(parseUsdText(await savingsBal.innerText())).toBe(0);
+  expect(await readEverydaySavingsValue(page)).toBe(0);
 
   await page.getByTestId('everyday-savings-amount').fill('25');
   await expect(page.getByTestId('everyday-savings-add')).toBeEnabled({ timeout: 15_000 });
   await assertZeroDialogs(page);
   await page.getByTestId('everyday-savings-add').click();
 
-  await expect.poll(async () => parseUsdText(await savingsBal.innerText()), { timeout: 25_000 }).toBe(25);
+  await expect.poll(async () => await readEverydaySavingsValue(page), { timeout: 25_000 }).toBe(25);
   await page.getByTestId('nav-cash').locator('visible=true').first().click();
   await expect.poll(async () => readEverydayCashValue(page), { timeout: 25_000 }).toBeGreaterThan(70);
   expect(await readEverydayCashValue(page)).toBeLessThan(76);
 
   await reopenEverydayWallet(page, wallet);
   await page.getByTestId('nav-savings').locator('visible=true').first().click();
-  expect(parseUsdText(await savingsBal.innerText())).toBe(25);
+  await expect.poll(async () => await readEverydaySavingsValue(page), { timeout: 25_000 }).toBe(25);
 
   await page.getByTestId('everyday-savings-move').click();
-  await expect.poll(async () => parseUsdText(await savingsBal.innerText()), { timeout: 25_000 }).toBe(0);
+  await expect.poll(async () => await readEverydaySavingsValue(page), { timeout: 25_000 }).toBe(0);
   await page.getByTestId('nav-cash').locator('visible=true').first().click();
   await expect.poll(async () => readEverydayCashValue(page), { timeout: 25_000 }).toBeGreaterThan(98);
   expect(watchers.errors).toEqual([]);

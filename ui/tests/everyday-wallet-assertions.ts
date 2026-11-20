@@ -75,7 +75,14 @@ export function everydayEntryUrl(wallet: WalletKind): string {
 export function attachEverydayWatchers(page: Page): { errors: string[]; httpErrors: string[] } {
   const errors: string[] = [];
   const httpErrors: string[] = [];
-  page.on('pageerror', error => errors.push(error.message));
+  page.on('pageerror', error => {
+    // WebKit reports a same-origin fetch that navigation cancelled as
+    // "Fetch API cannot load http://localhost:<port>/rpc[2] due to access control checks."
+    // Playwright splits that on "://", so the message starts at "/localhost:...".
+    const text = `${error.name}\n${error.message}`;
+    if (text.includes('access control checks') && /\/localhost:\d+\/rpc2?\b/.test(text)) return;
+    errors.push(error.message);
+  });
   page.on('response', response => {
     if (response.status() >= 400) {
       httpErrors.push(`${response.status()} ${response.request().method()} ${new URL(response.url()).pathname}`);
@@ -318,8 +325,18 @@ export async function triggerFaucetApi(
 }
 
 export async function readEverydayCashValue(page: Page): Promise<number> {
-  const text = await page.getByTestId('everyday-cash').innerText();
+  const cash = page.getByTestId('everyday-cash');
+  // A loading hero shows "—", not a number; wait for the first frame before reading.
+  await expect(cash).not.toHaveAttribute('data-loading', 'true', { timeout: 30_000 });
+  const text = await cash.innerText();
   return parseUsdText(text);
+}
+
+export async function readEverydaySavingsValue(page: Page): Promise<number> {
+  const savings = page.getByTestId('everyday-savings-balance');
+  // A loading hero shows "—", not a number; the frame can drop out and come back under load.
+  await expect(savings).not.toHaveAttribute('data-loading', 'true', { timeout: 30_000 });
+  return parseUsdText(await savings.innerText());
 }
 
 export async function fundViaHomeFaucetAndSettle(page: Page, wallet: WalletKind): Promise<number> {
