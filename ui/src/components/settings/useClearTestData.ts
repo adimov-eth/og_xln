@@ -12,20 +12,24 @@ export function useClearTestData(): {
   armed: boolean;
   resetting: boolean;
   label: string;
+  failed: boolean;
   press: () => void;
   disarm: () => void;
 } {
   const toast = useApp(s => s.toast);
   const [arm, setArm] = useState<ArmState>('idle');
   const [resetting, setResetting] = useState(false);
+  const [failed, setFailed] = useState(false);
   const machine = useMemo(() => createArmedPress(setArm), []);
   useEffect(() => machine.disarm, [machine]);
 
   const press = (): void => {
     if (resetting || !machine.press()) return;
     setResetting(true);
+    setFailed(false);
     void resetReactRetiredTestnetState().catch(failure => {
       setResetting(false);
+      setFailed(true);
       console.error('[reset] clear test data failed', failure);
       toast(copy.failed, 'danger');
     });
@@ -33,5 +37,5 @@ export function useClearTestData(): {
 
   const armed = arm !== 'idle';
   const label = resetting ? copy.pending : armed ? copy.confirm : copy.before;
-  return { arm, armed, resetting, label, press, disarm: machine.disarm };
+  return { arm, armed, resetting, label, failed, press, disarm: machine.disarm };
 }

@@ -36,7 +36,7 @@
     title="Select Entity"
     description={userModeHeader ? 'Choose an entity from the context menu.' : 'Choose an entity from the header dropdown.'}
     status={null}
-    actionLabel={resettingEverything ? 'Resetting...' : 'Reset local data'}
+    actionLabel={resettingEverything ? 'Resetting…' : 'Reset local data'}
     actionDisabled={resettingEverything}
     onAction={handleResetEverything}
     testId="entity-empty-card"

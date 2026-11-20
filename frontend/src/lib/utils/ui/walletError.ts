@@ -14,6 +14,11 @@ const explanations: Array<[string, string]> = [
   ['Failed to fetch', 'The service could not be reached. Check your connection and whether the local stack is running.'],
 ];
 
+/** The plain sentence for a known failure, for screens that show the raw diagnostic separately beneath it. */
+export function walletErrorLead(message: string): string | null {
+  return explanations.find(([code]) => message.includes(code))?.[1] ?? null;
+}
+
 /** Keep the complete diagnostic visible; never replace it with a generic success or hide it in a disclosure. */
 export function explainWalletError(message: string): string {
   const match = explanations.find(([code]) => message.includes(code));

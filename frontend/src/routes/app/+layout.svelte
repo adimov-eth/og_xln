@@ -29,7 +29,7 @@
   import { isDisposableLocalTestnet, resolveDeployVersionAction } from '#lib/utils/deployVersionPolicy.ts';
   import { resetEverything, resetRetiredTestnetState } from '#lib/utils/control/resetEverything.ts';
   import { parseStorageSchemaMismatch } from '#lib/utils/recovery/storageSchemaRecovery.ts';
-  import { explainWalletError } from '#lib/utils/ui/walletError.ts';
+  import { walletErrorLead } from '#lib/utils/ui/walletError.ts';
   import {
     adoptActiveTabLock,
     clearInactiveTabStandby,
@@ -84,6 +84,8 @@
   let releaseActiveTabLock: (() => void) | null = null;
   const pageSearch = $derived(browser ? page.url.search : '');
   const storageSchemaMismatch = $derived(parseStorageSchemaMismatch($error));
+  /** A non-disposable deployment changed under saved state; Retry cannot fix it, only a reset can. */
+  let deployVersionChange = $state<{ storedVersion: string; currentVersion: string } | null>(null);
   let deployIsEphemeralTestnet = false;
   const DEPLOY_VERSION_KEY = 'xln-deploy-version';
   type DeployVersionPayload = {
@@ -93,8 +95,7 @@
 
   /** The plain sentence above a fail-stop diagnostic; the diagnostic itself stays on screen. */
   function startupFailureLead(message: string): string {
-    const explained = explainWalletError(message);
-    return explained === message ? 'It stopped while opening. Retry first; the details below say what failed.' : explained.split('\n')[0]!;
+    return walletErrorLead(message) ?? 'It stopped while opening. Retry first; the details below say what failed.';
   }
 
   function logAppShellDiagnostic(message: string, details?: unknown): void {
@@ -390,6 +391,7 @@
       await resetRetiredTestnetState();
       return true;
     }
+    deployVersionChange = { storedVersion, currentVersion: current.version };
     error.set(`Deploy version changed from ${storedVersion} to ${current.version}. Review recovery coverage before resetting local data.`);
     isLoading.set(false);
     return true;
@@ -578,14 +580,14 @@
     </div>
   {:else}
     <div class="inactive-tab-screen" data-testid="inactive-tab-screen">
-      <h2>Inactive Tab</h2>
-      <p>This wallet tab lost the active lock to a newer tab.</p>
+      <h2>Open in another tab</h2>
+      <p>This wallet is now open in a newer tab. Only one tab runs it at a time, so your balance never splits.</p>
       <button
         data-testid="inactive-tab-acquire"
         disabled={claimingActiveTabLock}
         onclick={claimActiveTabLockInPlace}
       >
-        {claimingActiveTabLock ? 'Claiming active lock...' : 'Take active lock'}
+        {claimingActiveTabLock ? 'Switching…' : 'Use this tab'}
       </button>
     </div>
   {/if}
@@ -615,13 +617,24 @@
           onclick={handleResetEverything}
           disabled={resettingEverything}
         >
-          {resettingEverything ? 'Resetting...' : 'Reset local data'}
+          {resettingEverything ? 'Resetting…' : 'Reset local data'}
         </button>
       </div>
       <details class="schema-recovery-details">
         <summary>Technical details</summary>
         <code>{$error}</code>
       </details>
+    {:else if deployVersionChange}
+      <h2>Network updated</h2>
+      <p class="schema-recovery-copy">
+        The data saved on this device belongs to an earlier version of the network and can't be opened here. Save your
+        backup first: resetting deletes the wallets saved on this device, and you will need your recovery phrase or
+        backup file to get them back.
+      </p>
+      <button onclick={handleResetEverything} disabled={resettingEverything}>
+        {resettingEverything ? 'Resetting…' : 'Reset local data'}
+      </button>
+      <code class="startup-diagnostic">{deployVersionChange.storedVersion} → {deployVersionChange.currentVersion}</code>
     {:else}
       <h2>The wallet couldn't open</h2>
       <p class="schema-recovery-copy">{startupFailureLead($error)}</p>
@@ -641,7 +654,7 @@
       title="Starting XLN"
       description="Restoring local runtime state."
       status="Loading vaults, replicas, and runtime modules"
-      actionLabel={resettingEverything ? 'Resetting...' : 'Reset local data'}
+      actionLabel={resettingEverything ? 'Resetting…' : 'Reset local data'}
       actionDisabled={resettingEverything}
       onAction={handleResetEverything}
       testId="app-loading-card"
@@ -698,6 +711,7 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    box-sizing: border-box;
     min-height: 100dvh;
     background:
       radial-gradient(circle at top, color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent), transparent 32%),
@@ -958,12 +972,14 @@
   }
 
   .inactive-tab-screen h2 {
-    font-size: 32px;
+    font-size: 28px;
+    text-wrap: balance;
     color: var(--theme-text-primary, #f2e7c8);
     margin: 0;
   }
 
   .inactive-tab-screen p {
+    max-width: 44ch;
     margin: 0;
     color: var(--theme-text-secondary, rgba(232, 232, 232, 0.72));
     font-size: 16px;
@@ -1043,6 +1059,7 @@
   }
 
   @media (max-width: 480px) {
+    .inactive-tab-screen,
     .error-screen {
       padding: 40px var(--content-pad, 16px);
     }

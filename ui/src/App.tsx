@@ -5,12 +5,12 @@ import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
 import { ExternalRequestSheet } from './components/everyday/ExternalRequestSheet';
 import { PaymentReceiptSheet } from './components/PaymentReceipt';
 import { RuntimeCommandGate } from './components/RuntimeCommandGate';
+import { NetworkUpdatedGate } from './components/settings/NetworkUpdatedGate';
 import { Shell } from './components/Shell';
 import { Toasts } from './components/Toasts';
 import {
   checkReactDeployVersion,
   isResettingRetiredTestnet,
-  resetReactRetiredTestnetState,
   subscribeRetiredTestnetReset,
   type DeployVersionCheckResult,
 } from './runtime/deploy-version';
@@ -75,8 +75,6 @@ function WalletApp() {
   const connected = status === 'connected' && !booting && Boolean(activeEntityId);
   const [externalInvoice, setExternalInvoice] = useState<string | null>(null);
   const [deployState, setDeployState] = useState<DeployVersionCheckResult | null>(null);
-  const [recoveryResetting, setRecoveryResetting] = useState(false);
-  const [recoveryResetError, setRecoveryResetError] = useState('');
   const retiredResetting = useSyncExternalStore(
     subscribeRetiredTestnetReset,
     isResettingRetiredTestnet,
@@ -104,51 +102,14 @@ function WalletApp() {
     return (
       <div className="gate">
         <div className="gate-sheet">
-          <p className="caps">{retiredResetting ? EVERYDAY_COPY.flows.resetDemo.pending : 'Updating test network...'}</p>
+          <p className="caps">{retiredResetting ? EVERYDAY_COPY.flows.resetDemo.pending : 'Updating test network…'}</p>
         </div>
       </div>
     );
   }
 
   if (deployState?.status === 'require-recovery') {
-    const clearFailed = EVERYDAY_COPY.flows.resetDemo.failed;
-    const clearTestData = (): void => {
-      if (recoveryResetting) return;
-      setRecoveryResetting(true);
-      setRecoveryResetError('');
-      void resetReactRetiredTestnetState().catch(failure => {
-        setRecoveryResetting(false);
-        console.error('[reset] clear test data failed', failure);
-        setRecoveryResetError(clearFailed);
-      });
-    };
-    return (
-      <div className="gate">
-        <div className="gate-sheet">
-          <h1 className="gate-title">Network updated</h1>
-          <p className="gate-error" role="alert">
-            Deploy version changed from {deployState.storedVersion} to {deployState.currentVersion}. Review your
-            backup before clearing local test data.
-          </p>
-          {recoveryResetError ? (
-            <p className="gate-error" role="alert">
-              {recoveryResetError}
-            </p>
-          ) : null}
-          <button
-            type="button"
-            className="btn primary"
-            disabled={recoveryResetting}
-            onClick={clearTestData}
-            data-testid="settings-clear-test-data"
-          >
-            {recoveryResetting
-              ? EVERYDAY_COPY.flows.resetDemo.pending
-              : EVERYDAY_COPY.flows.resetDemo.before}
-          </button>
-        </div>
-      </div>
-    );
+    return <NetworkUpdatedGate storedVersion={deployState.storedVersion} currentVersion={deployState.currentVersion} />;
   }
 
   if (!connected) {

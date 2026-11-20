@@ -9,7 +9,7 @@ import { protectVaultSecrets, unprotectVaultSecrets } from '../../../frontend/sr
 import { assertDemoNetwork } from '../../../frontend/src/lib/config/demo-accounts';
 import { useNavigate } from 'react-router-dom';
 import { HDNodeWallet } from 'ethers';
-import { explainWalletError } from '@xln/frontend/lib/utils/ui/walletError';
+import { explainWalletError, walletErrorLead } from '@xln/frontend/lib/utils/ui/walletError';
 import { PasswordEntry } from '../components/PasswordEntry';
 import { hasPasswordVault, savePasswordVault } from '../../../frontend/src/lib/security/passwordVault';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -458,11 +458,14 @@ export function Gate({ ephemeralTestnet = false }: { ephemeralTestnet?: boolean 
         </p>
 
         {discoveryError ? (
-          <div className="gate-error" role="alert">
-            <p>{discoveryError}</p>
+          <div className="gate-recover" role="alert">
+            <p className="gate-sub muted">
+              {walletErrorLead(discoveryError) ?? 'The wallet could not reach the network. Check your connection, then retry.'}
+            </p>
             <button type="button" className="btn" onClick={() => setDiscoveryAttempt(attempt => attempt + 1)}>
               Retry
             </button>
+            <code className="gate-diagnostic">{discoveryError}</code>
           </div>
         ) : null}
 
