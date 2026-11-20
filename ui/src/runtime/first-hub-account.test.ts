@@ -105,6 +105,27 @@ test('a Runtime halted by a second copy of the wallet says so instead of blaming
   expect(shown).toEqual(['This wallet is already open elsewhere. Close the other wallet before reopening here.']);
 });
 
+test('a Runtime halted while the hub opens the account says why instead of blaming the hub', async () => {
+  sends.length = 0;
+  shown.length = 0;
+  const run = settle(openFirstHubAccount(xlnWith(() => true), env, stack, entityId, `0x${'ef'.repeat(20)}`, () => true));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  releaseHydration();
+  while (sends.length === 0) await new Promise(resolve => setTimeout(resolve, 5));
+  embeddedEnv = {
+    infrastructure: {
+      halted: true,
+      fatalDebugPayload: { message: 'WS_RELAY_FATAL:{"error":"DUPLICATE_RUNTIME_CONNECTION:0x01"}' },
+    },
+  };
+  try {
+    expect(await run).toBe(null);
+  } finally {
+    embeddedEnv = null;
+  }
+  expect(shown).toEqual(['This wallet is already open elsewhere. Close the other wallet before reopening here.']);
+});
+
 test('the first hub Account extends the Everyday $250 transit cap and $1 auto-settle policy by default', async () => {
   sends.length = 0;
   shown.length = 0;

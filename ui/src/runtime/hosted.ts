@@ -307,7 +307,9 @@ export async function openFirstHubAccount(
         );
       } catch (error) {
         if (isChainCatchupCancelled(error) || !owns()) throw error;
-        useApp.getState().toast(`${hub.name} has not answered yet; the account opens when it does.`);
+        const halted = haltedRuntimeMessage();
+        if (halted) useApp.getState().toast(halted, 'danger');
+        else useApp.getState().toast(`${hub.name} has not answered yet; the account opens when it does.`);
       }
     }
   }
