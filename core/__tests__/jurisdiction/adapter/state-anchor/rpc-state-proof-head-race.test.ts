@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { ethers } from 'ethers';
 
@@ -9,6 +9,7 @@ import {
   type GetProofResponse,
 } from '../../../../jurisdiction/adapter/rpc/state-anchor/rpc-state-proof';
 import { safeStringify } from '../../../../protocol/serialization';
+import { spawnTestAnvil, stopTestAnvil } from '../../../helpers/process/test-anvil';
 
 // Anvil's with_database_at reads its best number, then waits for the state
 // lock. eth_getProof for the head, issued while the next block executes, is
@@ -83,7 +84,7 @@ const outcome = (run: () => unknown): string => {
 beforeAll(async () => {
   const port = await reservePort();
   rpcUrl = `http://127.0.0.1:${port}`;
-  anvil = spawn('anvil', [
+  anvil = spawnTestAnvil([
     '--host', '127.0.0.1', '--port', String(port), '--chain-id', '31338',
     '--block-gas-limit', '60000000', '--prune-history', '8192', '--silent',
   ], { stdio: 'ignore' });
@@ -101,8 +102,8 @@ beforeAll(async () => {
   burner = String((await waitForReceipt(deployHash)).contractAddress);
 }, 30_000);
 
-afterAll(() => {
-  anvil?.kill('SIGKILL');
+afterAll(async () => {
+  await stopTestAnvil(anvil);
 });
 
 describe('eth_getProof for the head while Anvil mines the next block', () => {

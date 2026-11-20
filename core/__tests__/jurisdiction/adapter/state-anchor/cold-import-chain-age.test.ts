@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { ethers } from 'ethers';
 
@@ -17,6 +17,7 @@ import {
   processJEvents,
   setScenarioStorageEnabled,
 } from '../../../../scenarios/harness/helpers';
+import { spawnTestAnvil, stopTestAnvil } from '../../../helpers/process/test-anvil';
 
 // Wallet cold import cost is the root latency: a runtime with no checkpoint
 // authenticates every header from the EntityProvider deployment. Two fresh
@@ -60,7 +61,7 @@ const countMethods = (body: string): void => {
 beforeAll(async () => {
   const port = await reservePort();
   anvilUrl = `http://127.0.0.1:${port}`;
-  anvil = spawn('anvil', [
+  anvil = spawnTestAnvil([
     '--host', '127.0.0.1', '--port', String(port), '--chain-id', String(CHAIN_ID),
     '--block-gas-limit', '60000000', '--silent',
   ], { stdio: 'ignore' });
@@ -101,7 +102,7 @@ afterAll(async () => {
   await adapter?.stopWatchingAndWait();
   await adapter?.close();
   proxy?.stop(true);
-  anvil?.kill('SIGKILL');
+  await stopTestAnvil(anvil);
 });
 
 test('a cold import reads a chain-age-independent number of headers and folds the same state', async () => {

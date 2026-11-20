@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { ethers } from 'ethers';
 
@@ -20,6 +20,7 @@ import {
 } from '../../../../jurisdiction/adapter/rpc/state-anchor/rpc-reserve-anchor';
 import { buildNonceAnchorRoot, nonceViewFromFold, readEntityNonceAnchor } from '../../../../jurisdiction/adapter/rpc/state-anchor/rpc-nonce-anchor';
 import { createEmptyBatch } from '../../../../jurisdiction/machine/batch';
+import { spawnTestAnvil, stopTestAnvil } from '../../../helpers/process/test-anvil';
 
 // The Entity reserve fold (canonical applyReserveUpdatedJEvent over the real
 // Depository log history) and eth_getProof storage at the same hash-bound block
@@ -85,7 +86,7 @@ const mined = async (): Promise<{ number: number; hash: string }> => {
 beforeAll(async () => {
   const port = await reservePort();
   const rpcUrl = `http://127.0.0.1:${port}`;
-  anvil = spawn('anvil', [
+  anvil = spawnTestAnvil([
     '--host', '127.0.0.1', '--port', String(port), '--chain-id', String(CHAIN_ID),
     '--block-gas-limit', '60000000', '--silent',
   ], { stdio: 'ignore' });
@@ -110,7 +111,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await provider?.destroy();
-  anvil?.kill('SIGKILL');
+  await stopTestAnvil(anvil);
 });
 
 test('history reserve fold and eth_getProof storage agree after mints, signed R2R and a full drain', async () => {

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -41,6 +41,7 @@ import type { JurisdictionConfig } from '../../../entity/types';
 import type { JAdapter } from '../../../jurisdiction/adapter/types';
 import type { JReplica } from '../../../types/jurisdiction-runtime';
 import { canonicalEntitySeed } from '../../../runtime/registration/entity-creation';
+import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
 const CHAIN_ID = 31_337;
 
@@ -69,7 +70,7 @@ const startAnvil = async (): Promise<ManagedAnvil> => {
   const port = await reservePort();
   const root = await mkdtemp(join(tmpdir(), 'xln-numbered-registration-rpc-'));
   const managed: ManagedAnvil = {
-    child: spawn('anvil', [
+    child: spawnTestAnvil([
       '--host', '127.0.0.1',
       '--port', String(port),
       '--chain-id', String(CHAIN_ID),
@@ -77,7 +78,7 @@ const startAnvil = async (): Promise<ManagedAnvil> => {
       '--prune-history', '256',
       '--silent',
       '--state', join(root, 'state.json'),
-    ], { env: { ...process.env, TMPDIR: root } }),
+    ]),
     rpcUrl: `http://127.0.0.1:${port}`,
     root,
     stderr: '',
@@ -100,13 +101,7 @@ const startAnvil = async (): Promise<ManagedAnvil> => {
 };
 
 const stopAnvil = async (managed: ManagedAnvil): Promise<void> => {
-  if (managed.child.exitCode === null && managed.child.signalCode === null) {
-    managed.child.kill('SIGTERM');
-    await Promise.race([
-      new Promise<void>(resolve => managed.child.once('exit', () => resolve())),
-      Bun.sleep(3_000).then(() => managed.child.kill('SIGKILL')),
-    ]);
-  }
+  await stopTestAnvil(managed.child);
   await rm(managed.root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 };
 

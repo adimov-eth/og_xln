@@ -1,5 +1,4 @@
 import { expect, test } from 'bun:test';
-import { spawn } from 'node:child_process';
 import { readdirSync, statSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -23,7 +22,8 @@ import {
 } from '../../../orchestrator/j-select/jurisdictions';
 import { createEmptyEnv, enqueueRuntimeInput, processRuntime } from '../../../runtime';
 import { setScenarioStorageEnabled } from '../../../scenarios/harness/helpers';
-import { stopProcess, type ManagedChildProcess } from '../../../scripts/e2e/harness/e2e-managed-process';
+import type { ManagedChildProcess } from '../../../scripts/e2e/harness/e2e-managed-process';
+import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
 const CHAIN_ID = 31_337;
 const CHAIN_ID_2 = 31_338;
@@ -194,14 +194,13 @@ const waitForRpc = async (rpcUrl: string, chainId = CHAIN_ID): Promise<void> => 
   throw new Error(`PRIMARY_RPC_TEST_NOT_READY:${lastError}`);
 };
 
-const startAnvil = (port: number, chainId: number, root: string, stateFile: string): ManagedChildProcess => spawn(
-  'anvil',
+const startAnvil = (port: number, chainId: number, root: string, stateFile: string): ManagedChildProcess => spawnTestAnvil(
   [
     '--host', '127.0.0.1', '--port', String(port), '--chain-id', String(chainId),
     '--block-gas-limit', '60000000', '--prune-history', '256', '--silent',
     '--state', join(root, stateFile),
   ],
-  { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TMPDIR: root } },
+  { stdio: ['ignore', 'pipe', 'pipe'] },
 ) as ManagedChildProcess;
 
 test('local reset clears Anvil history and refuses non-loopback RPCs', async () => {
@@ -232,7 +231,7 @@ test('local reset clears Anvil history and refuses non-loopback RPCs', async () 
       rpcUrls: { 1: 'https://ethereum-sepolia-rpc.publicnode.com' },
     })).rejects.toThrow('LOCAL_ANVIL_RESET_RPC_FORBIDDEN');
   } finally {
-    await stopProcess(child, 3_000);
+    await stopTestAnvil(child);
     await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 });
@@ -427,7 +426,7 @@ test('orchestrator provisions exact primary contracts before RPC import', async 
     expect(destroyCalls).toBe(1);
   } finally {
     await importedAdapter?.close();
-    await stopProcess(child, 3_000);
+    await stopTestAnvil(child);
     await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 120_000);
@@ -496,7 +495,7 @@ test('fresh RPC import proves deployment origin from receipts after historical s
     expect(env.state.jReplicas.has('Primary')).toBe(true);
     expect(getLiveJAdapter(env, 'Primary')).toBeDefined();
   } finally {
-    await stopProcess(child, 3_000);
+    await stopTestAnvil(child);
     await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 120_000);
@@ -606,7 +605,7 @@ test('secondary RPC stack reuses deterministic addresses across reset retries', 
     expect(await rpcCall(primaryRpc, 'eth_blockNumber')).toBe(primaryBlock);
     expect(await rpcCall(secondaryRpc, 'eth_blockNumber')).toBe(blockBeforeCollision);
   } finally {
-    await Promise.all(children.map(child => stopProcess(child, 3_000)));
+    await Promise.all(children.map(child => stopTestAnvil(child)));
     await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 180_000);

@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import type { ChildProcess } from 'node:child_process';
 import { ethers } from 'ethers';
 import { createXlnJsonRpcProvider, DEFAULT_PRIVATE_KEY } from '../../../jurisdiction/adapter/kernel/factory';
 import { createRpcChainIo } from '../../../jurisdiction/adapter/rpc/rpc-chain-io';
+import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
-let anvil: Bun.Subprocess;
+let anvil: ChildProcess;
 let rpcUrl: string;
 
 beforeAll(async () => {
@@ -11,9 +13,8 @@ beforeAll(async () => {
   rpcUrl = `http://127.0.0.1:${reservation.port}`;
   const port = reservation.port;
   await reservation.stop(true);
-  anvil = Bun.spawn(['anvil', '--host', '127.0.0.1', '--port', String(port), '--quiet'], {
-    stdout: 'ignore',
-    stderr: 'inherit',
+  anvil = spawnTestAnvil(['--host', '127.0.0.1', '--port', String(port), '--quiet'], {
+    stdio: ['ignore', 'ignore', 'inherit'],
   });
   for (let attempt = 0; attempt < 100; attempt += 1) {
     try {
@@ -32,8 +33,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  anvil.kill('SIGTERM');
-  await anvil.exited;
+  await stopTestAnvil(anvil);
 });
 
 test('closing waits for an in-flight real RPC read before destroying its provider', async () => {

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { ethers } from 'ethers';
 
@@ -17,6 +17,7 @@ import {
   setScenarioStorageEnabled,
 } from '../../../../scenarios/harness/helpers';
 import { counterShortfallDispute, startShortfallDispute } from '../../../fixtures/jurisdiction/real-dispute-shortfall';
+import { spawnTestAnvil, stopTestAnvil } from '../../../helpers/process/test-anvil';
 
 // A mnemonic re-imported without a checkpoint folds its full Jurisdiction
 // history. If that Entity disputed on another device and the peer answered
@@ -46,7 +47,7 @@ let rpcUrl = '';
 beforeAll(async () => {
   const port = await reservePort();
   rpcUrl = `http://127.0.0.1:${port}`;
-  anvil = spawn('anvil', [
+  anvil = spawnTestAnvil([
     '--host', '127.0.0.1', '--port', String(port), '--chain-id', String(CHAIN_ID),
     '--block-gas-limit', '60000000', '--silent',
   ], { stdio: 'ignore' });
@@ -68,7 +69,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await adapter?.stopWatchingAndWait();
   await adapter?.close();
-  anvil?.kill('SIGKILL');
+  await stopTestAnvil(anvil);
 });
 
 test('a fresh import folds a counter-dispute naming the Entity without a local Account', async () => {

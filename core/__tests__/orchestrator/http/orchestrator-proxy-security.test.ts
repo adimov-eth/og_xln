@@ -1,11 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { createServer } from 'node:net';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { HDNodeWallet, JsonRpcProvider, Mnemonic, Wallet, getIndexedAccountPath, parseEther } from 'ethers';
 import { createOrchestratorProxyHandlers } from '../../../orchestrator/proxy';
 import { safeStringify } from '../../../protocol/serialization';
+import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
 const freePort = (): Promise<number> => new Promise((resolve, reject) => {
   const server = createServer();
@@ -20,9 +18,8 @@ const freePort = (): Promise<number> => new Promise((resolve, reject) => {
 const withAnvil = async (run: (rpcUrl: string) => Promise<void>): Promise<void> => {
   const port = await freePort();
   const rpcUrl = `http://127.0.0.1:${port}`;
-  const root = await mkdtemp(join(tmpdir(), 'xln-rpc-bridge-'));
-  const child = Bun.spawn(['anvil', '--host', '127.0.0.1', '--port', String(port), '--chain-id', '31337'], {
-    stdout: 'ignore', stderr: 'ignore', env: { ...process.env, TMPDIR: root },
+  const child = spawnTestAnvil(['--host', '127.0.0.1', '--port', String(port), '--chain-id', '31337'], {
+    stdio: 'ignore',
   });
   try {
     const provider = new JsonRpcProvider(rpcUrl, 31_337, { staticNetwork: true });
@@ -35,9 +32,7 @@ const withAnvil = async (run: (rpcUrl: string) => Promise<void>): Promise<void> 
     provider.destroy();
     await run(rpcUrl);
   } finally {
-    child.kill('SIGTERM');
-    await child.exited;
-    await rm(root, { recursive: true, force: true });
+    await stopTestAnvil(child);
   }
 };
 

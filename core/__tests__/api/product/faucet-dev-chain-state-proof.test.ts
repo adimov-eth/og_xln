@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { ethers, getIndexedAccountPath, HDNodeWallet, Mnemonic } from 'ethers';
 
@@ -9,6 +9,7 @@ import { provisionFaucetWalletFunding } from '../../../api/public/external-walle
 import { createJAdapter } from '../../../jurisdiction/adapter';
 import { verifyGetProofResponse, type GetProofResponse } from '../../../jurisdiction/adapter/rpc/state-anchor/rpc-state-proof';
 import type { JAdapter } from '../../../jurisdiction/adapter/types';
+import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
 const FAUCET_TARGET = ethers.parseEther('1');
 const anvilDevKey = (index: number): string =>
@@ -54,7 +55,7 @@ const expectProofMatchesHeader = async (address: string, height: number): Promis
 beforeAll(async () => {
   const port = await reservePort();
   // Production Anvil flags (scripts/operations/start-anvil.sh).
-  anvil = spawn('anvil', [
+  anvil = spawnTestAnvil([
     '--host', '127.0.0.1', '--port', String(port), '--chain-id', '31337', '--silent',
     '--mixed-mining', '--block-time', '10', '--prune-history', '128',
   ], { stdio: 'ignore' });
@@ -104,7 +105,7 @@ const spendFaucetBelowThreshold = async (): Promise<void> => {
 afterAll(async () => {
   await adapter?.close?.();
   await otherOwner?.close?.();
-  anvil?.kill('SIGKILL');
+  await stopTestAnvil(anvil);
 });
 
 describe('dev-chain faucet funding keeps sealed state proofs valid', () => {

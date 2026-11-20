@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { ethers } from 'ethers';
 
@@ -34,6 +34,7 @@ import type {
   CertifiedBoardPatriciaNode,
   CertifiedBoardRegistryState,
 } from '../../../../types/entity-board-registry';
+import { spawnTestAnvil, stopTestAnvil } from '../../../helpers/process/test-anvil';
 
 // History-derived and storage-derived certified-board registries must agree on
 // a real EntityProvider: same leaf for every numbered entity and the same root.
@@ -120,7 +121,7 @@ const mined = async (tx: Promise<ethers.ContractTransactionResponse>): Promise<n
 beforeAll(async () => {
   const port = await reservePort();
   const rpcUrl = `http://127.0.0.1:${port}`;
-  anvil = spawn('anvil', [
+  anvil = spawnTestAnvil([
     '--host', '127.0.0.1', '--port', String(port), '--chain-id', String(CHAIN_ID),
     '--block-gas-limit', '60000000', '--silent',
   ], { stdio: 'ignore' });
@@ -145,7 +146,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await provider?.destroy();
-  anvil?.kill('SIGKILL');
+  await stopTestAnvil(anvil);
 });
 
 test('history fold and eth_getProof storage give the same board leaves and root across A->B->A', async () => {

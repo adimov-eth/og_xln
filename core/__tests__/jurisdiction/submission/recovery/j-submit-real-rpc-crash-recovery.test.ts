@@ -1,11 +1,12 @@
 import { expect, test } from 'bun:test';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { createXlnJsonRpcProvider } from '../../../../jurisdiction/adapter';
+import { spawnTestAnvil, stopTestAnvil } from '../../../helpers/process/test-anvil';
 
 const CHAIN_ID = 31_337;
 const fixture = join(import.meta.dir, '../../../fixtures/jurisdiction/j-submit-real-rpc-crash-child.ts');
@@ -84,7 +85,7 @@ const startAnvil = async (): Promise<ManagedAnvil> => {
   const port = await reservePort();
   const root = await mkdtemp(join(tmpdir(), 'xln-j-submit-real-rpc-anvil-'));
   const managed: ManagedAnvil = {
-    child: spawn('anvil', [
+    child: spawnTestAnvil([
       '--host', '127.0.0.1',
       '--port', String(port),
       '--chain-id', String(CHAIN_ID),
@@ -94,7 +95,7 @@ const startAnvil = async (): Promise<ManagedAnvil> => {
       '--prune-history', '256',
       '--silent',
       '--state', join(root, 'state.json'),
-    ], { env: { ...process.env, TMPDIR: root } }),
+    ]),
     rpcUrl: `http://127.0.0.1:${port}`,
     root,
     stderr: '',
@@ -119,17 +120,7 @@ const startAnvil = async (): Promise<ManagedAnvil> => {
 };
 
 const stopAnvil = async (managed: ManagedAnvil): Promise<void> => {
-  if (managed.child.exitCode === null && managed.child.signalCode === null) {
-    managed.child.kill('SIGTERM');
-    await Promise.race([
-      new Promise<void>((resolveExit) => managed.child.once('exit', () => resolveExit())),
-      Bun.sleep(3_000).then(() => {
-        if (managed.child.exitCode === null && managed.child.signalCode === null) {
-          managed.child.kill('SIGKILL');
-        }
-      }),
-    ]);
-  }
+  await stopTestAnvil(managed.child);
   await rm(managed.root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 };
 

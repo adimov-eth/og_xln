@@ -7,6 +7,7 @@ import { HDNodeWallet } from 'ethers';
 import { requireBoundaryRecord } from '../../../protocol/boundary-validation';
 import { safeStringify } from '../../../protocol/serialization';
 import { acquireLocalTestPortLease } from '../../../scripts/e2e/harness/local-test-port-lease';
+import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
 const run = async (cmd: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<string> => {
   const startedAt = performance.now();
@@ -64,9 +65,9 @@ test.each([
       undefined,
       `m/44'/60'/0'/0/${keyIndex}`,
     ).privateKey;
-    const node = Bun.spawn(
-      ['anvil', '--host', '127.0.0.1', '--port', String(lease.basePort), '--chain-id', '31337', '--block-time', '1'],
-      { stdout: 'ignore', stderr: 'inherit' },
+    const node = spawnTestAnvil(
+      ['--host', '127.0.0.1', '--port', String(lease.basePort), '--chain-id', '31337', '--block-time', '1'],
+      { stdio: ['ignore', 'ignore', 'inherit'] },
     );
     let proxy: ReturnType<typeof approvalOrderingProxy> | undefined;
     try {
@@ -170,8 +171,7 @@ test.each([
     } finally {
       if (proxy) console.log('APPROVAL_ORDERING_FINAL:' + safeStringify(proxy.evidence()));
       proxy?.stop();
-      node.kill('SIGTERM');
-      await node.exited;
+      await stopTestAnvil(node);
       lease.release();
       await rm(work, { recursive: true, force: true });
     }
