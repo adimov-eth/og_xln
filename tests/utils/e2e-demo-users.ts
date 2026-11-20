@@ -1177,7 +1177,7 @@ export async function switchToRuntime(page: Page, label: string): Promise<void> 
 
 const unlockSavedRuntimeAfterSwitch = async (page: Page, runtimeId: string): Promise<void> => {
   const selected = page.getByTestId('context-current').first();
-  const welcome = page.getByRole('heading', { name: 'Welcome to xln' });
+  const welcome = page.getByRole('heading', { name: 'Welcome back' });
   await expect(selected.or(welcome)).toBeVisible({ timeout: 20_000 });
   if (!(await welcome.isVisible())) return;
 
