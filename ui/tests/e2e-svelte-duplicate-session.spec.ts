@@ -103,7 +103,7 @@ test(
       await expect(duplicate.getByText(OPEN_ELSEWHERE, { exact: true })).toBeVisible(WAIT);
       const start = duplicate.getByRole('button', { name: 'Start', exact: true });
       if (await start.isVisible()) await expect(start).toBeDisabled();
-      await expect(duplicate.getByText(/HALTED_REQUIRES_OPERATOR|LOCAL_RUNTIME_INPUT_COMMIT_TIMEOUT/)).toHaveCount(0);
+      await expect(duplicate.getByText(/HALTED_REQUIRES_OPERATOR|LOCAL_RUNTIME_INPUT_COMMIT_/)).toHaveCount(0);
       await expect(original.getByText(OPEN_ELSEWHERE, { exact: true })).toHaveCount(0);
     });
   },

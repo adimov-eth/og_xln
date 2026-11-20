@@ -1364,6 +1364,18 @@ const publishLocalRuntimeEnvIfActive = (env: RuntimeReplica): void => {
   }
 };
 
+/** How long a caught-up Runtime may go without saving the input before the wait reports a stall. */
+const LOCAL_RUNTIME_INPUT_STALL_MS = 15_000;
+/** Last resort for a Runtime that keeps saving other frames but never this input. */
+const LOCAL_RUNTIME_INPUT_CEILING_MS = 120_000;
+
+/**
+ * Wait for the submitted input to reach a persisted frame, judged by progress, not a clock.
+ * A halt fails at once. While saved frames trail the in-memory height and keep advancing,
+ * the input may be in the unsaved tail (Safari's IndexedDB takes seconds per frame), so the
+ * wait continues. Once saving has caught up and the input is still absent, a quiet stretch
+ * means it was dropped or is stuck, and the wait says so.
+ */
 const drainLocalRuntimeInput = async (
   xln: XLNModule,
   env: RuntimeReplica,
@@ -1371,26 +1383,35 @@ const drainLocalRuntimeInput = async (
   afterHeight: number,
 ): Promise<number> => {
   const startedAt = Date.now();
-  for (let i = 0; i < 80; i += 1) {
-    // A halted Runtime never persists the input; say why instead of timing out.
+  let progressAt = startedAt;
+  let savedHeight = -1;
+  for (;;) {
     const halted = haltedRuntimeMessage(env);
     if (halted) throw new Error(halted);
+    const latestHeight = Math.max(afterHeight, Math.floor(Number(env.state.height || 0)));
     const persistedHeight = await findPersistedEmbeddedRuntimeInputHeight(
       (height) => xln.readPersistedStorageFrameRecord(env, height),
       input,
       afterHeight,
-      Math.max(afterHeight, Math.floor(Number(env.state.height || 0))),
+      latestHeight,
     );
     if (persistedHeight !== null) return persistedHeight;
+    const head = Math.floor(Number((await xln.readPersistedStorageHead(env))?.latestHeight ?? 0));
+    if (head > savedHeight) {
+      if (head < latestHeight) progressAt = Date.now();
+      savedHeight = head;
+    }
+    const now = Date.now();
+    if (now - progressAt > LOCAL_RUNTIME_INPUT_STALL_MS || now - startedAt > LOCAL_RUNTIME_INPUT_CEILING_MS) {
+      throw new Error(
+        `LOCAL_RUNTIME_INPUT_COMMIT_STALLED: after=${afterHeight} latest=${latestHeight} saved=${head}`,
+      );
+    }
     // The runtime loop created with this RuntimeReplica is the only owner allowed to call
     // process(). Command submission only enqueues and observes its durable
     // commit; a UI waiter must never become a second transition driver.
-    await sleep(25);
-    if (Date.now() - startedAt > 4_000) break;
+    await sleep(50);
   }
-  throw new Error(
-    `LOCAL_RUNTIME_INPUT_COMMIT_TIMEOUT: after=${afterHeight} latest=${Math.max(0, Number(env.state.height || 0))}`,
-  );
 };
 
 const normalizeRuntimeIdentifier = (value: unknown): string => String(value || '').trim().toLowerCase();
