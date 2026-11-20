@@ -8,8 +8,10 @@ import { cleanupTestProcesses, spawnTestProcess } from '../../helpers/process/te
 
 const helperPath = resolve(import.meta.dir, '../../helpers/process/test-process.ts');
 
+// Groups a test never stops die via their watchdog, which polls once a second;
+// under heavy swap a round can take seconds.
 const expectPidGone = async (pid: number): Promise<void> => {
-  const deadline = performance.now() + 5_000;
+  const deadline = performance.now() + 15_000;
   while (true) {
     try {
       process.kill(pid, 0);
@@ -22,7 +24,7 @@ const expectPidGone = async (pid: number): Promise<void> => {
   }
 };
 
-test.each(['success', 'failure', 'timeout', 'exit', 'SIGINT', 'SIGTERM'] as const)(
+test.each(['success', 'failure', 'timeout', 'exit', 'SIGINT', 'SIGTERM', 'SIGKILL'] as const)(
   'owned process groups do not survive test %s',
   async outcome => {
     const root = mkdtempSync(join(tmpdir(), 'xln-test-process-'));
@@ -51,7 +53,7 @@ test.each(['success', 'failure', 'timeout', 'exit', 'SIGINT', 'SIGTERM'] as cons
         ...(outcome === 'failure' ? ["throw new Error('EXPECTED_TEST_FAILURE');"] : []),
         ...(outcome === 'timeout' ? ['await new Promise(() => {});'] : []),
         ...(outcome === 'exit' ? ['process.exit(7);'] : []),
-        ...(outcome === 'SIGINT' || outcome === 'SIGTERM'
+        ...(outcome === 'SIGINT' || outcome === 'SIGTERM' || outcome === 'SIGKILL'
           ? [`process.kill(process.pid, '${outcome}'); await new Promise(() => {});`]
           : []),
         '}, 2000);',
@@ -74,7 +76,9 @@ test.each(['success', 'failure', 'timeout', 'exit', 'SIGINT', 'SIGTERM'] as cons
               ? 130
               : outcome === 'SIGTERM'
                 ? 143
-                : 1,
+                : outcome === 'SIGKILL'
+                  ? null
+                  : 1,
       );
       if (outcome === 'failure') expect(stderr).toContain('EXPECTED_TEST_FAILURE');
       if (outcome === 'timeout') expect(stderr).toContain('timed out');
@@ -86,8 +90,46 @@ test.each(['success', 'failure', 'timeout', 'exit', 'SIGINT', 'SIGTERM'] as cons
       rmSync(root, { recursive: true, force: true });
     }
   },
-  15_000,
+  45_000,
 );
+
+// A hook registered at import binds only to the first file that loads the
+// helper; a later file's groups must still not outlive the run.
+test('owned process groups do not survive a multi-file run', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'xln-test-process-multi-'));
+  const pidPath = (name: string): string => join(root, `${name}.pid`);
+  const fixtures = ['first', 'second'].map(name => {
+    const fixturePath = join(root, `${name}.test.ts`);
+    writeFileSync(
+      fixturePath,
+      [
+        "import { test } from 'bun:test';",
+        "import { writeFileSync } from 'node:fs';",
+        `import { spawnTestProcess } from ${safeStringify(helperPath)};`,
+        `test('${name}', () => {`,
+        "const child = spawnTestProcess('sleep', ['120'], { stdio: 'ignore' });",
+        `writeFileSync(${safeStringify(pidPath(name))}, String(child.pid));`,
+        '});',
+      ].join('\n'),
+    );
+    return fixturePath;
+  });
+  try {
+    const runner = spawnTestProcess(process.execPath, ['test', ...fixtures]);
+    const output = Promise.all([text(runner.stdout), text(runner.stderr)]);
+    const code = await new Promise<number | null>((done, reject) => {
+      runner.once('error', reject);
+      runner.once('exit', done);
+    });
+    const [, stderr] = await output;
+    expect({ code, stderr: code === 0 ? '' : stderr }).toEqual({ code: 0, stderr: '' });
+    await expectPidGone(Number(readFileSync(pidPath('first'), 'utf8')));
+    await expectPidGone(Number(readFileSync(pidPath('second'), 'utf8')));
+  } finally {
+    await cleanupTestProcesses();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 45_000);
 
 test('a failing test leaves no Anvil child, even before startup returns', async () => {
   const root = mkdtempSync(join(tmpdir(), 'xln-j-watcher-backlog-regression-'));
@@ -124,4 +166,4 @@ test('a failing test leaves no Anvil child, even before startup returns', async 
     await cleanupTestProcesses();
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 45_000);

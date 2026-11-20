@@ -18,9 +18,9 @@ const pidAlive = (pid: number): boolean => {
   }
 };
 
-// The watchdog polls once a second, so allow it a few rounds.
+// The watchdog polls once a second; under heavy swap a round can take seconds.
 const eventually = async (check: () => boolean, error: string): Promise<void> => {
-  const deadline = performance.now() + 5_000;
+  const deadline = performance.now() + 15_000;
   while (!check()) {
     if (performance.now() > deadline) throw new Error(error);
     await Bun.sleep(50);
@@ -30,7 +30,7 @@ const eventually = async (check: () => boolean, error: string): Promise<void> =>
 // Anvil only writes anvil-state-* once more than ~500 blocks of history exist,
 // so the fixture mines 600 and records the directory before it ends. A failing
 // test without a stop call and a SIGKILLed runner fire no hooks at all.
-test.each(['stop', 'failure', 'SIGINT', 'SIGKILL'] as const)(
+test.each(['stop', 'failure', 'timeout', 'SIGINT', 'SIGKILL'] as const)(
   'test Anvil leaves no process or state cache after %s',
   async outcome => {
     const root = mkdtempSync(join(tmpdir(), 'xln-test-anvil-lifecycle-'));
@@ -58,10 +58,12 @@ test.each(['stop', 'failure', 'SIGINT', 'SIGKILL'] as const)(
         `writeFileSync(${safeStringify(evidencePath)}, JSON.stringify({ pid: child.pid, stateDirs }));`,
         ...(outcome === 'stop' ? ['await stopTestAnvil(child);'] : []),
         ...(outcome === 'failure' ? ["throw new Error('EXPECTED_TEST_FAILURE');"] : []),
+        // bun kills what a timed-out test spawned; the cache must still go.
+        ...(outcome === 'timeout' ? ['await new Promise(() => {});'] : []),
         ...(outcome === 'SIGINT' || outcome === 'SIGKILL'
           ? [`process.kill(process.pid, '${outcome}'); await new Promise(() => {});`]
           : []),
-        '}, 20000);',
+        `}, ${outcome === 'timeout' ? 5_000 : 20_000});`,
       ].join('\n'),
     );
     try {
@@ -74,7 +76,7 @@ test.each(['stop', 'failure', 'SIGINT', 'SIGKILL'] as const)(
         runner.once('exit', (code, signal) => done(signal ?? String(code)));
       });
       const [, stderr] = await output;
-      const expected = { stop: '0', failure: '1', SIGINT: 'SIGINT', SIGKILL: 'SIGKILL' }[outcome];
+      const expected = { stop: '0', failure: '1', timeout: '1', SIGINT: 'SIGINT', SIGKILL: 'SIGKILL' }[outcome];
       expect({ ended, stderr: ended === expected ? '' : stderr }).toEqual({ ended: expected, stderr: '' });
       const evidence = JSON.parse(readFileSync(evidencePath, 'utf8')) as { pid: number; stateDirs: string[] };
       expect(evidence.stateDirs.length).toBe(1);
@@ -88,5 +90,5 @@ test.each(['stop', 'failure', 'SIGINT', 'SIGKILL'] as const)(
       rmSync(root, { recursive: true, force: true });
     }
   },
-  30_000,
+  60_000,
 );
