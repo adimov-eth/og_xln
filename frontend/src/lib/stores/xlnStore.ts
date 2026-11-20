@@ -55,6 +55,7 @@ import {
 import { assertNetworkMachineIsLive, networkMachineRuntime } from './network/networkMachineRuntimeStore';
 import { normalizeWsConnectUrl, normalizeWsUrl, sameWsEndpoint } from '#lib/utils/runtime/wsUrl.ts';
 import { createRuntimeViewEnv, unwrapLiveRuntimeEnv } from '#lib/utils/runtime/liveRuntimeEnv.ts';
+import { haltedRuntimeMessage } from '#lib/utils/runtime/runtimeFailure.ts';
 import { registerDebugSurface } from '#lib/utils/runtime/debugSurface.ts';
 import {
   decodeProtectedVaultSecrets,
@@ -1371,6 +1372,9 @@ const drainLocalRuntimeInput = async (
 ): Promise<number> => {
   const startedAt = Date.now();
   for (let i = 0; i < 80; i += 1) {
+    // A halted Runtime never persists the input; say why instead of timing out.
+    const halted = haltedRuntimeMessage(env);
+    if (halted) throw new Error(halted);
     const persistedHeight = await findPersistedEmbeddedRuntimeInputHeight(
       (height) => xln.readPersistedStorageFrameRecord(env, height),
       input,
