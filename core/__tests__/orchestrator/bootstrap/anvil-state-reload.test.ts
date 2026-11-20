@@ -1,5 +1,4 @@
 import { expect, test } from 'bun:test';
-import { spawn } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -8,7 +7,8 @@ import { join, relative } from 'node:path';
 import { keccak256 } from 'ethers';
 
 import { safeStringify } from '../../../protocol/serialization';
-import { stopProcess, type ManagedChildProcess } from '../../../scripts/e2e/harness/e2e-managed-process';
+import type { ManagedChildProcess } from '../../../scripts/e2e/harness/e2e-managed-process';
+import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
 const CORE_ROOT = join(import.meta.dir, '../../..');
 const REPO_ROOT = join(CORE_ROOT, '..');
@@ -47,11 +47,11 @@ const rpcCall = async (rpcUrl: string, method: string, params: unknown[] = []): 
 
 // Same persistence flags as scripts/operations/start-anvil.sh.
 const startAnvil = async (port: number, root: string): Promise<ManagedChildProcess> => {
-  const child = spawn('anvil', [
+  const child = spawnTestAnvil([
     '--host', '127.0.0.1', '--port', String(port), '--chain-id', '31337', '--silent',
     '--block-gas-limit', '60000000', '--code-size-limit', '65536', '--prune-history', '128',
     '--state', join(root, 'anvil-state.json'), '--state-interval', '60', NO_CREATE2_INJECTION,
-  ], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TMPDIR: root } }) as ManagedChildProcess;
+  ], { stdio: ['ignore', 'pipe', 'pipe'] }) as ManagedChildProcess;
   const rpcUrl = `http://127.0.0.1:${port}`;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     try {
@@ -116,12 +116,13 @@ const expectReloadProvesHeader = async (prepare: (rpcUrl: string) => Promise<voi
     const live = await headEvidence(rpcUrl);
     expect(live.roots).toEqual([live.header, live.header, live.header]);
     await stopWithStateDump(child);
+    await stopTestAnvil(child);
     child = await startAnvil(port, root);
     const reloaded = await headEvidence(rpcUrl);
     expect(reloaded).toEqual(live);
     return reloaded;
   } finally {
-    await stopProcess(child, 3_000);
+    await stopTestAnvil(child);
     await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 };

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -20,6 +20,7 @@ import { createJAdapter, createXlnJsonRpcProvider, type JAdapter } from '../../.
 import { computeBatchHankoHash, createEmptyBatch, encodeJBatch } from '../../../../jurisdiction/machine/batch';
 import { createSettlementHashWithNonce } from '../../../../protocol/dispute/proof-builder';
 import { createEmptyEnv } from '../../../../runtime';
+import { spawnTestAnvil, stopTestAnvil } from '../../../helpers/process/test-anvil';
 
 const CHAIN_A = 31_337;
 const CHAIN_B = 31_338;
@@ -76,14 +77,14 @@ const startAnvil = async (chainId: number): Promise<ManagedAnvil> => {
   const port = await reservePort();
   const rpcUrl = `http://127.0.0.1:${port}`;
   const tmpRoot = await mkdtemp(join(tmpdir(), `xln-hanko-domain-${chainId}-`));
-  const child = spawn('anvil', [
+  const child = spawnTestAnvil([
     '--host', '127.0.0.1',
     '--port', String(port),
     '--chain-id', String(chainId),
     '--block-gas-limit', '60000000',
     '--prune-history', '256',
     '--state', join(tmpRoot, 'state.json'),
-  ], { env: { ...process.env, TMPDIR: tmpRoot } });
+  ]);
   // Anvil logs every RPC request to stdout. An unread pipe can block its RPC
   // task under the smaller pipe capacity of a busy Linux CI runner.
   child.stdout.resume();
@@ -101,17 +102,7 @@ const startAnvil = async (chainId: number): Promise<ManagedAnvil> => {
 };
 
 const stopAnvil = async (managed: ManagedAnvil): Promise<void> => {
-  if (managed.child.exitCode === null && managed.child.signalCode === null) {
-    managed.child.kill('SIGTERM');
-    await Promise.race([
-      new Promise<void>((resolve) => managed.child.once('exit', () => resolve())),
-      Bun.sleep(3_000).then(() => {
-        if (managed.child.exitCode === null && managed.child.signalCode === null) {
-          managed.child.kill('SIGKILL');
-        }
-      }),
-    ]);
-  }
+  await stopTestAnvil(managed.child);
   await rm(managed.tmpRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 };
 

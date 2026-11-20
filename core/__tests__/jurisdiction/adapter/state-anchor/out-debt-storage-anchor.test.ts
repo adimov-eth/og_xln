@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { ethers } from 'ethers';
 
@@ -29,6 +29,7 @@ import {
 } from '../../../../jurisdiction/adapter/rpc/state-anchor/rpc-storage-slots';
 import type { DebtEntry } from '../../../../types/finance/debt';
 import type { JurisdictionEvent } from '../../../../types/jurisdiction-events';
+import { spawnTestAnvil, stopTestAnvil } from '../../../helpers/process/test-anvil';
 
 // Out-debt (D2) anchor on a real chain: the derived Depository debt slots match
 // the public getters, an Entity with no open out-debt agrees with hash-bound
@@ -62,7 +63,7 @@ let jurisdiction: JurisdictionConfig;
 beforeAll(async () => {
   const port = await freePort();
   const rpcUrl = `http://127.0.0.1:${port}`;
-  anvil = spawn('anvil', [
+  anvil = spawnTestAnvil([
     '--host', '127.0.0.1', '--port', String(port), '--chain-id', String(CHAIN_ID),
     '--block-gas-limit', '60000000', '--silent',
   ], { stdio: 'ignore' });
@@ -87,7 +88,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await provider?.destroy();
-  anvil?.kill('SIGKILL');
+  await stopTestAnvil(anvil);
 });
 
 const openOutDebt = (debtor: string, creditor: string, tokenId: number, index: number, remaining: bigint): DebtEntry => ({

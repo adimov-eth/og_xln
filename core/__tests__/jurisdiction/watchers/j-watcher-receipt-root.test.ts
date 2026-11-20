@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -22,6 +22,7 @@ import { isTransientRpcUnavailableError } from '../../../jurisdiction/adapter/rp
 import { createLogBloomMatcher, normalizeReceiptHash, parseReceiptHex } from '../../../jurisdiction/machine/receipt-codec';
 import { ERC20Mock__factory } from '../../../../jurisdictions/typechain-types';
 import { sealedHeader } from '../../helpers/jurisdiction/sealed-header';
+import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
 const zeroBloom = `0x${'00'.repeat(256)}`;
 
@@ -101,12 +102,12 @@ const reservePort = async (): Promise<number> => await new Promise((resolve, rej
 beforeAll(async () => {
   const port = await reservePort();
   anvilRoot = await mkdtemp(join(tmpdir(), 'xln-receipt-root-'));
-  anvil = spawn('anvil', [
+  anvil = spawnTestAnvil([
     '--port', String(port),
     '--chain-id', '31337',
     '--silent',
     '--state', join(anvilRoot, 'state.json'),
-  ], { env: { ...process.env, TMPDIR: anvilRoot } });
+  ]);
   const rpcUrl = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -129,12 +130,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await provider?.destroy();
-  if (anvil && anvil.exitCode === null) {
-    const exited = new Promise<void>((resolve) => anvil!.once('exit', () => resolve()));
-    anvil.kill('SIGTERM');
-    await Promise.race([exited, Bun.sleep(2_000)]);
-    if (anvil.exitCode === null) anvil.kill('SIGKILL');
-  }
+  await stopTestAnvil(anvil, 2_000);
   if (anvilRoot) await rm(anvilRoot, { recursive: true, force: true });
 });
 

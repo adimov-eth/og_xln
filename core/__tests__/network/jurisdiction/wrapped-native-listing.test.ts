@@ -9,6 +9,7 @@ import { requireBoundaryRecord } from '../../../protocol/boundary-validation';
 import { safeStringify } from '../../../protocol/serialization';
 import { acquireLocalTestPortLease } from '../../../scripts/e2e/harness/local-test-port-lease';
 import { waitForRpcReady } from '../../../scripts/operations/settlement/rpc-settlement-anvil';
+import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
 const requireString = (value: unknown, code: string): string => {
   if (typeof value !== 'string' || value.length === 0) throw new Error(code);
@@ -20,9 +21,9 @@ test('real WETH backing and Foundation listings retain exact assets and sequenti
   const lease = await acquireLocalTestPortLease({ requiredOffsets: [0] });
   const rpc = `http://127.0.0.1:${lease.basePort}`;
   const key = HDNodeWallet.fromPhrase('test test test test test test test test test test test junk').privateKey;
-  const node = Bun.spawn(
-    ['anvil', '--host', '127.0.0.1', '--port', String(lease.basePort), '--chain-id', '31337', '--block-time', '1'],
-    { stdout: 'ignore', stderr: 'inherit' },
+  const node = spawnTestAnvil(
+    ['--host', '127.0.0.1', '--port', String(lease.basePort), '--chain-id', '31337', '--block-time', '1'],
+    { stdio: ['ignore', 'ignore', 'inherit'] },
   );
   const provider = new JsonRpcProvider(rpc);
   try {
@@ -117,8 +118,7 @@ test('real WETH backing and Foundation listings retain exact assets and sequenti
     );
   } finally {
     provider.destroy();
-    node.kill('SIGTERM');
-    await node.exited;
+    await stopTestAnvil(node);
     lease.release();
     await rm(work, { recursive: true, force: true });
   }

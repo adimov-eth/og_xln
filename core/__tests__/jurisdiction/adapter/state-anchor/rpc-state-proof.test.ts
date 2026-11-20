@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { ethers } from 'ethers';
 
@@ -10,6 +10,7 @@ import {
   verifyStorageProof,
   type GetProofResponse,
 } from '../../../../jurisdiction/adapter/rpc/state-anchor/rpc-state-proof';
+import { spawnTestAnvil, stopTestAnvil } from '../../../helpers/process/test-anvil';
 
 const ANVIL_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcad083cddc9fd5e1d';
 const SLOT_COUNT = 16;
@@ -49,7 +50,7 @@ const allSlots = Array.from({ length: SLOT_COUNT }, (_, slot) => BigInt(slot));
 
 beforeAll(async () => {
   const port = await reservePort();
-  anvil = spawn('anvil', ['--host', '127.0.0.1', '--port', String(port), '--chain-id', '31337', '--silent'], {
+  anvil = spawnTestAnvil(['--host', '127.0.0.1', '--port', String(port), '--chain-id', '31337', '--silent'], {
     stdio: 'ignore',
   });
   provider = new ethers.JsonRpcProvider(`http://127.0.0.1:${port}`, 31337, { staticNetwork: true });
@@ -74,8 +75,8 @@ beforeAll(async () => {
   stateRoot = String(block.stateRoot);
 }, 30_000);
 
-afterAll(() => {
-  anvil?.kill('SIGKILL');
+afterAll(async () => {
+  await stopTestAnvil(anvil);
 });
 
 describe('eth_getProof verification against an authenticated stateRoot', () => {

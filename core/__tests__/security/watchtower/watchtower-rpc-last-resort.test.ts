@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -23,6 +23,7 @@ import { generateLazyEntityId } from '../../../entity/factory';
 import { encodeTowerCounterDisputeRemedy, runWatchtowerSweep } from '../../../watchtower/action';
 import { startStandaloneWatchtowerServer, type StandaloneWatchtowerServer } from '../../../watchtower/standalone-server';
 import type { StoredTowerActionReceipt } from '../../../watchtower/store';
+import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
 const DEFAULT_HARDHAT_MNEMONIC = 'test test test test test test test test test test test junk';
 const DISPUTE_PROOF = 1;
@@ -31,15 +32,7 @@ const PROOF_BODY_ABI =
 
 const tempRoots: string[] = [];
 const servers: StandaloneWatchtowerServer[] = [];
-const anvilChildren: ChildProcessWithoutNullStreams[] = [];
-
-const waitForAnvilExit = async (child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> => {
-  if (child.exitCode !== null || child.signalCode !== null) return true;
-  return await Promise.race([
-    new Promise<boolean>((resolve) => child.once('exit', () => resolve(true))),
-    Bun.sleep(timeoutMs).then(() => false),
-  ]);
-};
+const anvilChildren: ChildProcess[] = [];
 
 const reserveFreePort = async (): Promise<number> => new Promise((resolve, reject) => {
   const server = createServer();
@@ -66,14 +59,7 @@ afterEach(async () => {
     if (server) await server.close();
   }
   while (anvilChildren.length > 0) {
-    const child = anvilChildren.pop();
-    if (!child || child.exitCode !== null || child.signalCode !== null) continue;
-    child.kill('SIGTERM');
-    const exited = await waitForAnvilExit(child, 3_000);
-    if (!exited && child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGKILL');
-      await waitForAnvilExit(child, 3_000);
-    }
+    await stopTestAnvil(anvilChildren.pop());
   }
   while (tempRoots.length > 0) {
     const root = tempRoots.pop();
@@ -141,11 +127,11 @@ const waitForRpcReady = async (rpcUrl: string): Promise<void> => {
   throw new Error(`RPC not ready at ${rpcUrl}: ${lastError}`);
 };
 
-const startAnvil = async (port: number, blockTimeSeconds = 0): Promise<{ child: ChildProcessWithoutNullStreams; rpcUrl: string }> => {
+const startAnvil = async (port: number, blockTimeSeconds = 0): Promise<{ child: ChildProcess; rpcUrl: string }> => {
   const rpcUrl = `http://127.0.0.1:${port}`;
   const anvilTmpRoot = await mkdtemp(join(tmpdir(), 'xln-watchtower-anvil-'));
   tempRoots.push(anvilTmpRoot);
-  const child = spawn('anvil', [
+  const child = spawnTestAnvil([
     '--host', '127.0.0.1',
     '--port', String(port),
     '--chain-id', '31337',
@@ -156,10 +142,9 @@ const startAnvil = async (port: number, blockTimeSeconds = 0): Promise<{ child: 
     '--state', join(anvilTmpRoot, 'state.json'),
   ], {
     stdio: ['ignore', 'ignore', 'pipe'],
-    env: { ...process.env, TMPDIR: anvilTmpRoot },
   });
   anvilChildren.push(child);
-  child.stderr.on('data', chunk => process.stderr.write(`[anvil] ${chunk.toString()}`));
+  child.stderr?.on('data', chunk => process.stderr.write(`[anvil] ${chunk.toString()}`));
   await waitForRpcReady(rpcUrl);
   return { child, rpcUrl };
 };

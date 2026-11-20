@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { ChildProcess } from 'node:child_process';
 import { JsonRpcProvider, Wallet, getBytes } from 'ethers';
 import { copyFile, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,9 +10,10 @@ import { decodeDeployJurisdictionStackRequest } from '../../jurisdiction/adapter
 import { validateJurisdictionsDataValue } from '../../jurisdiction/adapter/kernel/jurisdiction-loader';
 import { readCompilerBytecodeEvidence } from '../../jurisdiction/adapter/stack-manager/compiler-bytecode';
 import { safeStringify } from '../../protocol/serialization';
+import { spawnTestAnvil, stopTestAnvil } from '../helpers/process/test-anvil';
 
 const ANVIL_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
-const anvilProcesses: Bun.Subprocess[] = [];
+const anvilProcesses: ChildProcess[] = [];
 
 const reservePort = async (): Promise<number> => {
   const reservation = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('reserved') });
@@ -38,10 +40,7 @@ const waitForAnvil = async (rpcUrl: string): Promise<void> => {
 };
 
 afterEach(async () => {
-  for (const child of anvilProcesses.splice(0)) {
-    child.kill('SIGTERM');
-    await child.exited;
-  }
+  for (const child of anvilProcesses.splice(0)) await stopTestAnvil(child);
 });
 
 describe('Stack Manager real Anvil deployment', () => {
@@ -69,14 +68,12 @@ describe('Stack Manager real Anvil deployment', () => {
   });
 
   test('deploys, verifies, and persists the canonical V1 stack', async () => {
-    const anvil = Bun.which('anvil');
-    if (!anvil) throw new Error('ANVIL_BINARY_REQUIRED');
-    const port = await reservePort();
+        const port = await reservePort();
     const rpcUrl = `http://127.0.0.1:${port}`;
-    const child = Bun.spawn([
-      anvil, '--host', '127.0.0.1', '--port', String(port), '--chain-id', '31337',
+    const child = spawnTestAnvil([
+      '--host', '127.0.0.1', '--port', String(port), '--chain-id', '31337',
       '--block-gas-limit', '60000000', '--code-size-limit', '65536', '--silent',
-    ], { stdout: 'ignore', stderr: 'pipe' });
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
     anvilProcesses.push(child);
     await waitForAnvil(rpcUrl);
 

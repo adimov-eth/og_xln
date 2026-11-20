@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { ethers } from 'ethers';
 
@@ -30,6 +30,7 @@ import {
   setScenarioStorageEnabled,
 } from '../../../../scenarios/harness/helpers';
 import { startShortfallDispute, type DisputeParty } from '../../../fixtures/jurisdiction/real-dispute-shortfall';
+import { spawnTestAnvil, stopTestAnvil } from '../../../helpers/process/test-anvil';
 
 // Producer side of the anchor start on a real chain: a wallet Entity folded
 // from full history and an anchor start read only from storage proven under the
@@ -56,7 +57,7 @@ let rpcUrl = '';
 beforeAll(async () => {
   const port = await reservePort();
   rpcUrl = `http://127.0.0.1:${port}`;
-  anvil = spawn('anvil', [
+  anvil = spawnTestAnvil([
     '--host', '127.0.0.1', '--port', String(port), '--chain-id', String(CHAIN_ID),
     '--block-gas-limit', '60000000', '--silent',
   ], { stdio: 'ignore' });
@@ -78,7 +79,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await adapter?.stopWatchingAndWait();
   await adapter?.close();
-  anvil?.kill('SIGKILL');
+  await stopTestAnvil(anvil);
 });
 
 test('an anchor start proven from storage admits the same values the history fold reaches', async () => {
