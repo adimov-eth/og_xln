@@ -1230,8 +1230,8 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   .recovery-mode-option.selected {
-    border-color: rgba(251, 191, 36, 0.65);
-    background: rgba(251, 191, 36, 0.08);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 65%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 8%, transparent);
   }
 
   .recovery-mode-option:disabled {
@@ -1336,10 +1336,10 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .recovery-note {
     padding: 10px 14px;
-    border: 1px solid rgba(251, 191, 36, 0.2);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 20%, transparent);
     border-radius: 10px;
     color: var(--theme-accent, #c5cfde);
-    background: rgba(251, 191, 36, 0.06);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 6%, transparent);
     font-size: 12px;
   }
 
@@ -1420,7 +1420,7 @@ import { asTokenId } from "@xln/core/protocol/units";
   .hub-join-select:focus {
     outline: none;
     border-color: var(--theme-accent, #c5cfde);
-    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.08);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accent, #c5cfde) 8%, transparent);
   }
 
   .profile-preview-card {

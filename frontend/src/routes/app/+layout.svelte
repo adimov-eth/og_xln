@@ -603,13 +603,13 @@
 {:else if $error}
   <div class="error-screen" data-testid="app-initialization-error">
     {#if storageSchemaMismatch}
-      <h2>Obsolete testnet data rejected</h2>
+      <h2>This wallet data is too old to open</h2>
       <p class="schema-recovery-copy">
-        This device has storage schema {storageSchemaMismatch.storedVersion}, while this build requires
-        schema {storageSchemaMismatch.currentVersion}. No incompatible data was applied or deleted.
+        It was saved by an older version of the wallet (storage format {storageSchemaMismatch.storedVersion}; this build
+        reads {storageSchemaMismatch.currentVersion}). Nothing was changed or deleted.
       </p>
       <p class="schema-recovery-copy">
-        This obsolete testnet format cannot be restored. Reset the XLN testnet data and generate current data.
+        Resetting deletes the wallets saved on this device; have your recovery phrase or backup file ready to get them back.
       </p>
       <div class="schema-recovery-actions">
         <button
@@ -620,16 +620,12 @@
           {resettingEverything ? 'Resetting…' : 'Reset local data'}
         </button>
       </div>
-      <details class="schema-recovery-details">
-        <summary>Technical details</summary>
-        <code>{$error}</code>
-      </details>
+      <code class="startup-diagnostic">{$error}</code>
     {:else if deployVersionChange}
       <h2>Network updated</h2>
       <p class="schema-recovery-copy">
-        The data saved on this device belongs to an earlier version of the network and can't be opened here. Save your
-        backup first: resetting deletes the wallets saved on this device, and you will need your recovery phrase or
-        backup file to get them back.
+        The data saved on this device belongs to an earlier version of the network and can't be opened here. Resetting
+        deletes the wallets saved on this device; have your recovery phrase or backup file ready to get them back.
       </p>
       <button onclick={handleResetEverything} disabled={resettingEverything}>
         {resettingEverything ? 'Resetting…' : 'Reset local data'}
@@ -953,17 +949,6 @@
 
 
 
-  .schema-recovery-details {
-    max-width: min(720px, calc(100vw - 48px));
-    color: var(--theme-text-muted, #a8a29e);
-    font-size: 12px;
-  }
-
-  .schema-recovery-details code {
-    display: block;
-    margin-top: 8px;
-    overflow-wrap: anywhere;
-  }
 
   .inactive-tab-screen {
     gap: 14px;

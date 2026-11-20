@@ -410,7 +410,7 @@
   .summary-action-inline:hover:not(:disabled) {
     border-color: var(--theme-accent, #c5cfde);
     color: var(--theme-accent, #c5cfde);
-    background: rgba(251, 191, 36, 0.08);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 8%, transparent);
   }
   .summary-action-inline:disabled {
     opacity: 0.35;

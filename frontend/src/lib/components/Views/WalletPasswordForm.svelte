@@ -5,7 +5,8 @@
   import { deleteVaultDeviceKey } from '#lib/security/vaultProtection.ts';
   export let runtimeId: string;
   export let seed: string | undefined = undefined;
-  export let scheme: 'dark' | 'light' = 'dark';
+  /** Omitted: follow the page theme. Given: the host screen has its own scheme toggle, so match it. */
+  export let scheme: 'dark' | 'light' | undefined = undefined;
   export let onCancel: (() => void) | undefined = undefined;
   const dispatch = createEventDispatcher<{ unlocked: void; recover: void }>();
   let password = '', confirmation = '', error = '', busy = false;
@@ -40,7 +41,7 @@
   }
 </script>
 
-  <main class="unlock" class:scheme-light={scheme === 'light'}>
+  <main class="unlock" class:scheme-light={scheme === 'light'} class:scheme-dark={scheme === 'dark'}>
     <form on:submit|preventDefault={submit}>
       <p class="name">{wallet?.label || 'Wallet'}</p>
       <h1>{setup ? 'Set a local password' : 'Unlock wallet'}</h1>
@@ -61,10 +62,18 @@
     </form>
   </main>
 <style>
-  /* Global theme tokens; only a forced light scheme maps them to the light theme's values. */
+  /* Global theme tokens; a forced scheme restates its theme's values, composed tokens included, since those resolve at :root. */
   .unlock {
     box-sizing: border-box; min-height: 100dvh; display: grid; place-items: center; padding: 24px var(--content-pad, 16px);
     color: var(--theme-text-primary, #e6ebf2); background: var(--theme-bg-gradient, var(--theme-background, #07080b));
+  }
+  .scheme-dark {
+    --theme-background: #07080b; --theme-bg-gradient: linear-gradient(180deg, #14181f 0%, #080a0e 46%, #030406 100%);
+    --theme-text-primary: #e6ebf2; --theme-text-secondary: #9aa3b2; --theme-text-muted: #80889a;
+    --theme-surface: #121418; --theme-input-bg: #07080b; --theme-input-border: #5f656e; --theme-debit: #f43f5e;
+    --theme-accent: #c5cfde; --theme-accent-contrast: #050608;
+    --theme-primary-metal: linear-gradient(154deg, #f5f7fa 0%, color-mix(in srgb, #c5cfde 55%, #f5f7fa) 52%, #c5cfde 100%);
+    color-scheme: dark;
   }
   .scheme-light {
     --theme-background: #f2f4f8; --theme-bg-gradient: linear-gradient(180deg, #fbfcfd 0%, #f2f4f8 46%, #e5e9f0 100%); --theme-text-primary: #0f172a; --theme-text-secondary: #475569;
@@ -90,7 +99,7 @@
     background: var(--theme-primary-metal); color: var(--theme-accent-contrast, #050608);
   }
   button:disabled { cursor: default; background: color-mix(in srgb, var(--theme-text-primary, #e6ebf2) 8%, transparent); border-color: transparent; color: var(--theme-text-muted, #80889a); }
-  .recover { background: transparent; border-color: transparent; color: var(--theme-text-secondary, #9aa3b2); font-weight: 500; }
+  .recover, .recover:disabled { background: transparent; border-color: transparent; color: var(--theme-text-secondary, #9aa3b2); font-weight: 500; }
   .recover:hover:not(:disabled) { color: var(--theme-text-primary, #e6ebf2); }
   [role=alert] { color: color-mix(in srgb, var(--theme-debit, #ef4444) 70%, var(--theme-text-primary, #e6ebf2)); }
 </style>

@@ -365,7 +365,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
   .form-select:focus {
     border-color: var(--theme-accent, #c5cfde);
     outline: none;
-    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.1);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent);
   }
 
   .action-button {

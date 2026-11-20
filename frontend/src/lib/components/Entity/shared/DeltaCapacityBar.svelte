@@ -320,7 +320,7 @@
   }
 
   .delta-capacity-bar.interactive:focus-visible {
-    outline: 2px solid rgba(251, 191, 36, 0.78);
+    outline: 2px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 78%, transparent);
     outline-offset: 4px;
     border-radius: 6px;
   }
@@ -543,7 +543,7 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    border: 2px solid rgba(251, 191, 36, 0.6);
+    border: 2px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 60%, transparent);
     transform: translate(-50%, -50%);
     z-index: 10;
     animation: ripple-expand var(--bar-ripple-duration) ease-out forwards;

@@ -10,8 +10,8 @@ export function NetworkUpdatedGate({ storedVersion, currentVersion }: { storedVe
       <div className="gate-sheet">
         <h1 className="gate-title">Network updated</h1>
         <p className="gate-sub muted">
-          The data saved on this device belongs to an earlier version of the network and can't be opened. Save your
-          backup, then clear it. Your login stays.
+          The data saved on this device belongs to an earlier version of the network and can't be opened. Clearing
+          it keeps your login; have your recovery phrase or backup file ready.
         </p>
         <button
           type="button"

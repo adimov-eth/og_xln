@@ -331,7 +331,7 @@
     text-underline-offset: 2px;
   }
 
-  .tradeoff-list a:hover { color: #bae6fd; }
+  .tradeoff-list a:hover { color: var(--theme-text-primary, #e6ebf2); }
 
   .benefit-list > div > span {
     color: #86efac;
@@ -697,7 +697,7 @@
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: rgba(180, 140, 80, 0.85);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 85%, transparent);
   }
   .advanced-toggle-summary {
     font-size: 12px;
@@ -776,7 +776,7 @@
     width: 17px;
     height: 17px;
     margin: 0;
-    accent-color: #d6a85f;
+    accent-color: var(--rc-accent, #c5cfde);
   }
 
   .rehearsal-option > span {
@@ -1241,7 +1241,7 @@
     transform: translateX(-50%);
     width: 60%;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(180, 140, 80, 0.4), transparent);
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--rc-accent, #c5cfde) 40%, transparent), transparent);
   }
 
   /* Input Groups - Sacred inscriptions */
@@ -1253,7 +1253,7 @@
     display: block;
     font-size: 11px;
     font-weight: 400;
-    color: rgba(180, 140, 80, 0.8);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 80%, transparent);
     margin-bottom: 6px;
     letter-spacing: 0.15em;
     text-transform: uppercase;
@@ -1275,7 +1275,7 @@
     width: 100%;
     padding: 16px 18px;
     background: rgba(0, 0, 0, 0.6);
-    border: 1px solid rgba(180, 140, 80, 0.2);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 20%, transparent);
     border-radius: 2px;
     font-size: 16px;
     color: rgba(255, 255, 255, 0.9);
@@ -1286,9 +1286,9 @@
 
   .input-wrapper input:focus {
     outline: none;
-    border-color: rgba(180, 140, 80, 0.5);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 50%, transparent);
     background: rgba(0, 0, 0, 0.7);
-    box-shadow: 0 0 30px rgba(180, 140, 80, 0.1);
+    box-shadow: 0 0 30px color-mix(in srgb, var(--rc-accent, #c5cfde) 10%, transparent);
   }
 
   .input-wrapper input::placeholder {
@@ -1306,7 +1306,7 @@
     border: none;
     padding: 4px;
     cursor: pointer;
-    color: rgba(180, 140, 80, 0.4);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 40%, transparent);
     transition: color 0.3s;
     display: flex;
     align-items: center;
@@ -1314,7 +1314,7 @@
   }
 
   .input-wrapper .toggle-visibility:hover {
-    color: rgba(180, 140, 80, 0.9);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 90%, transparent);
   }
 
   .input-wrapper .suggest-btn {
@@ -1326,7 +1326,7 @@
     border: none;
     padding: 4px;
     cursor: pointer;
-    color: rgba(180, 140, 80, 0.4);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 40%, transparent);
     transition: color 0.3s;
     display: flex;
     align-items: center;
@@ -1334,7 +1334,7 @@
   }
 
   .input-wrapper .suggest-btn:hover {
-    color: rgba(180, 140, 80, 0.9);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 90%, transparent);
   }
 
   .input-wrapper:has(.toggle-visibility) input {
@@ -1472,7 +1472,7 @@
     padding: 0 10px;
     color: color-mix(in srgb, var(--rc-accent, #c5cfde) 96%, transparent);
     background: rgba(10, 10, 12, 0.9);
-    border: 1px solid rgba(180, 140, 80, 0.35);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 35%, transparent);
     border-radius: 4px;
   }
 
@@ -1528,7 +1528,7 @@
     transition: color 0.15s ease;
   }
   .reset-link:hover {
-    color: #f43f5e;
+    color: color-mix(in srgb, var(--theme-debit, #ef4444) 70%, var(--theme-text-primary, #e6ebf2));
   }
 
   .derive-btn:hover:not(:disabled) {
@@ -1548,7 +1548,7 @@
     font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
     text-shadow:
       0 0 20px color-mix(in srgb, var(--rc-accent, #c5cfde) 60%, transparent),
-      0 0 40px rgba(255, 180, 80, 0.4);
+      0 0 40px color-mix(in srgb, var(--rc-accent, #c5cfde) 30%, transparent);
   }
 
   .pyramid-progress-bar {
@@ -1594,7 +1594,7 @@
 
   .speed-eta {
     font-size: 14px;
-    color: #f5d78e;
+    color: var(--theme-text-primary, #e6ebf2);
     font-weight: 600;
     text-shadow: 0 0 10px color-mix(in srgb, var(--rc-accent, #c5cfde) 30%, transparent);
   }
@@ -1937,7 +1937,7 @@
     background: rgba(15, 23, 42, 0.08);
   }
   .brainvault-wrapper.embedded.scheme-light .pyramid-progress-fill {
-    background: linear-gradient(90deg, var(--l-accent), #818cf8);
+    background: linear-gradient(90deg, var(--l-accent), var(--l-accent-hover));
   }
 
   /* Titles + copy */
@@ -2054,17 +2054,6 @@
     background: rgba(15, 23, 42, 0.03);
     border-color: var(--l-border-strong);
     color: var(--l-text);
-  }
-  /* Hubs = the accent metal; never amber. */
-  .scheme-light .quick-login-btn.role-hub {
-    background: rgba(217, 119, 6, 0.08);
-    border-color: rgba(217, 119, 6, 0.28);
-    color: #b45309;
-  }
-  .scheme-light .quick-login-btn.role-hub:hover {
-    background: rgba(217, 119, 6, 0.14);
-    border-color: rgba(217, 119, 6, 0.45);
-    color: #92400e;
   }
   /* App entities = teal */
   .scheme-light .quick-login-btn.role-app {
@@ -2223,7 +2212,7 @@
     color: var(--l-accent);
   }
   .scheme-light .reset-link { color: var(--l-text-3); }
-  .scheme-light .reset-link:hover { color: #dc2626; }
+  .scheme-light .reset-link:hover { color: color-mix(in srgb, #dc2626 70%, var(--l-text)); }
 
   .scheme-light .warning-box {
     background: rgba(217, 119, 6, 0.07);
@@ -2268,7 +2257,7 @@
   }
   .scheme-light .pyramid-progress-bar { background: rgba(15, 23, 42, 0.08); }
   .scheme-light .pyramid-progress-fill {
-    background: linear-gradient(90deg, var(--l-accent) 0%, #818cf8 100%);
+    background: linear-gradient(90deg, var(--l-accent) 0%, var(--l-accent-hover) 100%);
     box-shadow: none;
   }
   .scheme-light .speed-control {

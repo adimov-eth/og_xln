@@ -136,7 +136,7 @@
 
   .es-trigger.open {
     border-color: var(--theme-accent, #c5cfde);
-    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.1);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent);
   }
 
   .es-value-main {
@@ -224,8 +224,8 @@
   }
 
   .es-option.selected {
-    background: rgba(251, 191, 36, 0.1);
-    border: 1px solid rgba(251, 191, 36, 0.2);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 20%, transparent);
   }
 
   .es-avatar {
@@ -287,7 +287,7 @@
   .es-copy:hover {
     color: var(--theme-accent, #c5cfde);
     border-color: #3f3f46;
-    background: rgba(251, 191, 36, 0.05);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 5%, transparent);
   }
 
   .es-empty {

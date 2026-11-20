@@ -24,7 +24,7 @@ describe('storage schema recovery UX', () => {
     expect(vault).toContain('VAULT_OBSOLETE_PLAINTEXT_PROFILE:');
     expect(vault).toContain('async restoreRuntimeFromRecoveryCandidate(');
     expect(layout).toContain('parseStorageSchemaMismatch($error)');
-    expect(layout).toContain('Obsolete testnet data rejected');
+    expect(layout).toContain('This wallet data is too old to open');
     expect(layout).not.toContain('data-testid="storage-schema-recover"');
     expect(layout).toContain('data-testid="storage-schema-reset"');
   });

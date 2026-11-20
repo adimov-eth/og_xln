@@ -178,7 +178,7 @@
   }
 
   .asset-ledger-total {
-    background: rgba(245, 158, 11, 0.05);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 5%, transparent);
   }
 
   .asset-ledger-total .token-name {

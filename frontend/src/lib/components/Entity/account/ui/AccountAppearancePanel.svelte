@@ -263,8 +263,8 @@
 
   .appearance-pill.active {
     color: var(--theme-accent, #c5cfde);
-    background: rgba(251, 191, 36, 0.12);
-    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2) inset;
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--theme-accent, #c5cfde) 20%, transparent) inset;
   }
 
   .appearance-pill.active .pill-icon {
