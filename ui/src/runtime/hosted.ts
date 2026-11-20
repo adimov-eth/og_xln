@@ -18,7 +18,7 @@ import { getXLN } from './xln-loader';
 import type { RuntimeRecoveryCandidate } from './restore';
 import { connectEmbedded, getEmbeddedEnv, lockEmbeddedRuntime, requireAdapter } from './adapter';
 import { readJson } from './http';
-import { waitFor } from './tx';
+import { haltedRuntimeMessage, waitFor } from './tx';
 import { accountDisputeConfig } from './financial/roles';
 import { entityTxOpensAccount } from './financial/open-account-match';
 import type { EntityTx, RuntimeAdapterEntitySummary, RuntimeReplica } from '@xln/core/api/public/runtime-module';
@@ -73,9 +73,15 @@ async function relayConnected(
     return true;
   } catch (error) {
     if (isChainCatchupCancelled(error) || !owns()) throw error;
+    // A halted Runtime is not an unreachable relay: the relay rejects a second
+    // copy of this wallet, and the user must close one copy, not reconnect.
     useApp
       .getState()
-      .toast('The network relay is not reachable. Reconnect before opening your hub account from Home.', 'danger');
+      .toast(
+        haltedRuntimeMessage() ??
+          'The network relay is not reachable. Reconnect before opening your hub account from Home.',
+        'danger',
+      );
     return false;
   }
 }

@@ -16,9 +16,10 @@ mock.module('./commands', () => ({
     return { ok: true };
   },
 }));
+let embeddedEnv: unknown = null;
 mock.module('./adapter', () => ({
   getAdapter: () => null,
-  getEmbeddedEnv: () => null,
+  getEmbeddedEnv: () => embeddedEnv,
   requireAdapter: () => ({ read: async () => [] }),
   connectEmbedded: async () => {},
   lockEmbeddedRuntime: async () => {},
@@ -84,6 +85,24 @@ test('a session replaced while waiting for the relay sends nothing and shows no 
   expect(isChainCatchupCancelled(await run)).toBe(true);
   expect(sends).toEqual([]);
   expect(shown).toEqual([]);
+});
+
+test('a Runtime halted by a second copy of the wallet says so instead of blaming the relay', async () => {
+  sends.length = 0;
+  shown.length = 0;
+  embeddedEnv = {
+    infrastructure: {
+      halted: true,
+      fatalDebugPayload: { message: 'WS_RELAY_FATAL:{"error":"DUPLICATE_RUNTIME_CONNECTION:0x01"}' },
+    },
+  };
+  try {
+    await openFirstHubAccount(xlnWith(() => false), env, stack, entityId, `0x${'ef'.repeat(20)}`, () => true);
+  } finally {
+    embeddedEnv = null;
+  }
+  expect(sends).toEqual([]);
+  expect(shown).toEqual(['This wallet is already open elsewhere. Close the other wallet before reopening here.']);
 });
 
 test('the first hub Account extends the Everyday $250 transit cap and $1 auto-settle policy by default', async () => {
