@@ -31,8 +31,9 @@ export function ReceiveCapacity(props: Props) {
 
 function ReceiveCapacityIntent(props: Props) {
   const id = useId();
-  // Collateral for a future receipt is not offered yet, so the working choice (credit) is the default.
-  const [creditPercent, setCreditPercent] = useState(100);
+  // Owner decision (docs/receive-capacity.md): every intent starts at 100% collateral. Collateral for a
+  // future receipt is not offered yet, so the screen states that and offers credit as an explicit choice.
+  const [creditPercent, setCreditPercent] = useState(0);
   const commandReady = useApp(s => s.commandReady);
   const [buffer, setBuffer] = useState(true);
   const [busy, setBusy] = useState(false);
