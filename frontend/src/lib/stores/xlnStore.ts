@@ -1371,10 +1371,10 @@ const LOCAL_RUNTIME_INPUT_CEILING_MS = 120_000;
 
 /**
  * Wait for the submitted input to reach a persisted frame, judged by progress, not a clock.
- * A halt fails at once. While saved frames trail the in-memory height and keep advancing,
- * the input may be in the unsaved tail (Safari's IndexedDB takes seconds per frame), so the
- * wait continues. Once saving has caught up and the input is still absent, a quiet stretch
- * means it was dropped or is stuck, and the wait says so.
+ * A halt fails at once. While saved frames trail the in-memory height, the input may be in
+ * the unsaved tail (Safari's IndexedDB takes seconds per frame), so no stall clock runs.
+ * Once saving has caught up and the input is still absent for the stall window, it was
+ * dropped or is stuck, and the wait says so. The ceiling bounds everything else.
  */
 const drainLocalRuntimeInput = async (
   xln: XLNModule,
@@ -1383,8 +1383,7 @@ const drainLocalRuntimeInput = async (
   afterHeight: number,
 ): Promise<number> => {
   const startedAt = Date.now();
-  let progressAt = startedAt;
-  let savedHeight = -1;
+  let caughtUpSince: number | null = null;
   for (;;) {
     const halted = haltedRuntimeMessage(env);
     if (halted) throw new Error(halted);
@@ -1397,12 +1396,11 @@ const drainLocalRuntimeInput = async (
     );
     if (persistedHeight !== null) return persistedHeight;
     const head = Math.floor(Number((await xln.readPersistedStorageHead(env))?.latestHeight ?? 0));
-    if (head > savedHeight) {
-      if (head < latestHeight) progressAt = Date.now();
-      savedHeight = head;
-    }
     const now = Date.now();
-    if (now - progressAt > LOCAL_RUNTIME_INPUT_STALL_MS || now - startedAt > LOCAL_RUNTIME_INPUT_CEILING_MS) {
+    // Saving still trails the in-memory height: the input may be in the unsaved tail, so no stall clock runs.
+    caughtUpSince = head < latestHeight ? null : (caughtUpSince ?? now);
+    const stalled = caughtUpSince !== null && now - caughtUpSince > LOCAL_RUNTIME_INPUT_STALL_MS;
+    if (stalled || now - startedAt > LOCAL_RUNTIME_INPUT_CEILING_MS) {
       throw new Error(
         `LOCAL_RUNTIME_INPUT_COMMIT_STALLED: after=${afterHeight} latest=${latestHeight} saved=${head}`,
       );
