@@ -1,35 +1,49 @@
-import { armedAttribute } from '@xln/frontend/lib/utils/control/armed-press';
-import { EVERYDAY_COPY } from '@xln/frontend/lib/everyday/wallet-posture';
-import { useClearTestData } from './useClearTestData';
+import { useState } from 'react';
+import { RESET_CONFIRMATION, RESET_WARNING } from '@xln/frontend/lib/utils/control/resetBrowserData';
+import { resetReactLocalData } from '../../runtime/deploy-version';
 
-/** The deployment changed under saved state: one deliberate, two-press way forward, with the versions as evidence. */
+/**
+ * The deployment changed under saved state on a network that is not disposable. As in the Svelte wallet, the only
+ * way forward deletes the wallets on this device, keys included, so it takes the typed phrase; the versions are the evidence.
+ */
 export function NetworkUpdatedGate({ storedVersion, currentVersion }: { storedVersion: string; currentVersion: string }) {
-  const reset = useClearTestData();
+  const [resetting, setResetting] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const reset = (): void => {
+    if (resetting) return;
+    const confirmation = window.prompt(RESET_WARNING);
+    if (confirmation !== RESET_CONFIRMATION) return;
+    setResetting(true);
+    setFailed(false);
+    void resetReactLocalData(confirmation).catch(failure => {
+      console.error('[reset] reset local data failed', failure);
+      setResetting(false);
+      setFailed(true);
+    });
+  };
+
   return (
     <div className="gate">
       <div className="gate-sheet">
         <h1 className="gate-title">Network updated</h1>
         <p className="gate-sub muted">
-          The data saved on this device belongs to an earlier version of the network and can't be opened. Clearing
-          it keeps your login; have your recovery phrase or backup file ready.
+          The data saved on this device belongs to an earlier version of the network and can't be opened here.
+          Resetting deletes the wallets saved on this device; have your recovery phrase or backup file ready to get
+          them back.
         </p>
         <button
           type="button"
-          className={reset.armed || reset.resetting ? 'btn danger reset-action' : 'btn reset-action'}
-          disabled={reset.resetting}
-          onClick={reset.press}
-          onBlur={reset.disarm}
-          data-armed={armedAttribute(reset.arm)}
-          data-testid="settings-clear-test-data"
+          className="btn reset-action"
+          disabled={resetting}
+          onClick={reset}
+          data-testid="network-updated-reset"
         >
-          {reset.label}
+          {resetting ? 'Resetting…' : 'Reset local data'}
         </button>
-        <span className="sr-only" role="status">
-          {reset.armed ? 'Press again to clear test data. This cannot be undone.' : ''}
-        </span>
-        {reset.failed ? (
+        {failed ? (
           <p className="gate-error" role="alert">
-            {EVERYDAY_COPY.flows.resetDemo.failed}
+            Couldn't finish resetting. Reload the page to continue.
           </p>
         ) : null}
         <code className="gate-diagnostic">

@@ -135,3 +135,18 @@ export async function runRetiredTestnetReset(options: {
   options.afterClear?.();
   window.location.replace(options.redirectPath ?? '/app');
 }
+
+/** The full reset for a deployment that is not disposable: vaults and keys go too, so it takes the typed phrase. */
+export async function runLocalDataReset(options: {
+  confirmation: string;
+  redirectPath?: string;
+  stopRuntime: () => Promise<void>;
+  broadcastReset: () => void;
+}): Promise<void> {
+  if (options.confirmation !== RESET_CONFIRMATION) throw new Error('RESET_CONFIRMATION_REQUIRED');
+  await options.stopRuntime();
+  options.broadcastReset();
+  await sleep(RESET_TAB_SETTLE_MS);
+  await clearBrowserRuntimeData(options.confirmation);
+  window.location.replace(options.redirectPath ?? '/app');
+}

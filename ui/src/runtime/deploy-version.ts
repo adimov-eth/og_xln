@@ -1,5 +1,5 @@
 import { broadcastHardResetRequest } from '@xln/frontend/lib/utils/control/activeTabLock';
-import { runRetiredTestnetReset } from '@xln/frontend/lib/utils/control/resetBrowserData';
+import { runLocalDataReset, runRetiredTestnetReset } from '@xln/frontend/lib/utils/control/resetBrowserData';
 import {
   isDisposableLocalTestnet,
   resolveDeployVersionAction,
@@ -65,6 +65,19 @@ export function resetReactRetiredTestnetState(
     notifyReset();
   }
   return retiredResetPromise;
+}
+
+/** Deletes every wallet saved in this browser, keys included; the caller collects the typed confirmation. */
+export function resetReactLocalData(confirmation: string): Promise<void> {
+  return runLocalDataReset({
+    confirmation,
+    redirectPath: resolveReactRedirectPath(),
+    stopRuntime: async () => {
+      const { lockEmbeddedRuntime } = await import('./adapter');
+      await lockEmbeddedRuntime();
+    },
+    broadcastReset: broadcastHardResetRequest,
+  });
 }
 
 export type DeployVersionCheckDeps = {
