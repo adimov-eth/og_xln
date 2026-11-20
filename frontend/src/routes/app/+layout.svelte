@@ -29,6 +29,7 @@
   import { isDisposableLocalTestnet, resolveDeployVersionAction } from '#lib/utils/deployVersionPolicy.ts';
   import { resetEverything, resetRetiredTestnetState } from '#lib/utils/control/resetEverything.ts';
   import { parseStorageSchemaMismatch } from '#lib/utils/recovery/storageSchemaRecovery.ts';
+  import { explainWalletError } from '#lib/utils/ui/walletError.ts';
   import {
     adoptActiveTabLock,
     clearInactiveTabStandby,
@@ -89,6 +90,12 @@
     version: string;
     ephemeralTestnet: boolean;
   };
+
+  /** The plain sentence above a fail-stop diagnostic; the diagnostic itself stays on screen. */
+  function startupFailureLead(message: string): string {
+    const explained = explainWalletError(message);
+    return explained === message ? 'It stopped while opening. Retry first; the details below say what failed.' : explained.split('\n')[0]!;
+  }
 
   function logAppShellDiagnostic(message: string, details?: unknown): void {
     errorLog.log(message, 'App Shell', details);
@@ -616,12 +623,16 @@
         <code>{$error}</code>
       </details>
     {:else}
-      <h2>❌ Initialization Failed</h2>
-      <p class="error-msg">{$error}</p>
-      <button onclick={() => initializeXLN()}>Retry</button>
-      <button onclick={handleResetEverything} disabled={resettingEverything}>
-        {resettingEverything ? 'Resetting...' : 'Reset local data'}
-      </button>
+      <h2>The wallet couldn't open</h2>
+      <p class="schema-recovery-copy">{startupFailureLead($error)}</p>
+      <button class="startup-retry" onclick={() => initializeXLN()}>Retry</button>
+      <code class="startup-diagnostic">{$error}</code>
+      <div class="startup-reset">
+        <p>If Retry keeps failing, resetting deletes the wallets saved on this device. You will need your recovery phrase or backup file to get them back.</p>
+        <button onclick={handleResetEverything} disabled={resettingEverything}>
+          {resettingEverything ? 'Resetting…' : 'Reset local data'}
+        </button>
+      </div>
     {/if}
   </div>
 {:else if !activeTabLockReady || $isLoading || !$xlnFunctions.isReady}
@@ -958,30 +969,82 @@
     font-size: 16px;
   }
 
+  /* Soft-touch black: an action that is not the one primary on the screen. */
   .inactive-tab-screen button,
   .error-screen button {
-    padding: 12px 18px;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 24%, transparent);
-    background: linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--theme-accent, #c5cfde) 18%, var(--theme-surface, var(--theme-card-bg, #18181b))),
-      color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, var(--theme-background, #09090b))
-    );
-    color: color-mix(in srgb, var(--theme-accent, #c5cfde) 58%, white);
-    font-weight: 700;
+    min-height: 48px;
+    padding: 0 20px;
+    border-radius: var(--ui-radius-base, 12px);
+    border: 1px solid var(--theme-input-border, #5f656e);
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-primary, #e6ebf2);
+    font: inherit;
+    font-weight: 600;
     cursor: pointer;
+    transition: background-color 120ms ease-out, border-color 120ms ease-out;
+  }
+
+  .inactive-tab-screen button:hover:not(:disabled),
+  .error-screen button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--theme-text-primary, #e6ebf2) 6%, var(--theme-surface, #121418));
+  }
+
+  .inactive-tab-screen button:active:not(:disabled),
+  .error-screen button:active:not(:disabled) {
+    box-shadow: inset 0 2px 6px color-mix(in srgb, black 45%, transparent);
   }
 
   .error-screen button:disabled {
     cursor: wait;
-    opacity: 0.55;
+    color: var(--theme-text-muted, #80889a);
   }
 
-  .error-msg {
-    max-width: 560px;
-    margin: 0;
-    color: color-mix(in srgb, var(--theme-danger, #ef4444) 78%, var(--theme-text-primary, white));
+  /* The one primary: machined metal, obsidian ink. */
+  .error-screen button.startup-retry {
+    min-width: 12em;
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent);
+    background: var(--theme-primary-metal);
+    color: var(--theme-accent-contrast, #050608);
+  }
+
+  .error-screen button.startup-retry:hover {
+    background: var(--theme-primary-metal);
+    filter: brightness(1.05);
+  }
+
+  /* Fail-stop evidence stays on screen, demoted and selectable. */
+  .startup-diagnostic {
+    max-width: min(560px, 100%);
+    color: var(--theme-text-muted, #80889a);
+    font-size: 12px;
+    line-height: 1.5;
     text-align: center;
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+
+  .startup-reset {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    max-width: 440px;
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--theme-border, #262a31);
+    text-align: center;
+  }
+
+  .startup-reset p {
+    margin: 0;
+    color: var(--theme-text-secondary, #a8b0bd);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  @media (max-width: 480px) {
+    .error-screen {
+      padding: 40px var(--content-pad, 16px);
+    }
   }
 </style>
