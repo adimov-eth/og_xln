@@ -73,6 +73,7 @@ test('vaultStore enforces fail-closed loadEnvFromDB, preserves rebootstrap marke
     waitForRuntimeProcessingIdle: async () => true,
     safeStringify: (v: unknown) => JSON.stringify(v),
     readPersistedStorageFrameRecord: async (_env: unknown, height: number) => persistedFrames.get(height) ?? null,
+    readPersistedStorageHead: async () => ({ latestHeight: Math.max(0, ...persistedFrames.keys()) }),
     stopJurisdictionWatchersAndWait: async () => {},
     waitForRuntimeWorkDrained: async () => true,
     stopRuntimeLoopAndWait: async () => true,

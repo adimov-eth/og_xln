@@ -706,22 +706,33 @@ export const applyRecoveryBundleMetadata = (runtime: Runtime, bundle: RuntimeRec
 
 export { RETIRED_TESTNET_REBOOTSTRAP_KEY };
 
-const readRetiredTestnetRebootstrapIds = (): string[] => {
-  if (typeof localStorage === 'undefined' || typeof localStorage.getItem !== 'function') return [];
+/** A rebuild relaxes the strict restore check; it may stay unfinished for at most this long. */
+const REBUILD_LENIENCY_MS = 24 * 60 * 60 * 1000;
+
+type RebootstrapMarker = { ids: string[]; markedAt: number | null };
+
+const readRetiredTestnetRebootstrapMarker = (): RebootstrapMarker => {
+  const empty: RebootstrapMarker = { ids: [], markedAt: null };
+  if (typeof localStorage === 'undefined' || typeof localStorage.getItem !== 'function') return empty;
   const raw = localStorage.getItem(RETIRED_TESTNET_REBOOTSTRAP_KEY);
-  if (!raw) return [];
+  if (!raw) return empty;
   try {
     const parsed = parseJsonUnknown(raw, 'REBOOTSTRAP_MARKER_JSON_INVALID');
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map(item => normalizeRuntimeId(String(item || ''))).filter(Boolean);
+    // Older markers are a bare list of runtime ids with no time.
+    const list = Array.isArray(parsed) ? parsed : isRecord(parsed) && Array.isArray(parsed['ids']) ? parsed['ids'] : [];
+    const markedAt = isRecord(parsed) && typeof parsed['markedAt'] === 'number' ? parsed['markedAt'] : null;
+    return { ids: list.map(item => normalizeRuntimeId(String(item || ''))).filter(Boolean), markedAt };
   } catch {
-    return [];
+    return empty;
   }
 };
 
 export const hasRetiredTestnetRebootstrap = (runtimeId: string): boolean => {
   const normalized = normalizeRuntimeId(runtimeId);
-  return Boolean(normalized && readRetiredTestnetRebootstrapIds().includes(normalized));
+  const marker = readRetiredTestnetRebootstrapMarker();
+  if (!normalized || !marker.ids.includes(normalized)) return false;
+  // Past the window the wallet is judged as restored state again, finished or not.
+  return marker.markedAt === null || Date.now() - marker.markedAt <= REBUILD_LENIENCY_MS;
 };
 
 export const clearRetiredTestnetRebootstrap = (runtimeId: string): void => {
@@ -730,7 +741,8 @@ export const clearRetiredTestnetRebootstrap = (runtimeId: string): void => {
   }
   const normalized = normalizeRuntimeId(runtimeId);
   if (!normalized) return;
-  const remaining = readRetiredTestnetRebootstrapIds().filter(id => id !== normalized);
+  const marker = readRetiredTestnetRebootstrapMarker();
+  const remaining = marker.ids.filter(id => id !== normalized);
   if (remaining.length === 0) localStorage.removeItem(RETIRED_TESTNET_REBOOTSTRAP_KEY);
-  else localStorage.setItem(RETIRED_TESTNET_REBOOTSTRAP_KEY, JSON.stringify(remaining));
+  else localStorage.setItem(RETIRED_TESTNET_REBOOTSTRAP_KEY, JSON.stringify({ ids: remaining, markedAt: marker.markedAt }));
 };

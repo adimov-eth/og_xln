@@ -37,7 +37,7 @@ export function markRetiredTestnetRebootstrapRuntimes(): void {
       .map(id => id.trim().toLowerCase())
       .filter(Boolean);
     if (ids.length > 0) {
-      localStorage.setItem(RETIRED_TESTNET_REBOOTSTRAP_KEY, JSON.stringify(ids));
+      localStorage.setItem(RETIRED_TESTNET_REBOOTSTRAP_KEY, JSON.stringify({ ids, markedAt: Date.now() }));
     }
   } catch {
     // Corrupted vault storage continues fail-closed without bootstrapping over it.

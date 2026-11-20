@@ -1051,7 +1051,11 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
     bootstrappedFreshEnv = true;
   }
 
-  if (env && (!env.state.jReplicas || env.state.jReplicas.size === 0)) {
+  // A rebuild interrupted before its first network import keeps its env: the repair below imports
+  // the primary network into it. A fresh env cannot replace it, because its frames would be older
+  // than the saved head and the storage writer would refuse them.
+  const unfinishedRebuild = Boolean(env) && rebootstrapRequested && !restoredFromTower;
+  if (env && !unfinishedRebuild && (!env.state.jReplicas || env.state.jReplicas.size === 0)) {
     if (!restoredFromTower) {
       throw new Error(
         `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: restored env missing jReplicas`,
@@ -1085,7 +1089,9 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
     return false;
   };
 
-  if (env && !restoredFromTower) {
+  // While the rebuild marker is set the env is a disposable testnet still being rebuilt, not
+  // restored state; the rebuild below finishes it. Every other wallet stays strict.
+  if (env && !restoredFromTower && !rebootstrapRequested) {
     for (const signer of runtime.signers || []) {
       if (!signer?.entityId) continue;
       if (!hasEntityReplica(signer.entityId)) {
@@ -1157,46 +1163,7 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
       `importJ(${primaryJurisdictionName}).addresses`,
       45_000,
     );
-    for (const secondary of defaultJurisdictionImports.slice(1)) {
-      const secondaryRpcUrl = resolveRpcUrl(resolveJurisdictionRpc(secondary.config), baseOrigin);
-      const secondaryChainId = resolveJurisdictionChainId(secondary.config, `VaultStore.restore.${secondary.name}`);
-      await enqueueAndAwait(
-        xln,
-        env,
-        {
-          runtimeTxs: [
-            {
-              type: 'importJ',
-              data: {
-                name: secondary.name,
-                chainId: secondaryChainId,
-                ticker: String((secondary.config as { currency?: unknown }).currency || 'USDC'),
-                rpcs: [secondaryRpcUrl],
-                entityProviderDeploymentBlock: requireEntityProviderDeploymentBlock(
-                  secondary.config.entityProviderDeploymentBlock,
-                  `VaultStore.restore.${secondary.name}`,
-                ),
-                blockTimeMs: requireJurisdictionBlockTimeMs(
-                  secondary.config.blockTimeMs,
-                  `VaultStore.restore.${secondary.name}`,
-                ),
-                contracts: secondary.config.contracts,
-                startAtCurrentBlock: false,
-              },
-            },
-          ],
-          entityInputs: [],
-        },
-        () => hasRuntimeJurisdictionAddresses(findJReplicaByName(env!, secondary.name)),
-        `importJ(${secondary.name})`,
-        45_000,
-      );
-      await waitForCondition(
-        () => hasRuntimeJurisdictionAddresses(findJReplicaByName(env!, secondary.name)),
-        `importJ(${secondary.name}).addresses`,
-        45_000,
-      );
-    }
+    await importMissingSecondaryJurisdictions(xln, env, defaultJurisdictionImports, baseOrigin);
   } else {
     applyRuntimeLogPreference(env);
     env.runtimeSeed = runtimeSeed;
@@ -1255,6 +1222,10 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
   }
 
   ensureRuntimeLoopRunning(env, xln, `post-restore:${runtimeIdLower.slice(0, 12)}`);
+  if (unfinishedRebuild) {
+    // Finish the interrupted rebuild of a disposable testnet: the primary is repaired above.
+    await importMissingSecondaryJurisdictions(xln, env, defaultJurisdictionImports, baseOrigin);
+  }
 
   for (const signer of runtime.signers || []) {
     const entityId = normalizeEntityId(signer?.entityId);
@@ -1294,7 +1265,7 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
       continue;
     }
 
-    if (!anyEntityReplica && !bootstrappedFreshEnv) {
+    if (!anyEntityReplica && !bootstrappedFreshEnv && !rebootstrapRequested) {
       throw new Error(
         `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: entity missing after restore ${entityId.slice(0, 12)}`,
       );
@@ -1338,10 +1309,88 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
   }
 
   if (rebootstrapRequested) {
-    clearRetiredTestnetRebootstrap(runtimeIdLower);
+    await clearRebootstrapOnceRebuildIsDurable(xln, env, runtime, runtimeIdLower);
   }
 
   return env;
+}
+
+/** The rebuild ends only when every signer's entity exists and is saved; until then the marker stays. */
+async function clearRebootstrapOnceRebuildIsDurable(
+  xln: XLNModule,
+  env: RuntimeReplica,
+  runtime: Runtime,
+  runtimeIdLower: string,
+): Promise<void> {
+  const missing = (runtime.signers || []).filter(signer =>
+    signer?.entityId && !findEntityReplicaByEntityId(env, normalizeEntityId(signer.entityId)));
+  if (missing.length > 0) {
+    errorLog.log('Rebuild left signers without an entity; it continues on the next open', 'Runtime Restore', {
+      runtimeId: runtime.id,
+      missingEntityIds: missing.map(signer => signer.entityId),
+    });
+    return;
+  }
+  const targetHeight = Math.floor(Number(env.state.height || 0));
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const savedHeight = Math.floor(Number((await xln.readPersistedStorageHead(env))?.latestHeight ?? 0));
+    if (savedHeight >= targetHeight) {
+      clearRetiredTestnetRebootstrap(runtimeIdLower);
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  errorLog.log('Rebuild not saved yet; it continues on the next open', 'Runtime Restore', { runtimeId: runtime.id, targetHeight });
+}
+
+async function importMissingSecondaryJurisdictions(
+  xln: XLNModule,
+  env: RuntimeReplica,
+  defaultJurisdictionImports: ReturnType<typeof listDefaultJurisdictionImports>,
+  baseOrigin: string,
+): Promise<void> {
+  for (const secondary of defaultJurisdictionImports.slice(1)) {
+    if (hasRuntimeJurisdictionAddresses(findJReplicaByName(env, secondary.name))) continue;
+    const secondaryRpcUrl = resolveRpcUrl(resolveJurisdictionRpc(secondary.config), baseOrigin);
+    const secondaryChainId = resolveJurisdictionChainId(secondary.config, `VaultStore.restore.${secondary.name}`);
+    await enqueueAndAwait(
+      xln,
+      env,
+      {
+        runtimeTxs: [
+          {
+            type: 'importJ',
+            data: {
+              name: secondary.name,
+              chainId: secondaryChainId,
+              ticker: String((secondary.config as { currency?: unknown }).currency || 'USDC'),
+              rpcs: [secondaryRpcUrl],
+              entityProviderDeploymentBlock: requireEntityProviderDeploymentBlock(
+                secondary.config.entityProviderDeploymentBlock,
+                `VaultStore.restore.${secondary.name}`,
+              ),
+              blockTimeMs: requireJurisdictionBlockTimeMs(
+                secondary.config.blockTimeMs,
+                `VaultStore.restore.${secondary.name}`,
+              ),
+              contracts: secondary.config.contracts,
+              startAtCurrentBlock: false,
+            },
+          },
+        ],
+        entityInputs: [],
+      },
+      () => hasRuntimeJurisdictionAddresses(findJReplicaByName(env, secondary.name)),
+      `importJ(${secondary.name})`,
+      45_000,
+    );
+    await waitForCondition(
+      () => hasRuntimeJurisdictionAddresses(findJReplicaByName(env, secondary.name)),
+      `importJ(${secondary.name}).addresses`,
+      45_000,
+    );
+  }
 }
 
 function registerRuntimeResumeListener(): void {

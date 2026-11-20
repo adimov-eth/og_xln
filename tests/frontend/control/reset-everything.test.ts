@@ -289,6 +289,16 @@ test('rebootstrap marker tracks preserved runtimes, clears individually or on fu
     expect(hasRetiredTestnetRebootstrap(runtimeA)).toBe(false);
     expect(hasRetiredTestnetRebootstrap(runtimeB)).toBe(true);
 
+    // A marker saved before markers carried a time still counts.
+    local.setItem(RETIRED_TESTNET_REBOOTSTRAP_KEY, JSON.stringify([runtimeB]));
+    expect(hasRetiredTestnetRebootstrap(runtimeB)).toBe(true);
+
+    // An unfinished rebuild relaxes the strict restore check for at most a day.
+    local.setItem(RETIRED_TESTNET_REBOOTSTRAP_KEY, JSON.stringify({ ids: [runtimeB], markedAt: Date.now() - 25 * 60 * 60 * 1000 }));
+    expect(hasRetiredTestnetRebootstrap(runtimeB)).toBe(false);
+    local.setItem(RETIRED_TESTNET_REBOOTSTRAP_KEY, JSON.stringify({ ids: [runtimeB], markedAt: Date.now() }));
+    expect(hasRetiredTestnetRebootstrap(runtimeB)).toBe(true);
+
     await clearBrowserRuntimeData(RESET_CONFIRMATION);
     expect(local.values.has(RETIRED_TESTNET_REBOOTSTRAP_KEY)).toBe(false);
     expect(hasRetiredTestnetRebootstrap(runtimeB)).toBe(false);
