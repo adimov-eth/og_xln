@@ -717,21 +717,22 @@
   }
 
   .remote-login-screen {
-    padding: 28px;
+    padding: 28px var(--content-pad, 16px);
   }
 
   .remote-login-card {
+    box-sizing: border-box;
     width: min(520px, 100%);
-    padding: 28px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 24%, transparent);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--theme-card-bg, #141416) 92%, transparent);
+    padding: clamp(20px, 6vw, 28px);
+    border: 1px solid var(--theme-border, #262a31);
+    border-radius: var(--ui-radius-base, 12px);
+    background: var(--theme-surface, #121418);
     box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
   }
 
   .remote-kicker {
     margin-bottom: 10px;
-    color: var(--theme-accent, #c5cfde);
+    color: var(--theme-text-secondary, #9aa3b2);
     font-size: 12px;
     font-weight: 800;
     letter-spacing: 0.14em;
@@ -797,11 +798,12 @@
   .remote-token-input input {
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 22%, transparent);
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.28);
+    min-height: 48px;
+    border: 1px solid var(--theme-input-border, #5f656e);
+    border-radius: var(--ui-radius-base, 12px);
+    background: var(--theme-input-bg, #07080b);
     color: var(--theme-text-primary, #e8e8e8);
-    padding: 10px 12px;
+    padding: 0 14px;
     font: 12px 'SF Mono', monospace;
     text-transform: none;
     letter-spacing: 0;
@@ -809,7 +811,7 @@
 
   .remote-token-error {
     margin: -12px 0 18px;
-    color: rgba(255, 150, 150, 0.96);
+    color: color-mix(in srgb, var(--theme-debit, #f43f5e) 70%, var(--theme-text-primary, #e6ebf2));
     font-size: 12px;
   }
 
@@ -820,27 +822,30 @@
   }
 
   .remote-actions button {
-    min-height: 42px;
-    padding: 0 14px;
-    border-radius: 7px;
+    min-height: 48px;
+    padding: 0 18px;
+    border-radius: var(--ui-radius-base, 12px);
+    font: inherit;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-weight: 800;
+    font-weight: 600;
     text-decoration: none;
   }
 
+  /* The one primary: machined metal, obsidian ink. */
   .remote-actions .primary {
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 38%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 22%, var(--theme-surface, #18181b));
-    color: var(--theme-text-primary, #fff);
+    flex: 1 1 auto;
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent);
+    background: var(--theme-primary-metal);
+    color: var(--theme-accent-contrast, #050608);
   }
 
   .remote-actions .secondary {
-    border: 1px solid color-mix(in srgb, var(--theme-border, #333) 88%, transparent);
-    background: color-mix(in srgb, var(--theme-surface, #18181b) 92%, transparent);
-    color: var(--theme-text-secondary, #b4b4ba);
+    border: 1px solid var(--theme-input-border, #5f656e);
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-primary, #e6ebf2);
   }
 
   .app-shell-ready {
