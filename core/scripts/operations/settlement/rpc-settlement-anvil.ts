@@ -63,6 +63,9 @@ export const startAnvil = async (options: AnvilSpawnOptions): Promise<ManagedAnv
     '--code-size-limit', '65536',
     '--prune-history', '256',
     '--state', join(anvilTmpRoot, 'state.json'),
+    // --prune-history already keeps states in memory; this pins any on-disk
+    // anvil-state-* inside tmpRoot (TMPDIR does not) so stopAnvil removes it.
+    '--cache-path', anvilTmpRoot,
     '--disable-default-create2-deployer',
   ], {
     stdio: ['ignore', 'ignore', 'pipe'],
