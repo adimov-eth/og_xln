@@ -1225,6 +1225,9 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
               ),
               blockTimeMs: primaryBlockTimeMs,
               contracts: primaryConfig.contracts,
+              // An interrupted rebuild may have saved its import as a pending intent. Re-send the
+              // rebuild's exact request so it matches that intent instead of conflicting with it.
+              ...(unfinishedRebuild ? { startAtCurrentBlock: false } : {}),
             },
           },
         ],
