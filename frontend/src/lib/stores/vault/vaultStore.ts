@@ -1005,19 +1005,6 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
     }
   };
 
-  for (const signer of runtime.signers || []) {
-    if (!signer?.address) continue;
-    const canonicalEntityId = String(xln.generateLazyEntityId([signer.address], 1n)).toLowerCase();
-    if (normalizeEntityId(signer.entityId) === canonicalEntityId) continue;
-    signer.entityId = canonicalEntityId;
-    signerMetadataChanged = true;
-    errorLog.log(
-      `[VaultStore] Canonical signer/entity mismatch detected for ${signer.address.slice(0, 10)}; forcing lazy entity ${canonicalEntityId.slice(0, 12)} without deleting persisted runtime`,
-      'Runtime Restore',
-      { runtimeId: runtime.id, signerAddress: signer.address, canonicalEntityId },
-    );
-  }
-
   try {
     if (xln.loadEnvFromDB) {
       env = await xln.loadEnvFromDB(runtimeIdLower, runtimeSeed);
@@ -1089,29 +1076,46 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
     return false;
   };
 
+  // Which entity id each signer should carry, judged against the restored env. It reaches the
+  // vault only after the strict check below passes, so a failed restore never rewrites metadata.
+  const signerEntityIds = reconcileSignerEntityIds(runtime, env, xln, !env || unfinishedRebuild);
+
   // While the rebuild marker is set the env is a disposable testnet still being rebuilt, not
   // restored state; the rebuild below finishes it. Every other wallet stays strict.
   if (env && !restoredFromTower && !rebootstrapRequested) {
     for (const signer of runtime.signers || []) {
-      if (!signer?.entityId) continue;
-      if (!hasEntityReplica(signer.entityId)) {
+      const entityId = signerEntityIds.get(signer) ?? signer?.entityId;
+      if (!entityId) continue;
+      if (!hasEntityReplica(entityId)) {
         const restoredEntityKeys = env.state.eReplicas ? Array.from(env.state.eReplicas.keys()).map(key => String(key)) : [];
         errorLog.log(
-          `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: missing restored entity ${signer.entityId.slice(0, 12)}`,
+          `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: missing restored entity ${entityId.slice(0, 12)}`,
           'Runtime Restore',
           {
             runtimeId: runtime.id,
-            signerEntityId: signer.entityId,
+            signerEntityId: entityId,
+            storedEntityId: signer.entityId,
             restoredEntityKeys,
             replayMeta: getReplayMeta(env),
           },
         );
         throw new Error(
-          `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: missing restored entity ${signer.entityId.slice(0, 12)}`,
+          `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: missing restored entity ${entityId.slice(0, 12)}`,
         );
       }
     }
   }
+
+  for (const [signer, entityId] of signerEntityIds) {
+    errorLog.log(
+      `[VaultStore] Signer ${signer.address.slice(0, 10)} now carries entity ${entityId.slice(0, 12)} (was ${String(signer.entityId).slice(0, 12)})`,
+      'Runtime Restore',
+      { runtimeId: runtime.id, signerAddress: signer.address, previousEntityId: signer.entityId, entityId },
+    );
+    signer.entityId = entityId;
+    signerMetadataChanged = true;
+  }
+  persistRuntimeMetadataIfChanged();
 
   const baseOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://xln.finance';
   const jurisdictions = await fetchJurisdictions(baseOrigin);
@@ -1342,6 +1346,32 @@ async function clearRebootstrapOnceRebuildIsDurable(
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   errorLog.log('Rebuild not saved yet; it continues on the next open', 'Runtime Restore', { runtimeId: runtime.id, targetHeight });
+}
+
+/**
+ * The signers whose stored entity id should change, and to what. A stored id whose replica is in
+ * the restored env is kept, whatever it is. The lazy canonical id replaces it only when the stored
+ * one is absent and the canonical one is present, or when the env is being built from scratch.
+ * When neither is present nothing changes, and the strict check fails on the id the vault holds.
+ */
+function reconcileSignerEntityIds(
+  runtime: Runtime,
+  env: RuntimeReplica | null,
+  xln: XLNModule,
+  buildingFresh: boolean,
+): Map<Signer, string> {
+  const changes = new Map<Signer, string>();
+  for (const signer of runtime.signers || []) {
+    if (!signer?.address) continue;
+    const canonicalEntityId = String(xln.generateLazyEntityId([signer.address], 1n)).toLowerCase();
+    const storedEntityId = normalizeEntityId(signer.entityId);
+    if (storedEntityId === canonicalEntityId) continue;
+    if (env && storedEntityId && findEntityReplicaByEntityId(env, storedEntityId)) continue;
+    if (buildingFresh || (env && findEntityReplicaByEntityId(env, canonicalEntityId))) {
+      changes.set(signer, canonicalEntityId);
+    }
+  }
+  return changes;
 }
 
 async function importMissingSecondaryJurisdictions(
