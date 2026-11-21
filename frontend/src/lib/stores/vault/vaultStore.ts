@@ -1,3 +1,4 @@
+import { VALUELESS_CHAIN_IDS } from '@xln/core/jurisdiction/adapter/chain-ids';
 import { assertDemoNetwork } from '#lib/config/demo-accounts.ts';
 import { closeRuntimeSession, suspendRuntimeActivity } from '#lib/security/runtimeSession.ts';
 import { hasPasswordVault, removePasswordVault } from '#lib/security/passwordVault.ts';
@@ -470,6 +471,13 @@ export async function tryRestoreRuntimeEnvFromTower(
   return restoreRuntimeEnvFromRecoveryCandidate(runtime, xln, best);
 }
 
+/** True only when the env has jurisdictions and every one names a valueless chain; an unknown chain id fails closed. */
+function runsOnlyOnValuelessChains(env: RuntimeReplica): boolean {
+  const replicas = [...(env.state.jReplicas?.values() ?? [])];
+  return replicas.length > 0 && replicas.every(replica =>
+    typeof replica.chainId === 'number' && VALUELESS_CHAIN_IDS.has(replica.chainId));
+}
+
 async function uploadRuntimeRecoverySnapshot(
   runtimeId: string,
   env: RuntimeReplica,
@@ -524,6 +532,12 @@ async function uploadRuntimeRecoverySnapshot(
   }
 
   const signedAt = Date.now();
+  // A retired-testnet rebuild starts again at a low height on the same seed. The
+  // tower still holds the dead chain's higher snapshot and refuses a lower height
+  // unless the owner signs consent to replace the slot. Only the rebuild signs it.
+  // The marker alone is not enough: a misplaced reset could set it on a real-funds
+  // wallet. Sign consent only when every jurisdiction is a known valueless chain.
+  const replaceSlot = hasRetiredTestnetRebootstrap(normalizedRuntimeId) && runsOnlyOnValuelessChains(env);
   const message = xln.buildTowerAppointmentOwnerMessage(
     normalizedRuntimeId,
     'blind_backup',
@@ -532,6 +546,7 @@ async function uploadRuntimeRecoverySnapshot(
     encrypted,
     signedAt,
     undefined,
+    replaceSlot,
   );
   const signature = await new Wallet(derivePrivateKey(runtime.seed, 0)).signMessage(message);
   const appointment: TowerAppointmentV1 = {
@@ -541,6 +556,7 @@ async function uploadRuntimeRecoverySnapshot(
     lookupKey: encrypted.lookupKey,
     slot: backupSlot,
     bundle: encrypted,
+    ...(replaceSlot ? { replaceSlot: true as const } : {}),
     ownerProof: {
       runtimeId: normalizedRuntimeId,
       signedAt,

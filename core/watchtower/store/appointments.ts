@@ -131,6 +131,14 @@ const prepareAppointment = async (
   if (latestSameSlot && latestSameSlot.ownerSignedAt > ownerSignedAt) {
     throw new Error('TOWER_APPOINTMENT_STALE');
   }
+  // A later signature does not make a lower height newer: a second tab, device or
+  // stale local state on the same seed would replace state this tower already
+  // acknowledged. Refuse before signing or writing, so no receipt is issued.
+  const candidateHeight = Math.max(0, Math.floor(Number(appointment.bundle.height || 0)));
+  // `replaceSlot` is covered by the owner's signature (verified in http.ts).
+  if (latestSameSlot && candidateHeight < latestSameSlot.bundle.height && appointment.replaceSlot !== true) {
+    throw new Error(`TOWER_APPOINTMENT_HEIGHT_REGRESSION:${latestSameSlot.bundle.height}:${candidateHeight}`);
+  }
   if (
     latestSameSlot
     && latestSameSlot.ownerSignedAt === ownerSignedAt

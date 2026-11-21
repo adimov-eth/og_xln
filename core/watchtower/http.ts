@@ -103,11 +103,14 @@ const decodeTowerAppointmentEnvelope = (value: unknown): TowerAppointmentV1 => {
   requireExactBoundaryKeys(
     appointment,
     ['type', 'version', 'lookupKey', 'bundle', 'ownerProof'],
-    ['towerMode', 'slot', 'lastResortPayload'],
+    ['towerMode', 'slot', 'lastResortPayload', 'replaceSlot'],
     'TOWER_APPOINTMENT_FIELDS_INVALID',
   );
   if (appointment['type'] !== 'tower_appointment' || appointment['version'] !== 1) {
     throw new Error('TOWER_APPOINTMENT_INVALID');
+  }
+  if (appointment['replaceSlot'] !== undefined && appointment['replaceSlot'] !== true) {
+    throw new Error('TOWER_APPOINTMENT_REPLACE_SLOT_INVALID');
   }
   const bundle = decodeTowerRecord(appointment['bundle'], 'TOWER_BUNDLE_INVALID');
   requireExactBoundaryKeys(
@@ -286,6 +289,7 @@ const verifyTowerAppointment = (
     appointment.bundle,
     signedAt,
     appointment.lastResortPayload,
+    appointment.replaceSlot === true,
   );
   const recovered = ethers.verifyMessage(message, String(appointment.ownerProof?.signature || '')).toLowerCase();
   if (recovered !== runtimeId) {

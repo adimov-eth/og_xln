@@ -177,8 +177,11 @@ export const buildTowerAppointmentOwnerMessage = (
   bundle: EncryptedRuntimeRecoveryBundleV1,
   signedAt: number,
   lastResortPayload?: TowerLastResortPayloadV1 | null,
+  // Owner consent to replace the slot even at a lower height (a retired-testnet
+  // rebuild). Appended only when set, so every existing signature still verifies.
+  replaceSlot?: boolean,
 ): string =>
-  `${TOWER_APPOINTMENT_DOMAIN}|${String(runtimeId).toLowerCase()}|${towerMode}|${lookupKey}|${Math.max(0, Math.floor(Number(slot || 0)))}|${computeEncryptedRuntimeRecoveryEnvelopeHash(bundle)}|${Math.max(0, Math.floor(Number(signedAt || 0)))}|${computeTowerLastResortPayloadDigest(lastResortPayload)}`;
+  `${TOWER_APPOINTMENT_DOMAIN}|${String(runtimeId).toLowerCase()}|${towerMode}|${lookupKey}|${Math.max(0, Math.floor(Number(slot || 0)))}|${computeEncryptedRuntimeRecoveryEnvelopeHash(bundle)}|${Math.max(0, Math.floor(Number(signedAt || 0)))}|${computeTowerLastResortPayloadDigest(lastResortPayload)}${replaceSlot === true ? '|replace-slot' : ''}`;
 
 export const computeWatchtowerCounterDisputeAuthorizationHash = (
   chainId: number,
