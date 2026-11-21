@@ -112,6 +112,12 @@ export const SCENARIOS: ScenarioMetadata[] = [
     run: async (env) => (await import('../consensus/multi-sig')).multiSig(env),
   },
   {
+    id: 'person-majority', name: 'Person-Majority Board',
+    description: 'Person holds the threshold; a steward only proposes; yes executes, no deletes', tags: ['consensus', 'governance', 'multi-sig'],
+    browserSafe: false, browserUnsafeReason: 'Browser adapter coverage is not established for threshold-signature setup.',
+    run: async (env) => (await import('../consensus/person-majority')).personMajority(env),
+  },
+  {
     id: 'company-ipo', name: 'Company IPO Lifecycle',
     description: 'Company formation, share custody, trading, payment, and buyback', tags: ['company', 'governance', 'orderbook'],
     browserSafe: false, browserUnsafeReason: 'Requires the durable persistence proof after execution.', provePersistence: true,

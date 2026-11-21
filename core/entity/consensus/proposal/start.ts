@@ -60,6 +60,7 @@ import {
   withBoardAuthority,
 } from '../authority/board-handover';
 import { finalizeCommitNotification } from '../commit/finalization';
+import { handleHashPrecommits } from './precommit-input';
 import { MalformedEntityFrameInputError } from '../../tx/processing/invariant-errors';
 import { entityFrameProfileEnabled, entityFrameSlowMs } from '../frame/profile';
 import { getPerfMs } from '../../../support/time';
@@ -689,6 +690,17 @@ export const startEntityProposalIfReady = async (
     txs: frame.txs.length,
     hashes: frame.hashesToSign?.length ?? 0,
   });
+  // Board {P:2, S:1, t:2}: P's own manifest signature is already quorum, but
+  // quorum was only evaluated when a precommit arrived. S finalizes P's quorum
+  // frame as a commit and sends none, wakes are suppressed while a proposal is
+  // in flight, and S's J-prefix vote is rejected as J_PREFIX_ROUND_FROZEN, so P
+  // stalled at the open proposal. Run the ordinary multi-signer quorum check
+  // over the proposer's own collectedSigs now: it certifies the isolated
+  // candidate and broadcasts the quorum-Hanko commit. Below threshold (S
+  // leading, power 1 < 2) it returns null and the frame goes out for
+  // precommits as before.
+  const ownQuorumCommit = await handleHashPrecommits(context);
+  if (ownQuorumCommit) return ownQuorumCommit;
   const proposalValidators = frame.txs.some(tx => tx.type === 'boardHandover')
     ? candidate.state.config.validators
     : workingReplica.state.config.validators;

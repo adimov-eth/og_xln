@@ -89,7 +89,17 @@ export const createEntityProposalFixture = (
         data: { from: proposer.signerId, message: 'bound proposal' },
       }],
     });
-    const frame = result.workingReplica.proposal;
+    // Every fixture share is 1. A proposer whose own share reaches the
+    // threshold commits at once and its validators receive the committed
+    // frame; below threshold it must hold an open proposal at height 0.
+    const ownQuorum = threshold <= 1n;
+    const { proposal, state } = result.workingReplica;
+    if (state.height !== (ownQuorum ? 1 : 0) || (proposal !== undefined) === ownQuorum) {
+      throw new Error(`TEST_ENTITY_PROPOSAL_QUORUM_MODE:${threshold}:${state.height}:${proposal !== undefined}`);
+    }
+    const frame = ownQuorum
+      ? result.outputs.find(output => output.proposedFrame)?.proposedFrame
+      : proposal;
     if (!frame || frame.txs[0]?.type !== 'entityCommand') {
       throw new Error('TEST_ENTITY_PROPOSAL_MISSING');
     }

@@ -12,7 +12,7 @@ describe('canonical scenario catalog', () => {
       'lending-lifecycle', 'lending-before-deadline', 'lending-after-deadline',
       'htlc-ack-recovery', 'hub-preserved-reserve-refill', 'hub-quiesce-offline-peer',
       'rebalance', 'lock-ahb', 'htlc-lazy', 'ahb', 'swap', 'settle', 'htlc-4hop',
-      'grid', 'swap-market', 'multi-sig', 'company-ipo', 'rapid-fire',
+      'grid', 'swap-market', 'multi-sig', 'person-majority', 'company-ipo', 'rapid-fire',
       'settle-rebalance', 'processbatch', 'dispute-lifecycle', 'bank-default',
       'dispute-transformer', 'cross-j', 'mm-mesh',
     ]);
