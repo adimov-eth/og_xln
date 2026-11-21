@@ -192,7 +192,9 @@ export const writeLookup = async (context: WatchtowerStoreContext, doc: StoredLo
       `storedBytes=${nextTotalStoredBytes}:max=${context.maxTotalStoredBytes}`,
     );
   }
-  await context.db.put(storageKey, serialized);
+  // The caller returns a signed receipt once this resolves. Without sync the write
+  // sits in the OS buffer and a power loss or OS crash drops an acknowledged backup.
+  await context.db.put(storageKey, serialized, { sync: true });
   usage.bytesByKey.set(storageKey, storedBytes);
   usage.totalStoredBytes = nextTotalStoredBytes;
   invalidateWatchtowerStats(context);

@@ -8,6 +8,7 @@ import type {
 } from '../../storage/recovery/bundle/types';
 import { normalizeTowerModeV1 } from '../../storage/recovery/bundle/types';
 import {
+  buildTowerReceiptMessage,
   computeEncryptedRuntimeRecoveryEnvelopeHash,
   computeTowerLastResortPayloadDigest,
 } from '../../storage/recovery/bundle/crypto';
@@ -58,8 +59,7 @@ export const assertEncryptedLastResortPayload = (payload: TowerLastResortPayload
   }
 };
 
-const buildReceiptMessage = (receipt: TowerReceiptV1): string =>
-  `xln:watchtower:receipt:v1|${receipt.towerId}|${receipt.lookupKey}|${receipt.runtimeId}|${receipt.height}|${receipt.bundleHash}|${Math.max(0, Math.floor(Number(receipt.sequence || 0)))}|${Math.max(0, Math.floor(Number(receipt.slot || 0)))}|${String(receipt.towerMode || 'blind_backup')}|${Math.max(0, Math.floor(Number(receipt.storedBytes || 0)))}|${Math.max(0, Math.floor(Number(receipt.maxStoredBytes || 0)))}|${Math.max(0, Math.floor(Number(receipt.expiresAt || 0)))}`;
+const buildReceiptMessage = buildTowerReceiptMessage;
 
 const sortStoredBundles = (bundles: StoredLookupDoc['bundles']): StoredLookupDoc['bundles'] =>
   bundles.sort((left, right) => {

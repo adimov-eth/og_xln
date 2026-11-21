@@ -103,6 +103,8 @@ export type {
 export { buildRuntimeRecording, validateRuntimeRecording } from '../../storage/recovery/bundle/recording';
 export {
   buildTowerAppointmentOwnerMessage,
+  buildTowerReceiptMessage,
+  verifyTowerReceipt,
   computeWatchtowerCounterDisputeAuthorizationHash,
   decryptRuntimeRecoveryBundle,
   decryptTowerPayloadWithWatchSeed,

@@ -13,6 +13,7 @@ import type {
   TowerLastResortPayloadV1,
   TowerEncryptedPayloadV1,
   TowerModeV1,
+  TowerReceiptV1,
 } from './types';
 import { normalizeAccountWatchSeed } from '../../../protocol/identity/account-watch-seed';
 import { hashWatchtowerCounterDisputeHankoPayload } from '../../../hanko/onchain-domain';
@@ -182,6 +183,40 @@ export const buildTowerAppointmentOwnerMessage = (
   replaceSlot?: boolean,
 ): string =>
   `${TOWER_APPOINTMENT_DOMAIN}|${String(runtimeId).toLowerCase()}|${towerMode}|${lookupKey}|${Math.max(0, Math.floor(Number(slot || 0)))}|${computeEncryptedRuntimeRecoveryEnvelopeHash(bundle)}|${Math.max(0, Math.floor(Number(signedAt || 0)))}|${computeTowerLastResortPayloadDigest(lastResortPayload)}${replaceSlot === true ? '|replace-slot' : ''}`;
+
+/** The exact text a tower signs for a receipt. Shared by the tower and the clients that verify it. */
+export const buildTowerReceiptMessage = (receipt: TowerReceiptV1): string =>
+  `xln:watchtower:receipt:v1|${receipt.towerId}|${receipt.lookupKey}|${receipt.runtimeId}|${receipt.height}|${receipt.bundleHash}|${Math.max(0, Math.floor(Number(receipt.sequence || 0)))}|${Math.max(0, Math.floor(Number(receipt.slot || 0)))}|${String(receipt.towerMode || 'blind_backup')}|${Math.max(0, Math.floor(Number(receipt.storedBytes || 0)))}|${Math.max(0, Math.floor(Number(receipt.maxStoredBytes || 0)))}|${Math.max(0, Math.floor(Number(receipt.expiresAt || 0)))}`;
+
+/**
+ * A receipt counts as a backup only when the tower's key signed it and it names
+ * exactly what was uploaded. Throws a TOWER_RECEIPT_* code otherwise.
+ * `towerSigner` is the address the tower advertises (its health `signerAddress`);
+ * a client that has pinned one passes the pinned value, so a changed key fails.
+ */
+export const verifyTowerReceipt = (
+  receipt: TowerReceiptV1 | null | undefined,
+  towerSigner: string,
+  uploaded: { lookupKey: string; runtimeId: string; height: number; bundleHash: string },
+): TowerReceiptV1 => {
+  if (!receipt || receipt.type !== 'tower_receipt') throw new Error('TOWER_RECEIPT_MISSING');
+  if (!receipt.towerSignature) throw new Error('TOWER_RECEIPT_UNSIGNED');
+  const expectedSigner = String(towerSigner || '').toLowerCase();
+  if (!ethers.isAddress(expectedSigner)) throw new Error('TOWER_RECEIPT_SIGNER_UNKNOWN');
+  let recovered: string;
+  try {
+    recovered = ethers.verifyMessage(buildTowerReceiptMessage(receipt), receipt.towerSignature).toLowerCase();
+  } catch {
+    throw new Error('TOWER_RECEIPT_SIGNATURE_INVALID');
+  }
+  if (recovered !== expectedSigner) throw new Error(`TOWER_RECEIPT_SIGNER_MISMATCH:${recovered}:${expectedSigner}`);
+  const same = (a: string, b: string): boolean => String(a).toLowerCase() === String(b).toLowerCase();
+  if (!same(receipt.lookupKey, uploaded.lookupKey)) throw new Error('TOWER_RECEIPT_LOOKUP_MISMATCH');
+  if (!same(receipt.runtimeId, uploaded.runtimeId)) throw new Error('TOWER_RECEIPT_RUNTIME_MISMATCH');
+  if (receipt.height !== uploaded.height) throw new Error(`TOWER_RECEIPT_HEIGHT_MISMATCH:${receipt.height}:${uploaded.height}`);
+  if (!same(receipt.bundleHash, uploaded.bundleHash)) throw new Error('TOWER_RECEIPT_BUNDLE_MISMATCH');
+  return receipt;
+};
 
 export const computeWatchtowerCounterDisputeAuthorizationHash = (
   chainId: number,
