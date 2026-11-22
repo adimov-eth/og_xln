@@ -8,6 +8,7 @@ import { BalanceSettings, ScalePreview } from '../components/settings/BalanceSet
 import { Consensus } from '../components/settings/Consensus';
 import { Profile } from '../components/settings/Profile';
 import { StackManager } from '../components/settings/StackManager';
+import { StewardPin } from '../components/settings/StewardPin';
 import { Vault } from '../components/settings/Vault';
 import { getAdapter, getEmbeddedEnv } from '../runtime/adapter';
 import { armedAttribute } from '@xln/frontend/lib/utils/control/armed-press';
@@ -136,6 +137,7 @@ export function SettingsScreen() {
               </span>
             </div>
             <Profile />
+            <StewardPin />
             <Appearance />
             <BalanceSettings />
             <div className="sect">

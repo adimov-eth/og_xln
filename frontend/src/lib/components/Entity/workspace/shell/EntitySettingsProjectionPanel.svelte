@@ -46,6 +46,7 @@
   import PushWakePanel from '#lib/components/Settings/PushWakePanel.svelte';
   import StackManager from '#lib/components/Settings/StackManager.svelte';
   import EntityConsensusSettingsPanel from './EntityConsensusSettingsPanel.svelte';
+  import StewardPinPanel from '../../governance/StewardPinPanel.svelte';
   import type { EntityConsensusSettingsView } from '../entity-consensus-settings';
   import type { SettingsSubview } from '../entity-panel-routing';
   import type { ThemeName } from '#lib/types/ui.ts';
@@ -635,6 +636,8 @@
       />
     </label>
   </section>
+
+  {#if normalizedEntityId}<StewardPinPanel entityId={normalizedEntityId} />{/if}
 
   <div class="settings-grid">
     <section class="panel">

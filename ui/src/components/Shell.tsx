@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { VALUELESS_CHAIN_IDS } from '@xln/core/jurisdiction/adapter/chain-ids';
 import { attachEverydayGlare } from '@xln/frontend/lib/everyday/wallet-posture';
+import { SignSheets } from './SignSheets';
 import { getJurisdictionBadgeInfo } from '@xln/frontend/lib/utils/identity/jurisdictionBadge';
 import { getAdapter, getEmbeddedEnv } from '../runtime/adapter';
 import { useExternalWalletSync } from '../runtime/financial/external';
@@ -188,6 +189,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         ) : null}
         {posture === 'pro' ? <Tour /> : null}
+        <SignSheets />
         <div hidden={!assets.ready} inert={!assets.ready} style={{ display: assets.ready ? 'contents' : 'none' }}>
           {contentMounted || assets.ready ? children : null}
         </div>

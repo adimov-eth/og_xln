@@ -7,7 +7,8 @@ import type { EntityTx } from '@xln/core/types/entity-tx';
  * proposer's free text is kept apart as untrusted.
  */
 export type ProposalFact =
-  | { kind: 'pay'; counterpartyEntityId: string; tokenId: number; amount: bigint; description: string | null }
+  /** `viaEntityId` is the first hop the payment leaves through: the Account it debits. */
+  | { kind: 'pay'; counterpartyEntityId: string; viaEntityId: string; tokenId: number; amount: bigint; description: string | null }
   /** A locked payment: the recipient gets `amount`; the payer is debited at most `maxSenderDebit`, fees included. */
   | { kind: 'pay-locked'; counterpartyEntityId: string; tokenId: number; amount: bigint; maxSenderDebit: bigint }
   | { kind: 'credit-limit'; counterpartyEntityId: string; tokenId: number; amount: bigint }
@@ -42,6 +43,7 @@ export const proposalTxFact = (tx: EntityTx): ProposalFact => {
       return {
         kind: 'pay',
         counterpartyEntityId: lower(tx.data.targetEntityId),
+        viaEntityId: lower(tx.data.route[1] ?? tx.data.targetEntityId),
         tokenId: tx.data.tokenId,
         amount: tx.data.amount,
         description: typeof tx.data.description === 'string' && tx.data.description.trim() ? tx.data.description : null,

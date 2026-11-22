@@ -28,7 +28,7 @@ const core = (proposals: Proposal[]) => ({
 
 test('the facts come from the batch, and the proposer text stays apart', () => {
   expect(proposalTxFact(pay(4_250n, 'Dinner at Sora'))).toEqual({
-    kind: 'pay', counterpartyEntityId: bob, tokenId: 1, amount: 4_250n, description: 'Dinner at Sora',
+    kind: 'pay', counterpartyEntityId: bob, viaEntityId: bob, tokenId: 1, amount: 4_250n, description: 'Dinner at Sora',
   });
   expect(proposalTxFact({ type: 'extendCredit', data: { counterpartyEntityId: bob, tokenId: 1, amount: 500n } })).toEqual({
     kind: 'credit-limit', counterpartyEntityId: bob, tokenId: 1, amount: 500n,
@@ -49,7 +49,7 @@ test('only proposals another board member authored and this signer has not answe
 
   const pending = pendingProposalsForSigner(core([fromSteward, fromMe, answered, note]), person.toUpperCase().replace('0X', '0x'));
   expect(pending.map(item => item.id)).toEqual(['p-note', 'p-steward']);
-  expect(pending[1]?.facts).toEqual([{ kind: 'pay', counterpartyEntityId: bob, tokenId: 1, amount: 4_250n, description: null }]);
+  expect(pending[1]?.facts).toEqual([{ kind: 'pay', counterpartyEntityId: bob, viaEntityId: bob, tokenId: 1, amount: 4_250n, description: null }]);
   expect(pending[1]?.yesShares).toBe(1n);
   expect(pending[1]?.threshold).toBe(2n);
   // The proposer's message is kept as text and produces no facts.
