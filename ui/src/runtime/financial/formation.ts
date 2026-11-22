@@ -4,7 +4,8 @@ import { isTronChainId } from '@xln/core/api/public/runtime-module';
 import { getEmbeddedEnv, requireAdapter } from '../adapter';
 import { getXLN } from '../xln-loader';
 import { useApp } from '../store';
-import { runtimeIdForSeed } from '../keys';
+import { runtimeIdForSeed, walletSignerIndex } from '../keys';
+import { splitBoardRefusal } from '@xln/frontend/lib/governance/formation-guard';
 
 export type BoardMember = { name: string; weight: number };
 export type FormationDraft = { name: string; jurisdiction: string; kind: 'lazy' | 'numbered'; members: BoardMember[]; threshold: number; signerId: string };
@@ -33,6 +34,8 @@ export async function formEntity(draft: FormationDraft): Promise<{ entityId: str
   if (!depository || !entityProvider) throw new Error('This network has no configured xln contracts.');
   const xln = await getXLN();
   const members = draft.members.map(member => ({ ...member, name: member.name.trim().toLowerCase() }));
+  const splitRefusal = splitBoardRefusal(members, address => walletSignerIndex(seed, address, draft.jurisdiction) !== null);
+  if (splitRefusal) throw new Error(splitRefusal);
   const localSignerId = members.some(member => member.name === draft.signerId.toLowerCase()) ? draft.signerId.toLowerCase() : null;
   await adapter.ensureOwnerCommandLane();
   if (draft.kind === 'numbered') {

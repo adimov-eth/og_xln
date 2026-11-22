@@ -12,6 +12,7 @@
   import { tabOperations } from '../../../stores/ui/tabStore';
   import { generateLazyEntityIdPreview } from '../../../utils/identity/lazyEntityId';
   import { Plus, X, Shield, Hash, UserRound, UsersRound, Zap } from 'lucide-svelte';
+  import { splitBoardRefusal } from '../../../governance/formation-guard';
   import {
     emptyFormationRuntimeProjection,
     hasProjectedEntityId,
@@ -157,6 +158,9 @@
         weight: Number(validator.weight),
       }));
       const thresholdBigInt = BigInt(threshold);
+      const localSigners = new Set((vault?.signers ?? []).map(signer => String(signer.address || '').toLowerCase()));
+      const splitRefusal = splitBoardRefusal(boardMembers, address => localSigners.has(address));
+      if (splitRefusal) throw new Error(splitRefusal);
       if (boardMembers.some((member) => !Number.isInteger(member.weight) || member.weight <= 0 || member.weight > 0xffff)) {
         throw new Error('Every board weight must be an integer from 1 to 65535');
       }
