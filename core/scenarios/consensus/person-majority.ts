@@ -12,6 +12,12 @@
  *   F. Same shares with the steward as frame leader: its own signature (power 1) is below the
  *      threshold, so its frame stays open with only that signature and commits only after the
  *      person precommits.
+ *   G. The person alone opens an Account with a 1-of-1 counterparty, which extends credit. The
+ *      steward's `directPayment` is pending with the exact tx and moves nothing; the person's
+ *      yes moves offdelta by exactly the amount on both board replicas and the counterparty,
+ *      and reserves stay put.
+ *   H. The steward's `extendCredit` is pending at limit 0; the person's yes sets the limit on
+ *      all three Account views.
  * Counterexample: if a proposer that holds the threshold waited for a precommit from a member
  * that cannot add quorum, the person could never act alone and the board would stall at A.
  *
@@ -24,6 +30,12 @@ import type { ConsensusConfig } from '../../entity/types';
 import type { RuntimeReplica } from '../../runtime/types';
 import type { EntityTx } from '../../types/entity-tx';
 import { encodeBoard, hashBoard } from '../../entity/factory';
+import { defaultAccountDisputeConfigForParties } from '../../account/config/dispute-config';
+import { deriveDelta } from '../../account/utils';
+import { buildEntityTransactionProposalAction, hashEntityProposalAction } from '../../entity/auth/authorization';
+import { isLeftEntity } from '../../protocol/identity/entity-id';
+import { deriveTransferOffdeltaChange } from '../../protocol/transform/delta-movement';
+import { safeStringify } from '../../protocol/serialization';
 import {
   bindScenarioJReplica,
   createJReplica,
@@ -58,7 +70,7 @@ export async function personMajority(env: RuntimeReplica): Promise<void> {
     const { clearSignerKeys } = await import('../../account/crypto');
     requireRuntimeSeed(env, 'Person-Majority');
     clearSignerKeys(env);
-    ensureSignerKeysFromSeed(env, ['1', '2'], 'Person-Majority');
+    ensureSignerKeysFromSeed(env, ['1', '2', '3'], 'Person-Majority');
     const person = resolveScenarioBoardSigner(env, '1');
     const steward = resolveScenarioBoardSigner(env, '2');
     if (env.state.height === 0) env.state.timestamp = 1;
@@ -173,7 +185,115 @@ export async function personMajority(env: RuntimeReplica): Promise<void> {
     assertSameHead(stewardLedId, 'F');
     assert(requireReplica(env, stewardLedId, person).state.proposals.size === 1, 'F: the committed steward command is a pending proposal', env);
 
-    console.log('✅ Person-majority board: person acts alone (also offline steward), steward only proposes, yes executes, no deletes, steward leader waits');
+    // G. Account setup: the board opens an Account with an ordinary 1-of-1 counterparty.
+    const counterpartySigner = resolveScenarioBoardSigner(env, '3');
+    const counterpartyConfig: ConsensusConfig = {
+      mode: 'proposer-based', threshold: 1n, validators: [counterpartySigner], shares: { [counterpartySigner]: 1n }, jurisdiction,
+    };
+    const counterparty = hashBoard(encodeBoard(counterpartyConfig, env)).toLowerCase();
+    await commitRuntimeInput(env, { runtimeTxs: importBoardReplicas(env, counterparty, counterpartyConfig, 200), entityInputs: [] });
+    await processJEvents(env);
+    await convergeWithOffline(env, offline, 20, 'G-counterparty-import');
+    await processWithOffline(env, [{ entityId, signerId: person, entityTxs: [{ type: 'openAccount', data: {
+      targetEntityId: counterparty,
+      disputeConfig: defaultAccountDisputeConfigForParties(entityId, false, counterparty, false),
+    } }] }], offline, 'G-person-opens');
+    await convergeWithOffline(env, offline, 30, 'G-person-opens');
+    const account = (id: string, signerId: string, peer: string) => {
+      const found = requireReplica(env, id, signerId).state.accounts.get(peer);
+      if (!found) throw new Error(`PERSON_MAJORITY_ACCOUNT_MISSING:${id.slice(0, 10)}:${signerId.slice(0, 10)}:${peer.slice(0, 10)}`);
+      return found;
+    };
+    // Every view of the one bilateral Account: both board replicas and the counterparty.
+    const views = () => [
+      ...both.map(signerId => ({ label: `board:${signerId.slice(0, 8)}`, account: account(entityId, signerId, counterparty), entity: entityId })),
+      { label: 'counterparty', account: account(counterparty, counterpartySigner, entityId), entity: counterparty },
+    ];
+    for (const view of views()) assert(view.account.currentHeight > 0, `G: ${view.label} holds a committed Account (h${view.account.currentHeight})`, env);
+    // Each view reads the one Delta from its own side; left is the lower Entity id.
+    const derived = (view: ReturnType<typeof views>[number]) => {
+      const delta = view.account.state.deltas.get(USDC);
+      if (!delta) throw new Error(`PERSON_MAJORITY_DELTA_MISSING:${view.label}`);
+      return { offdelta: delta.offdelta, ...deriveDelta(delta, view.account.state.leftEntity.toLowerCase() === view.entity) };
+    };
+    const boardIsLeft = isLeftEntity(entityId, counterparty);
+    // Offdelta can agree by coincidence; the bilateral frame head cannot.
+    const assertSameAccountFrame = (label: string): void => {
+      const heads = views().map(view => `${view.account.currentHeight}/${view.account.currentFrame.stateHash}`);
+      assert(new Set(heads).size === 1, `${label}: all three Account views share frame ${heads[0]!.slice(0, 16)}`, env);
+    };
+    const counterpartyCredit = usd(100);
+    await processWithOffline(env, [{ entityId: counterparty, signerId: counterpartySigner, entityTxs: [
+      { type: 'extendCredit', data: { counterpartyEntityId: entityId, tokenId: USDC, amount: counterpartyCredit } },
+    ] }], offline, 'G-counterparty-credit');
+    await convergeWithOffline(env, offline, 30, 'G-counterparty-credit');
+    for (const view of views()) {
+      const limit = view.entity === entityId ? derived(view).ownCreditLimit : derived(view).peerCreditLimit;
+      assert(limit === counterpartyCredit, `G: ${view.label} sees credit to the board ${limit} === ${counterpartyCredit}`, env);
+    }
+
+    // The steward proposes a payment; the stored batch is the exact tx, and nothing moves.
+    const assertPendingExact = (tx: EntityTx, label: string): string => {
+      const [pending] = [...proposals(person).values()];
+      assert(pending !== undefined && pending.proposer.toLowerCase() === steward.toLowerCase(), `${label}: the steward proposal is pending`, env);
+      const expected = buildEntityTransactionProposalAction([tx]);
+      for (const signerId of both) {
+        const stored = proposals(signerId).get(pending!.id);
+        assert(stored !== undefined && stored.actionHash === hashEntityProposalAction(expected), `${label}: ${signerId.slice(0, 8)} holds the exact action`, env);
+        assert(safeStringify(stored!.action) === safeStringify(expected), `${label}: ${signerId.slice(0, 8)} stores the same ordered txs`, env);
+      }
+      return pending!.id;
+    };
+    const assertProposalGone = (id: string, label: string): void =>
+      assert(both.every(signerId => !proposals(signerId).has(id)), `${label}: the executed proposal is removed on both replicas`, env);
+    const pay: EntityTx = { type: 'directPayment', data: {
+      targetEntityId: counterparty, tokenId: USDC, amount: usd(10), route: [entityId, counterparty], deliveryMode: 'direct',
+      description: 'steward pays counterparty',
+    } };
+    const beforePay = views().map(derived);
+    await processWithOffline(env, [{ entityId, signerId: steward, entityTxs: [pay] }], offline, 'G-steward-proposes-pay');
+    await convergeWithOffline(env, offline, 30, 'G-steward-proposes-pay');
+    const payId = assertPendingExact(pay, 'G');
+    views().forEach((view, index) =>
+      assert(derived(view).offdelta === beforePay[index]!.offdelta, `G: pending payment moves nothing on ${view.label}`, env));
+    assertReserve(both, 160, 'G: pending payment leaves reserves');
+
+    await processWithOffline(env, [{ entityId, signerId: person, entityTxs: [vote(payId, 'yes')] }], offline, 'G-person-yes');
+    await convergeWithOffline(env, offline, 30, 'G-person-yes');
+    const move = deriveTransferOffdeltaChange(boardIsLeft, usd(10));
+    views().forEach((view, index) => {
+      const after = derived(view);
+      assert(after.offdelta === beforePay[index]!.offdelta + move, `G: ${view.label} offdelta ${beforePay[index]!.offdelta} -> ${after.offdelta} (exact ${move})`, env);
+      if (view.entity === entityId) {
+        assert(after.outCapacity === beforePay[index]!.outCapacity - usd(10), `G: ${view.label} out capacity falls by exactly 10`, env);
+      }
+    });
+    assertProposalGone(payId, 'G');
+    assertSameAccountFrame('G');
+    assertReserve(both, 160, 'G: a payment debits the Account, not reserves');
+    assertSameHead(entityId, 'G');
+
+    // H. The steward proposes credit to the counterparty; the person's yes sets it on both sides.
+    const boardCredit = usd(40);
+    const credit: EntityTx = { type: 'extendCredit', data: { counterpartyEntityId: counterparty, tokenId: USDC, amount: boardCredit } };
+    await processWithOffline(env, [{ entityId, signerId: steward, entityTxs: [credit] }], offline, 'H-steward-proposes-credit');
+    await convergeWithOffline(env, offline, 30, 'H-steward-proposes-credit');
+    const creditId = assertPendingExact(credit, 'H');
+    for (const view of views()) {
+      const limit = view.entity === entityId ? derived(view).peerCreditLimit : derived(view).ownCreditLimit;
+      assert(limit === 0n, `H: pending credit leaves ${view.label} limit at 0`, env);
+    }
+    await processWithOffline(env, [{ entityId, signerId: person, entityTxs: [vote(creditId, 'yes')] }], offline, 'H-person-yes');
+    await convergeWithOffline(env, offline, 30, 'H-person-yes');
+    for (const view of views()) {
+      const limit = view.entity === entityId ? derived(view).peerCreditLimit : derived(view).ownCreditLimit;
+      assert(limit === boardCredit, `H: ${view.label} sees the board credit ${limit} === ${boardCredit}`, env);
+    }
+    assertProposalGone(creditId, 'H');
+    assertSameAccountFrame('H');
+    assertSameHead(entityId, 'H');
+
+    console.log('✅ Person-majority board: person acts alone (also offline steward), steward only proposes, yes executes, no deletes, steward leader waits, steward payment and credit execute on the Account only after the person\'s yes');
   } finally {
     env.scenarioMode = prevScenarioMode ?? false;
     restoreStrict();
