@@ -1,13 +1,13 @@
 import { expect, test } from 'bun:test';
 import {
-  parseArgs,
+  readSystemCliArgs,
   summarizeSystemScenarioResults,
   type RunResult,
 } from '../../../scripts/e2e/runners/run-system-tests-parallel';
 
 test('system runner rejects duplicate scenario names before starting work', () => {
-  expect(() => parseArgs(['--scenarios=processbatch, processbatch'])).toThrow('DUPLICATE_SYSTEM_SCENARIO');
-  expect(parseArgs(['--scenarios=processbatch,rebalance']).scenarios).toEqual(['processbatch', 'rebalance']);
+  expect(() => readSystemCliArgs(['--scenarios=processbatch, processbatch'])).toThrow('DUPLICATE_SYSTEM_SCENARIO');
+  expect(readSystemCliArgs(['--scenarios=processbatch,rebalance']).scenarios).toEqual(['processbatch', 'rebalance']);
 });
 
 test('a later passing result cannot erase an earlier failure of the same scenario', () => {

@@ -37,20 +37,20 @@ input[type='checkbox']::before {
 }
 
 input[type='checkbox']:hover {
-  border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 30%, transparent);
+  border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 30%, transparent);
 }
 
 input[type='checkbox']:focus-visible {
   outline: none;
-  border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 50%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--theme-accent, #fbbf24) 20%, transparent);
+  border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 50%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--theme-accent, #c5cfde) 20%, transparent);
 }
 
 input[type='checkbox']:checked {
-  border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 64%, transparent);
+  border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 64%, transparent);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--theme-accent, #fbbf24) 9%, transparent), transparent),
-    color-mix(in srgb, var(--theme-accent, #fbbf24) 76%, transparent);
+    linear-gradient(180deg, color-mix(in srgb, var(--theme-accent, #c5cfde) 9%, transparent), transparent),
+    color-mix(in srgb, var(--theme-accent, #c5cfde) 76%, transparent);
 }
 
 input[type='checkbox']:checked::before {

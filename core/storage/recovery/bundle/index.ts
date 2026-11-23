@@ -6,7 +6,7 @@ import {
 import { keccakTextHash } from '../../../protocol/crypto/keccak-text';
 import { serializeTaggedJson } from '../../../protocol/serialization';
 import { requireBoundaryRecord, requireExactBoundaryKeys } from '../../../protocol/boundary-validation';
-import { buildRuntimeRecoveryCheckpointSnapshot } from '../../wal';
+import { buildRuntimeRecoveryCheckpointSnapshot } from '../../wal/snapshot';
 import type { RuntimeReplica } from '../../../runtime/types';
 import type {
   RuntimeRecoveryBundleV1,

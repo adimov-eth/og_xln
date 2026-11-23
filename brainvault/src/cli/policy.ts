@@ -49,14 +49,3 @@ export function cliDomainError(domain: string): string | undefined {
     ? 'Domain cannot contain terminal control characters.'
     : undefined;
 }
-
-export function cliCreationCharacterError(
-  _name: string,
-  _passphrase: string,
-  _unicodeRecovery: boolean,
-): undefined {
-  // V1 owns Unicode normalization, so the CLI must not create a second,
-  // ASCII-only input language. The legacy flag remains accepted because old
-  // recovery instructions may contain it, but Unicode is valid without it.
-  return undefined;
-}

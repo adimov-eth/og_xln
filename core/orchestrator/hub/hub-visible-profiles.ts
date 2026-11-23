@@ -1,7 +1,7 @@
 import type { RuntimeP2P } from '../../network/p2p/p2p';
 import { verifiedGossipAccountRoleEvidence } from '../../account/config/role-evidence';
 import { getJurisdictionIdentityRef } from '../../jurisdiction/machine/jurisdiction-runtime';
-import { normalizeRuntimeId } from '../../network/p2p/auth/runtime-id';
+import { normalizeRuntimeId } from '../../protocol/identity/runtime-id';
 import type { RuntimeReplica } from '../../runtime/types';
 import { getEntityReplicaById } from '../mesh/mesh-common';
 

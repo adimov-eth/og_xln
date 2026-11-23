@@ -65,6 +65,9 @@ test-results/**/*.webm
 .playwright-mcp/
 .codex/
 .agents/
+AGENTS.local.md
+AGENTS.override.md
+CLAUDE.local.md
 .logs/
 .tmp/
 .tmp-*
@@ -151,7 +154,9 @@ ui/tests/test-results/
 .xln-stand-lock/
 
 # design review raw model streams (contain the screenshots as base64)
-design/review/**/*.jsonl
+design/review/20*/
+design/screenshots/
+packages/npm/xlnfinance/config/
 
 # Generated UI evidence stays local; source checks must not decode recordings as text.
 /output/**/*.mp4

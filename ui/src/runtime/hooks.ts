@@ -86,7 +86,3 @@ export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterRea
   const current = active && resolvedKey === readKey;
   return { data: current ? data : null, error: current ? error : null, loading: active && !current, refresh };
 }
-
-export function useConnected(): boolean {
-  return useApp(s => s.adapterStatus === 'connected');
-}

@@ -1,3 +1,4 @@
+import { hasText } from '../../../../support/boundary-guards';
 import type { HankoString } from '../../../../types/hanko';
 import type { SettlementWorkspace } from '../../../../types/account';
 
@@ -58,9 +59,6 @@ type ValidSettlementWorkspacePhase =
   | HankoPendingSettlementWorkspace
   | ReadySettlementWorkspace
   | SubmittedSettlementWorkspace;
-
-const hasText = (value: string | undefined): value is string =>
-  typeof value === 'string' && value.length > 0;
 
 const hasPinnedBody = (workspace: SettlementWorkspace): workspace is PinnedSettlementWorkspace =>
   Array.isArray(workspace.compiledDiffs)

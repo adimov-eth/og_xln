@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { executeCrontab, initCrontab } from '../../../entity/scheduler';
 import { collectDerivedDeadlines, earliestDerivedDeadline } from '../../../entity/scheduler/derived-deadlines';
-import { armPaymentSecretAckTimeout } from '../../../paybook/lifecycle';
+import { armPaymentSecretAckTimeout, HTLC_SECRET_ACK_TIMEOUT_MS } from '../../../paybook/lifecycle';
 
 import { createEmptyAccountJClaimAccumulator } from '../../../account/j-claims/j-claim-accumulator';
 import { installCommittedAccountFrameHead } from '../../../account/consensus/frame/committed-envelope';
@@ -12,6 +12,7 @@ import { hashHtlcSecret } from '../../../protocol/htlc/utils';
 import { applyCommittedAccountFrameFollowups } from '../../../entity/tx/handlers/account/index';
 import { applyHtlcSecretFollowups } from '../../../entity/tx/handlers/account/committed-htlc-followups';
 import { handleResolveHtlcLockEntityTx } from '../../../entity/tx/handlers/htlc/direct';
+import { applyKnownHtlcSecret } from '../../../entity/tx/j-events-htlc';
 import { applyBookIntentProgram, createBookIntentProgram } from '../../../entity/books/book-intents';
 import { publishEntityCandidateEffects, readRuntimeFrameEvents } from '../../../runtime/observability/env-events';
 import { createEmptyEnv } from '../../../runtime';
@@ -236,6 +237,16 @@ describe('htlc event contract and dispute tail', () => {
       amount: 10n,
       inboundEntity: counterpartyId,
       secret,
+      secretAckPending: true,
+      secretAckStartedAt: replica.state.timestamp,
+      secretAckDeadlineAt: replica.state.timestamp + HTLC_SECRET_ACK_TIMEOUT_MS,
+    });
+    expect(
+      collectDerivedDeadlines(result.newState).find(deadline => deadline.type === 'htlc_secret_ack_timeout'),
+    ).toMatchObject({
+      id: `htlc-secret-ack:${hashlock}`,
+      triggerAt: Number(100_000n - BigInt(HTLC_ENFORCEMENT_RESERVE_MS)),
+      data: { hashlock, counterpartyEntityId: counterpartyId },
     });
     expect(replica.state.paybook.entries.has(hashlock)).toBe(false);
 
@@ -268,6 +279,97 @@ describe('htlc event contract and dispute tail', () => {
         data: { counterpartyEntityId: counterpartyId, lockId, secret },
       }),
     ).toThrow('PAYBOOK_ENTITY_CONFLICT');
+  });
+
+  test('arms secret-ACK dispute deadline on on-chain SecretRevealed recovery without falsely arming outbound forwarder claims', async () => {
+    const hubId = `0x${'22'.repeat(32)}`;
+    const upstreamId = `0x${'11'.repeat(32)}`;
+    const downstreamId = `0x${'33'.repeat(32)}`;
+    const secret = `0x${'44'.repeat(32)}`;
+    const hashlock = hashHtlcSecret(secret);
+    const replica = makeReplica(hubId, upstreamId);
+    const upstream = getEntityAccountForWrite(replica.state.accounts, upstreamId)!;
+    upstream.state.leftEntity = upstreamId;
+    upstream.state.rightEntity = hubId;
+    upstream.state.locks = requirePersistentAccountStateMap(upstream.state.locks, 'locks').updated(hashlock, {
+      lockId: hashlock,
+      hashlock,
+      tokenId: 1,
+      amount: 10n,
+      timelock: 100_000n,
+      revealBeforeHeight: 10,
+      senderIsLeft: true,
+      createdHeight: 1,
+      createdTimestamp: replica.state.timestamp - 1_000,
+    });
+
+    const onChainState = createEntityFrameCandidateState(replica.state);
+    onChainState.paybook.entries.set(hashlock, {
+      hashlock,
+      tokenId: 1,
+      amount: 10n,
+      inboundEntity: upstreamId,
+      outboundEntity: downstreamId,
+      pendingFee: 1n,
+      createdTimestamp: onChainState.timestamp,
+    });
+    const program = createBookIntentProgram();
+    const accountTxs: Array<{ accountId: string; tx: { type: string; data: unknown } }> = [];
+    const applied = applyKnownHtlcSecret(
+      onChainState,
+      accountTxs as never,
+      [],
+      hashlock,
+      secret,
+      7,
+      'SecretRevealed',
+      program.openSlot(),
+    );
+    applyBookIntentProgram(onChainState, program);
+    expect(applied).toBe(true);
+    expect(onChainState.paybook.entries.get(hashlock)).toMatchObject({
+      secret,
+      inboundEntity: upstreamId,
+      secretAckPending: true,
+      secretAckStartedAt: onChainState.timestamp,
+      secretAckDeadlineAt: onChainState.timestamp + HTLC_SECRET_ACK_TIMEOUT_MS,
+    });
+    const enforcementAt = Number(100_000n - BigInt(HTLC_ENFORCEMENT_RESERVE_MS));
+    expect(
+      collectDerivedDeadlines(onChainState, enforcementAt).some(
+        deadline => deadline.type === 'htlc_secret_ack_timeout' && deadline.data.counterpartyEntityId === upstreamId,
+      ),
+    ).toBe(true);
+
+    // Outbound leg on a forwarder (localSentLock === true) must NOT arm secretAckPending against upstream.
+    const downstreamReplica = makeReplica(hubId, downstreamId);
+    const downstream = getEntityAccountForWrite(downstreamReplica.state.accounts, downstreamId)!;
+    downstream.state.leftEntity = hubId;
+    downstream.state.rightEntity = downstreamId;
+    downstream.state.locks = requirePersistentAccountStateMap(downstream.state.locks, 'locks').updated(hashlock, {
+      lockId: hashlock,
+      hashlock,
+      tokenId: 1,
+      amount: 9n,
+      timelock: 90_000n,
+      revealBeforeHeight: 9,
+      senderIsLeft: true,
+      createdHeight: 1,
+      createdTimestamp: downstreamReplica.state.timestamp - 1_000,
+    });
+    downstreamReplica.state.paybook.entries.set(hashlock, {
+      hashlock,
+      tokenId: 1,
+      amount: 10n,
+      inboundEntity: upstreamId,
+      outboundEntity: downstreamId,
+      createdTimestamp: downstreamReplica.state.timestamp,
+    });
+    const outboundResult = resolveWithBooks(downstreamReplica.state, {
+      type: 'resolveHtlcLock',
+      data: { counterpartyEntityId: downstreamId, lockId: hashlock, secret },
+    });
+    expect(outboundResult.newState.paybook.entries.get(hashlock)?.secretAckPending).toBeUndefined();
   });
 
   test('builds explicit HtlcReceived and HtlcFinalized payloads', () => {

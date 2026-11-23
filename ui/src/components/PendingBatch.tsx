@@ -8,13 +8,13 @@ import { useApp } from '../runtime/store';
 import { sendEntityTxs } from '../runtime/tx';
 import { formatMoney, shortId } from '../runtime/format';
 import { getTokenMeta } from '../runtime/token-meta';
-import { countBatchOps } from '../runtime/financial/move';
+import { countBatchOps } from '@xln/frontend/lib/components/Entity/payments/pending-batch-preview';
 import { displayEntityName, type WalletView } from '../runtime/views';
-import { releaseFundingDrafts } from '../runtime/financial/funding-submission';
+import { releaseFundingDrafts } from '@xln/frontend/lib/everyday/funding-submission';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
 
 type Item = { key: string; title: string; detail: string };
 
-const normalizeId = (value: unknown): String => String(value || '').trim().toLowerCase();
 /** A reserve-to-wallet recipient is an address left-padded to 32 bytes; the signer must see the address itself. */
 const walletAddress = (value: unknown): string => {
 	const hex = String(normalizeId(value));

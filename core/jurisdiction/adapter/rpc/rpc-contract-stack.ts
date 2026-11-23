@@ -113,12 +113,14 @@ const deployEntityProvider = async (
   });
 };
 
+const DEV_DEPLOY_GAS_LIMIT = 60_000_000n;
+
 const resolveDepositoryDeployGas = async (
   config: JAdapterConfig,
   provider: ethers.JsonRpcProvider,
 ): Promise<bigint> => {
   if (DEV_CHAIN_IDS.has(config.chainId)) {
-    return BigInt(process.env['JADAPTER_DEPLOY_GAS_LIMIT'] ?? '60000000');
+    return DEV_DEPLOY_GAS_LIMIT;
   }
   let gasLimit = 30_000_000n;
   try {

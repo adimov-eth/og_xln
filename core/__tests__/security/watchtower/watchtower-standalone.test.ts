@@ -690,31 +690,6 @@ describe('standalone watchtower service', () => {
     expect(await response.text()).toBe('');
   });
 
-  test('keeps the write-only recovery complaint sink disabled by default', async () => {
-    const tempRoot = join(process.cwd(), '.tmp-tests', `watchtower-complaint-disabled-${Date.now()}`);
-    rmSync(tempRoot, { recursive: true, force: true });
-    mkdirSync(tempRoot, { recursive: true });
-
-    const server = startStandaloneWatchtowerServer({
-      host: '127.0.0.1',
-      port: 0,
-      towerId: 'tower-complaint-disabled-test',
-      dbPath: join(tempRoot, 'tower.level'),
-      maxStoredBytesPerLookupKey: 64 * 1024,
-    });
-    servers.push(server);
-
-    const response = await fetch(`http://127.0.0.1:${server.server.port}/api/recovery/complaint`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ reason: 'test' }),
-    });
-    expect(response.status).toBe(404);
-    const payload = await response.json() as { ok: boolean; error?: string };
-    expect(payload.ok).toBe(false);
-    expect(payload.error).toBe('TOWER_COMPLAINTS_DISABLED');
-  });
-
   test('reports scheduler enabled when an action key is configured', async () => {
     const tempRoot = join(process.cwd(), '.tmp-tests', `watchtower-scheduler-${Date.now()}`);
     rmSync(tempRoot, { recursive: true, force: true });

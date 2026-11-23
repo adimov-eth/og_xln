@@ -1,0 +1,194 @@
+{
+  "episodeId": "E2_friends_split_and_settle--openai/gpt-6.2-astra--baseline",
+  "scenarioId": "E2_friends_split_and_settle",
+  "modelId": "openai/gpt-6.2-astra",
+  "lineage": "openai-gpt-6.2",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Jamie": true,
+      "q2SamZero": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. Jamie owes me $40.00.\n2. My tab balance with Sam is $0.00.\n3. I have $165.00 in Cash left."
+  },
+  "turns": 5,
+  "phantoms": [
+    {
+      "episodeId": "E2_friends_split_and_settle--openai/gpt-6.2-astra--baseline",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "openai/gpt-6.2-astra",
+      "lineage": "openai-gpt-6.2",
+      "specMode": "baseline",
+      "turn": 2,
+      "tool": "act",
+      "actionOrExpr": "split-bill",
+      "intent": "Split the $80 Tacos dinner equally with Jamie.",
+      "category": "validation",
+      "error": "split-bill requires { person: string, total_usd: positive number }."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check wallet actions and current balances before splitting dinner and settling with Sam.",
+      "args": {
+        "intent": "Check wallet actions and current balances before splitting dinner and settling with Sam.",
+        "expr": "(list (actions) (screen 'home) (friends))"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          [
+            "pay",
+            "cash-out",
+            "split-bill",
+            "settle-up",
+            "add-savings",
+            "move-to-cash",
+            "approve-request",
+            "reject-request",
+            "export-backup",
+            "wait-settlement",
+            "reload-wallet",
+            "clear-test-data"
+          ],
+          {
+            "id": "home",
+            "purpose": "See your Cash, pay anyone, or request money in one tap.",
+            "cash": {
+              "cash-usd": 180,
+              "cash-formatted": "$180.00",
+              "note": "Your money, ready to spend or cash out anytime."
+            },
+            "buttons": [
+              "Pay",
+              "Cash out"
+            ],
+            "pending-external-requests": 0
+          },
+          [
+            {
+              "id": "alex",
+              "name": "Alex",
+              "balance-usd": 40,
+              "status": "Alex owes you $40.00"
+            },
+            {
+              "id": "sam",
+              "name": "Sam",
+              "balance-usd": -15,
+              "status": "You owe Sam $15.00"
+            },
+            {
+              "id": "jamie",
+              "name": "Jamie",
+              "balance-usd": 0,
+              "status": "All settled up"
+            }
+          ]
+        ]
+      },
+      "latencyMs": 3634,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Split the $80 Tacos dinner equally with Jamie.",
+      "args": {
+        "intent": "Split the $80 Tacos dinner equally with Jamie.",
+        "action": "split-bill",
+        "args": {
+          "with": "jamie",
+          "total_usd": 80,
+          "note": "Tacos"
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "split-bill requires { person: string, total_usd: positive number }.",
+        "phantomCategory": "validation"
+      },
+      "latencyMs": 3945,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Record Jamie’s half of the $80 Tacos dinner.",
+      "args": {
+        "intent": "Record Jamie’s half of the $80 Tacos dinner.",
+        "action": "split-bill",
+        "args": {
+          "person": "jamie",
+          "total_usd": 80,
+          "note": "Tacos"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Added to tab",
+          "friend": "Jamie",
+          "friend-balance-usd": 40
+        }
+      },
+      "latencyMs": 3440,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Pay Sam the $15 owed on his tab.",
+      "args": {
+        "intent": "Pay Sam the $15 owed on his tab.",
+        "action": "settle-up",
+        "args": {
+          "person": "sam"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "All settled up",
+          "friend": "Sam",
+          "paid-usd": 15,
+          "remaining-cash-usd": 165
+        }
+      },
+      "latencyMs": 3575,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "done",
+      "intent": "Confirm both tasks and the remaining cash balance.",
+      "args": {
+        "intent": "Confirm both tasks and the remaining cash balance.",
+        "summary": "Split the $80 Tacos dinner evenly: $40 each, with $40 added to Jamie’s tab. Paid Sam $15 in full. Remaining wallet cash: $165."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Split the $80 Tacos dinner evenly: $40 each, with $40 added to Jamie’s tab. Paid Sam $15 in full. Remaining wallet cash: $165."
+        }
+      },
+      "latencyMs": 4088,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Split an $80.00 dinner 50/50 with Jamie (note: Tacos), and pay back what you owe Sam.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check wallet actions and current balances before splitting dinner and settling with Sam.\", args={\"intent\":\"Check wallet actions and current balances before splitting dinner and settling with Sam.\",\"expr\":\"(list (actions) (screen 'home) (friends))\"}) -> OK: [[\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"],{\"i\nTurn 2: act(intent=\"Split the $80 Tacos dinner equally with Jamie.\", args={\"intent\":\"Split the $80 Tacos dinner equally with Jamie.\",\"action\":\"split-bill\",\"args\":{\"with\":\"jamie\",\"total_usd\":80,\"note\":\"Tacos\"}}) -> ERROR (validation): split-bill requires { person: string, total_usd: positive number }.\nTurn 3: act(intent=\"Record Jamie’s half of the $80 Tacos dinner.\", args={\"intent\":\"Record Jamie’s half of the $80 Tacos dinner.\",\"action\":\"split-bill\",\"args\":{\"person\":\"jamie\",\"total_usd\":80,\"note\":\"Tacos\"}}) -> OK: {\"status\":\"Added to tab\",\"friend\":\"Jamie\",\"friend-balance-usd\":40}\nTurn 4: act(intent=\"Pay Sam the $15 owed on his tab.\", args={\"intent\":\"Pay Sam the $15 owed on his tab.\",\"action\":\"settle-up\",\"args\":{\"person\":\"sam\"}}) -> OK: {\"status\":\"All settled up\",\"friend\":\"Sam\",\"paid-usd\":15,\"remaining-cash-usd\":165}\nTurn 5: done(intent=\"Confirm both tasks and the remaining cash balance.\", args={\"intent\":\"Confirm both tasks and the remaining cash balance.\",\"summary\":\"Split the $80 Tacos dinner evenly: $40 each, with $40 added to Jamie’s tab. Paid Sam $15 in full. Remaining wallet cash: $165.\"}) -> OK: {\"done\":true,\"summary\":\"Split the $80 Tacos dinner evenly: $40 each, with $40 added to Jamie’s tab. Paid Sam $15 in full. Remaining wallet cash: $165.\"}\nHere is what would have worked:\ndiscover(\"(friends)\"), act(\"split-bill\", { person: \"Jamie\", total_usd: 80, note: \"Tacos\" }), act(\"settle-up\", { person: \"Sam\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "- Discovery listed `split-bill` without its arguments. “Split with Jamie” made `with` a natural guess; I only learned the required key was `person` after validation failed. Show an example beside the action: `split-bill { person: \"Jamie\", total_usd: 80, note: \"Tacos\" }`.\n- Label `total_usd` “Full bill before the 50/50 split.” The confirmation “Added to tab” didn’t say who owed whom or show the note. “Tacos: $40 each. Jamie owes you $40” would confirm the intended result.\n- `settle-up` worked on the first try. A label like “Pay Sam the full $15 owed” would make clear before submission that no amount argument is needed.",
+    "latencyMs": 5463
+  },
+  "durationMs": 47072,
+  "finalSummary": "Split the $80 Tacos dinner evenly: $40 each, with $40 added to Jamie’s tab. Paid Sam $15 in full. Remaining wallet cash: $165."
+}

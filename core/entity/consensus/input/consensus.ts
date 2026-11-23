@@ -5,7 +5,7 @@ import { haltRuntimeFailure } from "../../../protocol/errors/failure-taxonomy";
  * committed account/J-layer side effects back into the runtime.
  */
 
-import { logError, shortHash } from '../../../support/logger';
+import { shortHash } from '../../../support/logger';
 import { nodeProcess } from '../../../support/process/runtime-process';
 import type { EntityInput, EntityReplica } from '../../types';
 import type { EntityRuntimeContext } from '../../runtime-context';
@@ -110,9 +110,10 @@ async function handleCommitNotification(context: ApplyEntityInputContext): Promi
 
   if (workingReplica.lockedFrame) {
     if (workingReplica.lockedFrame.hash !== proposedFrame.hash) {
-      logError('FRAME_CONSENSUS', `❌ BYZANTINE: Commit frame doesn't match locked frame!`);
-      logError('FRAME_CONSENSUS', `   Locked: ${workingReplica.lockedFrame.hash}`);
-      logError('FRAME_CONSENSUS', `   Commit: ${proposedFrame.hash}`);
+      entityLog.error(`❌ BYZANTINE: Commit frame doesn't match locked frame!`, {
+        locked: workingReplica.lockedFrame.hash,
+        commit: proposedFrame.hash,
+      });
       return rejectEntityConsensusInput(context);
     }
     entityLog.debug('commit.locked_frame_verified', { frame: shortHash(workingReplica.lockedFrame.hash) });

@@ -14,13 +14,9 @@ import { nodeProcess } from '../process/runtime-process';
 
 type OpCounter = { calls: number; bytes: number; durationUs: number };
 export type OpCounterSnapshot = Record<string, OpCounter>;
-type OpEventField = string | number | boolean | null;
-type OpEvent = Readonly<{ atUs: number; name: string; fields: Readonly<Record<string, OpEventField>> }>;
 
 export const OP_COUNTERS_ENABLED: boolean = nodeProcess?.env?.['XLN_RUNTIME_OP_COUNTERS'] === '1';
-export const BOUNDARY_AUDIT_ENABLED: boolean = nodeProcess?.env?.['XLN_RUNTIME_BOUNDARY_AUDIT'] === '1';
-const CALL_SITE_SAMPLING_ENABLED: boolean =
-  BOUNDARY_AUDIT_ENABLED || nodeProcess?.env?.['XLN_RUNTIME_OP_CALLSITES'] === '1';
+const CALL_SITE_SAMPLING_ENABLED: boolean = nodeProcess?.env?.['XLN_RUNTIME_OP_CALLSITES'] === '1';
 
 // This module sits on browser-bundled hot paths; Node builtins load only when
 // counters are enabled (server), never through a static import.
@@ -52,8 +48,6 @@ export const runWithOpScopes = <T>(scopes: OpScopes, run: () => T): T => {
 export const runWithOpScope = <T>(scope: string, run: () => T): T =>
   runWithOpScopes([scope], run);
 const callSites = new Map<string, Map<string, { samples: number; bytes: number }>>();
-const opEvents: OpEvent[] = [];
-const OP_EVENT_MAX = 4_096;
 const CALL_SITE_SAMPLE_EVERY = 16;
 const CALL_SITE_MAX_KEYS = 160;
 const callSiteTicks = new Map<string, number>();
@@ -108,8 +102,7 @@ export const countOp = (name: string, bytes = 0, durationUs = 0): void => {
 };
 
 /**
- * Like countOp, with caller sampling when `XLN_RUNTIME_OP_CALLSITES=1` or the
- * boundary audit is active. Sampling every 16th call finds the owners of hot
+ * Like countOp, with caller sampling when `XLN_RUNTIME_OP_CALLSITES=1`. Sampling every 16th call finds the owners of hot
  * operations without imposing stack-capture cost on exact-count-only runs.
  * `skipFrames` drops the wrapper frames above the interesting caller.
  */
@@ -145,16 +138,6 @@ export const countOpWithSite = (
   } else {
     sites.set(site, { samples: 1, bytes });
   }
-};
-
-/** Ordered diagnostic events for phase correlation; never observed by Runtime state. */
-export const recordOpEvent = (name: string, fields: Readonly<Record<string, OpEventField>>): void => {
-  if (!OP_COUNTERS_ENABLED || !BOUNDARY_AUDIT_ENABLED || opEvents.length >= OP_EVENT_MAX) return;
-  opEvents.push({
-    atUs: Math.round((nodePerformance?.now() ?? 0) * 1_000),
-    name,
-    fields,
-  });
 };
 
 /** Cumulative counters; with `scope`, only ops recorded inside that scope. */
@@ -201,7 +184,6 @@ export const resetOpCounters = (): void => {
   scoped.clear();
   callSites.clear();
   callSiteTicks.clear();
-  opEvents.length = 0;
   resetProcessBaselines();
 };
 
@@ -249,10 +231,6 @@ export const installGlobalOpCounters = async (label = 'runtime'): Promise<void> 
       return globalClone(value, options);
     }) as typeof structuredClone;
   }
-  if (BOUNDARY_AUDIT_ENABLED) {
-    const { installBoundaryAudit } = await import('./boundary-audit');
-    await installBoundaryAudit({ countOp, countOpWithSite });
-  }
 };
 
 const resolveDumpDirectory = (): string =>
@@ -287,7 +265,6 @@ export const dumpOpCounters = (label: string, reason: string): string | null => 
         counters: snapshotOpCounters(),
         scopes: Object.fromEntries([...scoped.keys()].map(scope => [scope, snapshotOpCounters(scope)])),
         callSites: snapshotOpCallSites(),
-        events: opEvents,
       },
       null,
       2,

@@ -14,6 +14,17 @@ export type ParsedXlnInvoice = XlnInvoiceIntent & {
   canonicalUri: string;
 };
 
+/** Payment note for an invoice: its description plus `uid:<recipient>` attribution, and whether the note is locked. */
+export function invoiceNote(invoice: XlnInvoiceIntent): { description: string; locked: boolean } {
+  const parts: string[] = [];
+  if (invoice.description) parts.push(invoice.description);
+  if (invoice.recipientUserId) parts.push(`uid:${invoice.recipientUserId}`);
+  return {
+    description: parts.join(' | '),
+    locked: invoice.noteLocked || Boolean(invoice.description) || Boolean(invoice.recipientUserId),
+  };
+}
+
 const CANONICAL_WALLET_ORIGIN = 'https://xln.finance';
 const ALLOWED_WALLET_ORIGINS = new Set([CANONICAL_WALLET_ORIGIN]);
 

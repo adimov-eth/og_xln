@@ -421,7 +421,7 @@
   }
 
   .cross-j-safety-banner strong {
-    color: #ffd27a;
+    color: var(--theme-accent, #c5cfde);
     font-size: 14px;
     letter-spacing: 0.01em;
   }
@@ -433,7 +433,7 @@
   }
 
   .swap-ticket-label {
-    color: #8a919c;
+    color: var(--theme-text-secondary, #8a919c);
     font-size: 13px;
     font-weight: 500;
     font-family: inherit;
@@ -452,7 +452,7 @@
     gap: 9px;
     height: 48px;
     padding: 0 14px;
-    background: #1a1e26;
+    background: var(--theme-surface-hover, #1b1e24);
     border: 1px solid #262b35;
     border-radius: 12px;
     min-width: 0;
@@ -474,7 +474,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #e8eaed;
+    color: var(--theme-text-primary, #e8eaed);
     font-size: 14px;
     font-weight: 500;
     font-family: inherit;
@@ -513,8 +513,8 @@
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    background: #262b35;
-    color: #aeb4bd;
+    background: var(--theme-surface-hover, #1b1e24);
+    color: var(--theme-text-secondary, #aeb4bd);
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -527,7 +527,7 @@
     border: 1px solid #262b35;
     border-radius: 12px;
     background: transparent;
-    color: #8a919c;
+    color: var(--theme-text-secondary, #8a919c);
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
@@ -535,7 +535,7 @@
 
   .swap-ticket-book-toggle:hover {
     border-color: #333a48;
-    color: #e8eaed;
+    color: var(--theme-text-primary, #e8eaed);
   }
 
   .swap-ticket-leg {
@@ -554,7 +554,7 @@
   .swap-ticket-box {
     display: grid;
     gap: 1px;
-    background: #262b35;
+    background: var(--theme-surface-hover, #1b1e24);
     border: 1px solid #262b35;
     border-radius: 14px;
     overflow: hidden;
@@ -574,7 +574,7 @@
     height: 56px;
     border: none;
     border-radius: 0;
-    background: #1a1e26;
+    background: var(--theme-surface-hover, #1b1e24);
   }
 
   .swap-ticket-amount-row {
@@ -583,7 +583,7 @@
     gap: 14px;
     height: 72px;
     padding: 0 18px;
-    background: #14171d;
+    background: var(--theme-surface, #121418);
   }
 
   .swap-ticket .swap-ticket-amount,
@@ -597,7 +597,7 @@
     outline: none !important;
     box-shadow: none !important;
     background: transparent !important;
-    color: #e8eaed;
+    color: var(--theme-text-primary, #e8eaed);
     font-family: var(--font-mono, ui-monospace, monospace) !important;
     font-size: 28px !important;
     font-weight: 500;
@@ -607,11 +607,11 @@
   }
 
   .swap-ticket-amount::placeholder {
-    color: #4b5261;
+    color: var(--theme-text-muted, #4b5261);
   }
 
   .swap-ticket-receive-value.muted {
-    color: #4b5261;
+    color: var(--theme-text-muted, #4b5261);
   }
 
   .swap-ticket-balance {
@@ -624,12 +624,12 @@
   }
 
   .swap-ticket-balance span {
-    color: #6b7280;
+    color: var(--theme-text-muted, #6b7280);
     font-size: 12px;
   }
 
   .swap-ticket-balance strong {
-    color: #aeb4bd;
+    color: var(--theme-text-secondary, #aeb4bd);
     font-size: 13px;
     font-weight: 500;
     font-family: var(--font-mono, ui-monospace, monospace);
@@ -652,14 +652,14 @@
     height: 38px;
     border: 4px solid #0a0c11;
     border-radius: 12px;
-    background: #262b35;
-    color: #e8eaed;
+    background: var(--theme-surface-hover, #1b1e24);
+    color: var(--theme-text-primary, #e8eaed);
     font-size: 16px;
     cursor: pointer;
   }
 
   .swap-ticket-flip button:hover {
-    background: #333a48;
+    background: var(--theme-border, #262a31);
   }
 
   .swap-ticket-rate {
@@ -679,12 +679,12 @@
     padding: 0 14px;
     border: 1px solid #262b35;
     border-radius: 12px;
-    background: #14171d;
+    background: var(--theme-surface, #121418);
   }
 
   .swap-ticket-rate-label {
     flex-shrink: 0;
-    color: #8a919c;
+    color: var(--theme-text-secondary, #8a919c);
     font-size: 13px;
     font-weight: 500;
   }
@@ -703,7 +703,7 @@
     outline: none !important;
     box-shadow: none !important;
     background: transparent !important;
-    color: #e8eaed;
+    color: var(--theme-text-primary, #e8eaed);
     font-family: var(--font-mono, ui-monospace, monospace) !important;
     font-size: 14px !important;
     text-align: right;
@@ -711,7 +711,7 @@
 
   .swap-ticket-rate-unit {
     flex-shrink: 0;
-    color: #6b7280;
+    color: var(--theme-text-muted, #6b7280);
     font-size: 12px;
   }
 
@@ -723,7 +723,7 @@
     border: 1px solid #262b35;
     border-radius: 12px;
     background: transparent;
-    color: #a7afbd;
+    color: var(--theme-text-secondary, #a7afbd);
     font-size: 15px;
     cursor: pointer;
   }
@@ -736,7 +736,7 @@
   .swap-ticket-step:hover,
   .swap-ticket-market:hover {
     border-color: #333a48;
-    color: #e8eaed;
+    color: var(--theme-text-primary, #e8eaed);
   }
 
   .swap-ticket-market {
@@ -755,7 +755,7 @@
     border: 1px solid rgba(239, 184, 74, 0.25);
     border-radius: 12px;
     background: rgba(239, 184, 74, 0.08);
-    color: #e8d9ab;
+    color: var(--theme-accent, #c5cfde);
     font-size: 13px;
     line-height: 1.5;
   }
@@ -763,7 +763,7 @@
   .swap-ticket-note {
     margin: 0;
     padding: 0 2px;
-    color: #8a919c;
+    color: var(--theme-text-secondary, #8a919c);
     font-size: 12px;
     line-height: 1.5;
   }
@@ -790,14 +790,14 @@
   }
 
   .swap-ticket-submit:disabled {
-    background: #1e222a;
-    color: #6b7280;
+    background: var(--theme-surface-hover, #1b1e24);
+    color: var(--theme-text-muted, #6b7280);
     cursor: default;
   }
 
   .swap-ticket-error {
     margin: 0;
-    color: #e07a79;
+    color: var(--theme-debit, #e07a79);
     font-size: 13px;
     line-height: 1.5;
   }

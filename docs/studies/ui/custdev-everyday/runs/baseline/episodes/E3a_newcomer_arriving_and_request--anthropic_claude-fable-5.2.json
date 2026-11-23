@@ -1,0 +1,271 @@
+{
+  "episodeId": "E3a_newcomer_arriving_and_request--anthropic/claude-fable-5.2--baseline",
+  "scenarioId": "E3a_newcomer_arriving_and_request",
+  "modelId": "anthropic/claude-fable-5.2",
+  "lineage": "anthropic-claude-fable-5.2",
+  "specMode": "baseline",
+  "passed": false,
+  "statePassed": false,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1ZeroInitially": true,
+      "q2Settled": true,
+      "q3Link": false
+    },
+    "rawAnswers": "1. Before waiting, I had $0.00 in settled Cash to spend.\n2. After the incoming payment settled, I had $49.95 in Cash (a $0.05 fee was taken).\n3. No, I could not create the $25.00 request link for Maya, because the wallet has no request-link action and my attempt returned an \"unknown action\" error."
+  },
+  "turns": 8,
+  "phantoms": [
+    {
+      "episodeId": "E3a_newcomer_arriving_and_request--anthropic/claude-fable-5.2--baseline",
+      "scenarioId": "E3a_newcomer_arriving_and_request",
+      "modelId": "anthropic/claude-fable-5.2",
+      "lineage": "anthropic-claude-fable-5.2",
+      "specMode": "baseline",
+      "turn": 4,
+      "tool": "act",
+      "actionOrExpr": "request",
+      "intent": "Try creating a $25 payment request link for Maya (not in listed actions; checking whether it exists)",
+      "category": "unknown_action",
+      "error": "Unknown action 'request'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "List available symbols",
+      "args": {
+        "intent": "List available symbols",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 4608,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check spendable cash",
+      "args": {
+        "intent": "Check spendable cash",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 4608,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "List available actions",
+      "args": {
+        "intent": "List available actions",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 4608,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "View home screen",
+      "args": {
+        "intent": "View home screen",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 0,
+            "cash-formatted": "$0.00",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "incoming-status": "Payment still finishing — we will keep retrying automatically."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 4608,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Wait for the incoming payment to finish settling",
+      "args": {
+        "intent": "Wait for the incoming payment to finish settling",
+        "action": "wait-settlement",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Settled into Cash",
+          "cash-usd": 49.95,
+          "arriving-usd": 0,
+          "fee-usd": 0.05
+        }
+      },
+      "latencyMs": 4223,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Look for a request-money feature",
+      "args": {
+        "intent": "Look for a request-money feature",
+        "expr": "(list (screen 'people) (screens) (friends) (pending-requests) (cash))"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "people",
+            "purpose": "See who owes whom, split a shared bill, or settle up.",
+            "friends": [
+              {
+                "id": "maya",
+                "name": "Maya",
+                "balance-usd": 0,
+                "status": "All settled up"
+              }
+            ],
+            "buttons": [
+              "Split a bill",
+              "Settle up"
+            ]
+          },
+          [
+            {
+              "id": "home",
+              "purpose": "See your Cash, pay anyone, or request money in one tap."
+            },
+            {
+              "id": "people",
+              "purpose": "See who owes whom, split a shared bill, or settle up."
+            },
+            {
+              "id": "earn",
+              "purpose": "Put money aside to earn interest, separate from your Cash."
+            },
+            {
+              "id": "activity",
+              "purpose": "Recent payments, splits, and automatic protection status."
+            }
+          ],
+          [
+            {
+              "id": "maya",
+              "name": "Maya",
+              "balance-usd": 0,
+              "status": "All settled up"
+            }
+          ],
+          [],
+          {
+            "cash-usd": 49.95,
+            "cash-formatted": "$49.95",
+            "note": "Your money, ready to spend or cash out anytime."
+          }
+        ]
+      },
+      "latencyMs": 4806,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Try creating a $25 payment request link for Maya (not in listed actions; checking whether it exists)",
+      "args": {
+        "intent": "Try creating a $25 payment request link for Maya (not in listed actions; checking whether it exists)",
+        "action": "request",
+        "args": {
+          "from": "maya",
+          "amount_usd": 25
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unknown action 'request'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data",
+        "phantomCategory": "unknown_action"
+      },
+      "latencyMs": 5260,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "done",
+      "intent": "Finish, reporting that the request link could not be created",
+      "args": {
+        "intent": "Finish, reporting that the request link could not be created",
+        "summary": "Cash was $0.00 at first with an incoming payment still settling. After waiting for settlement, Cash is $49.95 ($0.05 fee). The $25.00 payment request link for Maya was NOT created: the wallet exposes no request-link action (a 'request' attempt returned unknown action). I did not substitute split-bill, since that would record a shared bill that doesn't exist rather than create a request link."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Cash was $0.00 at first with an incoming payment still settling. After waiting for settlement, Cash is $49.95 ($0.05 fee). The $25.00 payment request link for Maya was NOT created: the wallet exposes no request-link action (a 'request' attempt returned unknown action). I did not substitute split-bill, since that would record a shared bill that doesn't exist rather than create a request link."
+        }
+      },
+      "latencyMs": 4936,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"You just installed the wallet. Check how much Cash you can spend right now, wait for any incoming payment to finish settling, and then create a $25.00 payment request link for Maya.\"\nNote: task verification failed (comprehension={\"q1ZeroInitially\":true,\"q2Settled\":true,\"q3Link\":false}).\nHere is what you tried:\nTurn 1: discover(intent=\"List available symbols\", args={\"intent\":\"List available symbols\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 1: discover(intent=\"Check spendable cash\", args={\"intent\":\"Check spendable cash\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"incoming-status\":\"Payment still finishing — we will keep retrying automatically.\"}\nTurn 1: discover(intent=\"List available actions\", args={\"intent\":\"List available actions\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 1: discover(intent=\"View home screen\", args={\"intent\":\"View home screen\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytim\nTurn 2: act(intent=\"Wait for the incoming payment to finish settling\", args={\"intent\":\"Wait for the incoming payment to finish settling\",\"action\":\"wait-settlement\",\"args\":{}}) -> OK: {\"status\":\"Settled into Cash\",\"cash-usd\":49.95,\"arriving-usd\":0,\"fee-usd\":0.05}\nTurn 3: discover(intent=\"Look for a request-money feature\", args={\"intent\":\"Look for a request-money feature\",\"expr\":\"(list (screen 'people) (screens) (friends) (pending-requests) (cash))\"}) -> OK: [{\"id\":\"people\",\"purpose\":\"See who owes whom, split a shared bill, or settle up.\",\"friends\":[{\"id\":\"maya\",\"name\":\"Maya\",\"balance-usd\":0,\"status\":\"All settled up\"}],\"buttons\":[\"Spli\nTurn 4: act(intent=\"Try creating a $25 payment request link for Maya (not in listed actions; checking whether it exists)\", args={\"intent\":\"Try creating a $25 payment request link for Maya (not in listed actions; checking whether it exists)\",\"action\":\"request\",\"args\":{\"from\":\"maya\",\"amount_usd\":25}}) -> ERROR (unknown_action): Unknown action 'request'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data\nTurn 5: done(intent=\"Finish, reporting that the request link could not be created\", args={\"intent\":\"Finish, reporting that the request link could not be created\",\"summary\":\"Cash was $0.00 at first with an incoming payment still settling. After waiting for settlement, Cash is $49.95 ($0.05 fee). The $25.00 payment request link for Maya was NOT created: the wallet exposes no request-link action (a 'request' attempt returned unknown action). I did not substitute split-bill, since that would record a shared bill that doesn't exist rather than create a request link.\"}) -> OK: {\"done\":true,\"summary\":\"Cash was $0.00 at first with an incoming payment still settling. After waiting for settlement, Cash is $49.95 ($0.05 fee). The $25.00 payment request link f\nHere is what would have worked:\ndiscover(\"(cash)\"), act(\"wait-settlement\"), act(\"request-link\", { amount_usd: 25, to: \"Maya\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "**What made it hard:**\n\n1. **`request-link` is a hidden action.** `(actions)` returned 12 actions and `request-link` wasn't among them. Even the `unknown_action` error repeated the same incomplete list. With two authoritative sources both saying the action didn't exist, I had no reason to keep guessing names.\n\n2. **The home screen advertises the feature but doesn't map it to an action.** Its purpose says \"request money in one tap,\" but nothing links that button/copy to an invocable action name. The UI promise and the action registry disagree.\n\n3. **Misleading near-neighbors.** `approve-request` / `reject-request` (incoming requests) and `split-bill` / `settle-up` are the only request-like things listed, which suggests requests are only something you respond to, or that asking for money goes through split-bill, which would be the wrong side effect.\n\n4. **Undiscoverable argument shape.** Even if I'd guessed the name, the args are `to: \"Maya\"` (display name, recipient-style key) rather than `from: \"maya\"` (the friend id shown in `(friends)`). \"To\" is ambiguous for a request, since money comes *from* Maya, and there's no signature or help for it.\n\n5. **Vague error.** `unknown_action` gave no \"did you mean `request-link`?\" hint despite `request` being a prefix of the real name.\n\n**Fixes:**\n- List `request-link` in `(actions)` and in the error's available-actions list.\n- Have screen buttons expose their action name (e.g. `{\"label\":\"Request\",\"action\":\"request-link\"}`).\n- Add per-action signatures, e.g. `(help 'request-link)` → `{amount_usd, to}`; accept either friend id or name.\n- Rename the arg to `from`/`payer`, or document that `to` means \"who the link is sent to.\"\n- Add fuzzy-match suggestions to unknown-action errors.\n- Rename `approve-request`/`reject-request` to `approve-incoming-request` etc. to distinguish from creating one.\n\n**Minor:** the `wait-settlement` result shows a $0.05 fee that was never disclosed in `(cash)`'s \"incoming-status\". That should show the expected amount and fee up front.",
+    "latencyMs": 10151
+  },
+  "durationMs": 56874,
+  "finalSummary": "Cash was $0.00 at first with an incoming payment still settling. After waiting for settlement, Cash is $49.95 ($0.05 fee). The $25.00 payment request link for Maya was NOT created: the wallet exposes no request-link action (a 'request' attempt returned unknown action). I did not substitute split-bill, since that would record a shared bill that doesn't exist rather than create a request link."
+}

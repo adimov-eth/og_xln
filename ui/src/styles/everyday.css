@@ -1,0 +1,971 @@
+/* Everyday Wallet styles: scoped under [data-posture='everyday'] and .everyday-*
+ * Obsidian & Silver gradient ground (in oklab), glass-integrated fixed rail/tabbar,
+ * monochrome machined-silver primary controls, and semantic-only money colours. */
+
+.app[data-posture='everyday'] {
+	--ev-light-x: 54%;
+	--ev-light-y: -12%;
+	--ev-bevel-angle: 128deg;
+	--ev-glare-pos: 46%;
+	position: relative;
+	isolation: isolate;
+	background-color: var(--ev-ground-bottom);
+	background-image:
+		linear-gradient(
+			var(--ev-bevel-angle) var(--in-oklab),
+			transparent calc(var(--ev-glare-pos) - 18%),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) - 7%),
+			var(--ev-silver-band-peak) var(--ev-glare-pos),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) + 7%),
+			transparent calc(var(--ev-glare-pos) + 18%)
+		),
+		radial-gradient(ellipse 86% 52% at var(--ev-light-x) var(--ev-light-y) var(--in-oklab), var(--ev-silver-crown) 0%, var(--ev-silver-mid) 36%, var(--ev-silver-tail) 64%, transparent 82%),
+		linear-gradient(var(--ev-bevel-angle) var(--in-oklab), var(--ev-silver-bevel) 0%, var(--ev-silver-bevel-mid) 24%, transparent 54%, var(--ev-silver-rim) 100%),
+		linear-gradient(to bottom var(--in-oklab), var(--ev-ground-top) 0%, var(--ev-ground-mid) 46%, var(--ev-ground-bottom) 100%);
+	background-attachment: fixed;
+}
+
+/* Barometric conservation veil: invisible at equilibrium, responds quietly only out of equilibrium. */
+.app[data-posture='everyday']::after {
+	content: '';
+	position: fixed;
+	inset: 0 0 auto 0;
+	height: 220px;
+	pointer-events: none;
+	z-index: 0;
+	opacity: 0;
+	transition: opacity 420ms ease-out;
+}
+
+.app[data-posture='everyday'][data-ev-state='arriving']::after {
+	opacity: 1;
+	background: radial-gradient(ellipse 80% 75% at 50% -20% var(--in-oklab), var(--ev-wash-arriving), transparent 72%);
+}
+
+.app[data-posture='everyday'][data-ev-state='disputed']::after {
+	opacity: 1;
+	border-top: 2px solid var(--ink-dispute);
+	background: linear-gradient(to bottom var(--in-oklab), var(--ev-wash-dispute), transparent 65%);
+}
+
+/* Keep .rail and .tabbar at their fixed layout from app.css (never override position/z-index). */
+.app[data-posture='everyday'] .main {
+	position: relative;
+	z-index: 1;
+}
+
+.app[data-posture='everyday'] .rail {
+	background: var(--ev-rail-bg);
+	backdrop-filter: blur(20px);
+	-webkit-backdrop-filter: blur(20px);
+	border-right-color: var(--ev-rail-border);
+	gap: 8px;
+}
+
+/* Machined silver brand mark in Everyday (replaces purple accent badge). */
+.app[data-posture='everyday'] .rail-mark {
+	background: linear-gradient(145deg var(--in-oklab), var(--ev-btn-primary-top), var(--ev-btn-primary-bot));
+	color: var(--ev-btn-primary-fg);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.app[data-posture='everyday'] .tabbar {
+	background: var(--ev-rail-bg);
+	border-top-color: var(--ev-rail-border);
+	gap: 8px;
+}
+
+.app[data-posture='everyday'] .rail-item {
+	min-height: 48px;
+	height: auto;
+	padding: 10px 12px;
+	border-radius: var(--ev-radius);
+	border: 1px solid transparent;
+}
+
+.app[data-posture='everyday'] .rail-item.active,
+.app[data-posture='everyday'] .tabbar-item.active {
+	/* Selected means sunk, the same as a pressed key: never a lighter tile. */
+	color: var(--display);
+	background: var(--ev-soft-pressed);
+	border-color: transparent;
+	box-shadow: inset 0 1px 3px var(--ev-press), inset 0 0 0 1px var(--ev-soft-drop);
+}
+
+.app[data-posture='everyday'] .tabbar-item,
+.app[data-posture='everyday'] .icon-btn {
+	min-height: 48px;
+	min-width: 48px;
+	border-radius: var(--ev-radius);
+}
+
+.app[data-posture='everyday'] .btn,
+.app[data-posture='everyday'] .tabs > button,
+.app[data-posture='everyday'] .chips button,
+.app[data-posture='everyday'] .segc button,
+.app[data-posture='everyday'] .row.tappable,
+.app[data-posture='everyday'] .input {
+	min-height: 48px;
+	border-radius: var(--ev-radius);
+}
+
+.app[data-posture='everyday'] .btn {
+	background: linear-gradient(to bottom var(--in-oklab), var(--ev-btn-secondary-top), var(--ev-btn-secondary-bot));
+	border-color: var(--ev-btn-secondary-border);
+	box-shadow: inset 0 1px 0 var(--ev-btn-inset);
+}
+
+/* Machined silver-white (dark) / obsidian (light) primary CTA; colour stays reserved for money states. */
+.app[data-posture='everyday'] .btn.primary {
+	background: linear-gradient(calc(var(--ev-bevel-angle) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%);
+	border-color: var(--ev-btn-primary-top);
+	color: var(--ev-btn-primary-fg);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78), 0 1px 3px rgba(0, 0, 0, 0.36);
+}
+
+.app[data-posture='everyday'] .btn.primary:hover:not(:disabled) {
+	opacity: 0.92;
+}
+
+.app[data-posture='everyday'] .tabs,
+.app[data-posture='everyday'] .chips,
+.app[data-posture='everyday'] .segc,
+.app[data-posture='everyday'] .actions {
+	gap: 8px;
+}
+
+/* Unclipped inline header row, aligned to the Cash column. */
+.everyday-topbar {
+	width: 100%;
+	max-width: var(--content-max);
+	padding: calc(env(safe-area-inset-top, 0px) + 22px) var(--content-pad) 16px;
+	border-bottom: 1px solid var(--ev-rail-border);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	min-width: 0;
+}
+
+.everyday-brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 36px;
+	color: var(--display);
+	font-size: 17px;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.everyday-brand-name {
+	line-height: 1;
+}
+
+@media (min-width: 1100px) {
+	.everyday-brand {
+		visibility: hidden;
+		pointer-events: none;
+	}
+}
+
+/* Quiet top-right trigger on valueless test networks only. */
+.everyday-test-trigger {
+	appearance: none;
+	flex: none;
+	min-height: 48px;
+	min-width: 48px;
+	padding: 0 12px;
+	border-radius: var(--ev-radius);
+	border: 1px solid var(--ev-btn-secondary-border);
+	background: var(--ev-btn-secondary-bg);
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: background 180ms ease-out, color 180ms ease-out, border-color 180ms ease-out;
+}
+
+.everyday-test-trigger:hover {
+	color: var(--display);
+	background: var(--surface-2);
+}
+
+.everyday-test-trigger.active {
+	background: linear-gradient(to bottom var(--in-oklab), var(--ev-btn-primary-top), var(--ev-btn-primary-bot));
+	border-color: var(--ev-btn-primary-top);
+	color: var(--ev-btn-primary-fg);
+}
+
+.everyday-screen {
+	position: relative;
+	width: 100%;
+	max-width: var(--content-max);
+	padding: 32px var(--content-pad) 88px;
+	display: flex;
+	flex-direction: column;
+	gap: 28px;
+}
+
+/* Borderless hero: space, light, and type carry hierarchy instead of card chrome. */
+.everyday-hero-card {
+	position: relative;
+	padding: 8px 0 4px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+/* One-shot metallic silver sheen when a settled payment commits. */
+.everyday-hero-card.is-sheen::after {
+	content: '';
+	position: absolute;
+	inset: -8px -16px;
+	pointer-events: none;
+	border-radius: var(--ev-radius);
+	background: linear-gradient(112deg var(--in-oklab), transparent 22%, var(--ev-sheen) 48%, transparent 74%);
+	animation: everyday-settle-sheen 520ms ease-out forwards;
+}
+
+@keyframes everyday-settle-sheen {
+	0% {
+		opacity: 0;
+		transform: translateX(-28%);
+	}
+	35% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+		transform: translateX(36%);
+	}
+}
+
+.everyday-label {
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
+	color: var(--ink-2);
+}
+
+.everyday-balance-trigger {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	padding: 0;
+	margin: 0;
+	text-align: left;
+	cursor: pointer;
+	width: fit-content;
+	min-height: 48px;
+	display: inline-flex;
+	align-items: baseline;
+	border-radius: var(--ev-radius);
+}
+
+.everyday-balance-trigger:focus-visible {
+	outline: 2px solid var(--display);
+	outline-offset: 4px;
+}
+
+.everyday-cash-value {
+	font-family: var(--font-num);
+	font-size: var(--money-hero);
+	font-weight: var(--money-hero-weight);
+	line-height: 1.04;
+	letter-spacing: var(--money-hero-track);
+	background: linear-gradient(calc(var(--ev-bevel-angle) + 38deg) var(--in-oklab), var(--ev-num-top) 0%, var(--ev-num-mid) 54%, var(--ev-num-bot) 100%);
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	font-variant-numeric: tabular-nums;
+	transition: opacity 200ms ease-out;
+}
+
+.everyday-cash-value.is-syncing {
+	opacity: 0.62;
+}
+
+.everyday-cash-value.is-savings {
+	background: none;
+	-webkit-background-clip: border-box;
+	background-clip: border-box;
+	color: var(--ink-owed);
+}
+
+.everyday-cents {
+	font-size: 0.52em;
+	font-weight: 600;
+	vertical-align: 0.24em;
+	margin-left: 0.02em;
+	opacity: 0.72;
+	letter-spacing: -0.01em;
+}
+
+.everyday-unit-suffix {
+	font-size: 0.42em;
+	font-weight: 600;
+	opacity: 0.68;
+	letter-spacing: 0;
+}
+
+.everyday-cash-delta {
+	margin: 0;
+	font-family: var(--font-num);
+	font-size: var(--money-sm);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	color: var(--ink-delta-in);
+}
+
+.everyday-cash-delta.is-out {
+	color: var(--ink-2);
+}
+
+.everyday-balance-truth {
+	margin: 0;
+	padding: 10px 14px;
+	border-left: 2px solid var(--ev-btn-secondary-border);
+	font-size: 13.5px;
+	line-height: 1.5;
+	color: var(--ink);
+	max-width: 54ch;
+}
+
+.everyday-note {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--ink-2);
+	max-width: 54ch;
+}
+
+/* Arriving money: distinct dashed boundary + explicit word (never colour or outline alone). */
+.everyday-arriving-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 12px;
+	border-radius: var(--ev-radius);
+	border: 1px dashed var(--ink-arriving);
+	background: transparent;
+	color: var(--ink-arriving);
+	font-family: var(--font-num);
+	font-size: 14px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	width: fit-content;
+}
+
+.everyday-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.everyday-actions > .btn {
+	flex: 1 1 130px;
+	min-height: 48px;
+	justify-content: center;
+}
+
+.everyday-panel {
+	background: color-mix(in oklab, var(--surface) 76%, transparent);
+	border: 1px solid var(--ev-btn-secondary-border);
+	box-shadow: inset 0 1px 0 var(--ev-silver-rim);
+	border-radius: var(--ev-radius);
+	padding: 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.everyday-panel-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.everyday-panel-head > .btn {
+	width: auto;
+	flex: 0 0 auto;
+}
+
+/* On a phone a labelled action drops below its explanation instead of squeezing it into a column. */
+@media (max-width: 480px) {
+	.everyday-panel-head:has(> .btn),
+	.everyday-panel-head:has(> .segc) {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.everyday-panel-head > .btn {
+		width: 100%;
+	}
+
+	/* A segmented choice takes the full width and shares it equally, so no option falls off the panel. */
+	.everyday-panel-head > .segc {
+		display: flex;
+		align-self: stretch;
+	}
+
+	.everyday-panel-head > .segc > button {
+		flex: 1 1 0;
+		min-width: 0;
+		justify-content: center;
+	}
+}
+
+.everyday-preview-stage {
+	position: relative;
+	isolation: isolate;
+	overflow: hidden;
+	padding: 20px 20px 18px;
+	border-radius: var(--ev-radius);
+	border: 1px solid var(--ev-btn-secondary-border);
+	box-shadow: inset 0 1px 0 var(--ev-silver-rim);
+	background-color: var(--ev-ground-bottom);
+	background-image:
+		linear-gradient(
+			var(--ev-bevel-angle) var(--in-oklab),
+			transparent calc(var(--ev-glare-pos) - 18%),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) - 7%),
+			var(--ev-silver-band-peak) var(--ev-glare-pos),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) + 7%),
+			transparent calc(var(--ev-glare-pos) + 18%)
+		),
+		radial-gradient(ellipse 86% 52% at var(--ev-light-x) var(--ev-light-y) var(--in-oklab), var(--ev-silver-crown) 0%, var(--ev-silver-mid) 36%, var(--ev-silver-tail) 64%, transparent 82%),
+		linear-gradient(var(--ev-bevel-angle) var(--in-oklab), var(--ev-silver-bevel) 0%, var(--ev-silver-bevel-mid) 24%, transparent 54%, var(--ev-silver-rim) 100%),
+		linear-gradient(to bottom var(--in-oklab), var(--ev-ground-top) 0%, var(--ev-ground-mid) 46%, var(--ev-ground-bottom) 100%);
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.everyday-preview-stage[data-ev-state='arriving'] {
+	background-image:
+		radial-gradient(ellipse 80% 70% at 50% -18% var(--in-oklab), var(--ev-wash-arriving), transparent 72%),
+		linear-gradient(
+			var(--ev-bevel-angle) var(--in-oklab),
+			transparent calc(var(--ev-glare-pos) - 18%),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) - 7%),
+			var(--ev-silver-band-peak) var(--ev-glare-pos),
+			var(--ev-silver-band-soft) calc(var(--ev-glare-pos) + 7%),
+			transparent calc(var(--ev-glare-pos) + 18%)
+		),
+		radial-gradient(ellipse 86% 52% at var(--ev-light-x) var(--ev-light-y) var(--in-oklab), var(--ev-silver-crown) 0%, var(--ev-silver-mid) 36%, var(--ev-silver-tail) 64%, transparent 82%),
+		linear-gradient(to bottom var(--in-oklab), var(--ev-ground-top) 0%, var(--ev-ground-mid) 46%, var(--ev-ground-bottom) 100%);
+}
+
+.everyday-preview-stage[data-ev-state='disputed'] {
+	border-top: 2px solid var(--ink-dispute);
+	background-image:
+		linear-gradient(to bottom var(--in-oklab), var(--ev-wash-dispute), transparent 55%),
+		linear-gradient(to bottom var(--in-oklab), var(--ev-ground-top) 0%, var(--ev-ground-mid) 46%, var(--ev-ground-bottom) 100%);
+}
+
+.everyday-preview-pills {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.everyday-preview-pill {
+	appearance: none;
+	min-height: 40px;
+	padding: 0 12px;
+	border-radius: var(--ev-radius);
+	border: 1px solid var(--ev-btn-secondary-border);
+	background: transparent;
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.everyday-preview-pill[aria-pressed='true'] {
+	background: linear-gradient(to bottom var(--in-oklab), var(--ev-btn-primary-top), var(--ev-btn-primary-bot));
+	border-color: var(--ev-btn-primary-top);
+	color: var(--ev-btn-primary-fg);
+}
+
+.everyday-list-card {
+	border-top: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+}
+
+.everyday-list-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 16px 0;
+	border-top: 1px solid var(--line);
+}
+
+.everyday-list-row:first-child {
+	border-top: 0;
+}
+
+.everyday-list-row > .btn {
+	width: auto;
+	flex: 0 0 auto;
+	min-width: 132px;
+	justify-content: center;
+}
+
+.everyday-row-meta {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.everyday-row-title {
+	font-size: 15px;
+	font-weight: 600;
+	color: var(--display);
+}
+
+.everyday-row-sub {
+	font-size: 13.5px;
+	color: var(--ink-2);
+}
+
+/* A notice is information, not something to grip: it sits on the ground, a glyph and a sentence. */
+.everyday-shield-notice {
+	display: grid;
+	grid-template-columns: 18px 1fr;
+	gap: 10px;
+	align-items: start;
+	max-width: 54ch;
+	font-size: 13.5px;
+	line-height: 1.5;
+	color: var(--ink-2);
+}
+
+.everyday-shield-notice::before {
+	content: '';
+	width: 18px;
+	height: 18px;
+	margin-top: 1px;
+	background: var(--ink-3);
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z'/%3E%3C/svg%3E") center / contain no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* Needs attention: the sentence comes up to full ink and the glyph takes the owed steel. */
+.everyday-shield-notice[data-category='unilateral-exit-needs-gas'],
+.everyday-shield-notice[data-category='tower-issue'] {
+	color: var(--ink);
+}
+
+.everyday-shield-notice[data-category='unilateral-exit-needs-gas']::before,
+.everyday-shield-notice[data-category='tower-issue']::before {
+	background: var(--ink-owed);
+}
+
+.everyday-consent-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 48px;
+	padding: 8px 0;
+	font-size: 14px;
+	line-height: 1.4;
+	color: var(--ink);
+	cursor: pointer;
+}
+
+.everyday-consent-row input[type='checkbox'] {
+	/* Unchecked: a recessed well drawn by its edge (3:1). Checked: a silver key with an obsidian tick. */
+	appearance: none;
+	-webkit-appearance: none;
+	position: relative;
+	width: 22px;
+	height: 22px;
+	flex: none;
+	margin: 0;
+	border-radius: 6px;
+	border: 1px solid var(--ev-input-edge);
+	background: transparent;
+	box-shadow: inset 0 1px 2px var(--ev-soft-drop);
+	cursor: pointer;
+}
+
+.everyday-consent-row input[type='checkbox']:checked {
+	border-color: transparent;
+	background: linear-gradient(calc(var(--ev-bevel-angle, 128deg) + 26deg) var(--in-oklab), var(--ev-btn-primary-top), var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot));
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.everyday-consent-row input[type='checkbox']:checked::after {
+	content: '';
+	position: absolute;
+	inset: 3px;
+	background: var(--ev-btn-primary-fg);
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.everyday-consent-row input[type='checkbox']:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.everyday-switch {
+	min-width: 48px;
+	min-height: 48px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	flex: none;
+}
+
+.everyday-switch-track {
+	width: 44px;
+	height: 26px;
+	border-radius: var(--radius-pill);
+	background: var(--surface-3);
+	border: 1px solid var(--line-2);
+	padding: 2px;
+	display: inline-flex;
+	align-items: center;
+	transition: background 180ms ease-out, border-color 180ms ease-out;
+}
+
+.everyday-switch[aria-checked='true'] .everyday-switch-track {
+	background: var(--ink-action);
+	border-color: var(--ink-action);
+}
+
+.everyday-switch-thumb {
+	width: 20px;
+	height: 20px;
+	border-radius: 50%;
+	/* Off: a visible thumb (ink-2, 5:1 on the track). On: obsidian on the silver track. */
+	background: var(--ink-2);
+	transform: translateX(0);
+	transition: transform 180ms ease-out;
+}
+
+.everyday-switch[aria-checked='true'] .everyday-switch-thumb {
+	transform: translateX(18px);
+	background: var(--ink-action-fg);
+}
+
+.everyday-qr-wrap {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.everyday-qr-img {
+	width: 180px;
+	height: 180px;
+	border-radius: var(--ev-radius);
+	background: #ffffff;
+	padding: 8px;
+}
+
+.everyday-fee-line {
+	font-size: 13.5px;
+	color: var(--ink-2);
+	font-variant-numeric: tabular-nums;
+}
+
+.everyday-alert {
+	padding: 12px 14px;
+	border-radius: var(--ev-radius);
+	background: var(--dispute-dim);
+	color: var(--ink-dispute);
+	font-size: 13.5px;
+	line-height: 1.45;
+	margin: 0;
+}
+
+@media (max-width: 840px) {
+	.everyday-topbar { padding: calc(env(safe-area-inset-top, 0px) + 12px) var(--content-pad) 0; }
+	.everyday-screen { padding: 10px var(--content-pad) calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 36px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.everyday-switch-track,
+	.everyday-switch-thumb,
+	.everyday-cash-value,
+	.app[data-posture='everyday']::after {
+		transition: none;
+	}
+	.everyday-hero-card.is-sheen::after {
+		animation: none;
+		display: none;
+	}
+}
+
+@media (forced-colors: active) {
+	.app[data-posture='everyday']::after,
+	.everyday-hero-card.is-sheen::after {
+		display: none;
+	}
+	.app[data-posture='everyday'],
+	.everyday-preview-stage {
+		background-image: none;
+	}
+	.everyday-cash-value {
+		background: none;
+		-webkit-background-clip: border-box;
+		background-clip: border-box;
+		color: CanvasText;
+	}
+	.app[data-posture='everyday'][data-ev-state='disputed'] {
+		border-top: 2px solid CanvasText;
+	}
+}
+
+/* ---------- Materials: matte ground, soft-touch grip, polished edges ----------
+ * The ground light above is the only light. Every polished part below catches it
+ * at --ev-glare-pos / --ev-bevel-angle, so edges, rings and the primary streak drift
+ * with the glare and never place a highlight of their own. */
+
+/* Grain: the ground reads as a material, and the near-black gradients stop banding. */
+.app[data-posture='everyday']::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	z-index: 0;
+	pointer-events: none;
+	background-image: var(--ev-grain);
+	background-size: 180px;
+	mix-blend-mode: overlay;
+	opacity: var(--ev-grain-opacity);
+}
+
+/* Soft-touch: everything you grip. Set into the ground, light rolls off a rounded rim. */
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger):not(.quiet),
+.app[data-posture='everyday'] .everyday-preview-pill,
+.app[data-posture='everyday'] .icon-btn,
+.app[data-posture='everyday'] .everyday-test-trigger,
+.app[data-posture='everyday'] .everyday-panel {
+	position: relative;
+	isolation: isolate;
+	background: radial-gradient(120% 90% at 50% 0% var(--in-oklab), var(--ev-soft-sheen), transparent 70%), var(--ev-soft-face);
+	border-color: transparent;
+	box-shadow: inset 0 1px 1.5px var(--ev-soft-rim), 0 1px 2px var(--ev-soft-drop);
+}
+
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger):not(.quiet)::after,
+.app[data-posture='everyday'] .everyday-preview-pill::after,
+.app[data-posture='everyday'] .icon-btn::after,
+.app[data-posture='everyday'] .everyday-test-trigger::after,
+.app[data-posture='everyday'] .everyday-panel::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	/* Under the label: the tooth is in the face, never on the type. */
+	z-index: -1;
+	background-image: var(--ev-velvet);
+	background-size: 120px;
+	mix-blend-mode: soft-light;
+	opacity: 0.35;
+}
+
+/* A 1px polished ring on soft-touch keys, lit from the bevel angle. */
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger):not(.quiet)::before,
+.app[data-posture='everyday'] .everyday-preview-pill::before,
+.app[data-posture='everyday'] .icon-btn::before,
+.app[data-posture='everyday'] .everyday-test-trigger::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+	border-radius: inherit;
+	padding: 1px;
+	pointer-events: none;
+	background: conic-gradient(from calc(var(--ev-bevel-angle) + 82deg), var(--ev-ring-lo), var(--ev-ring-hi) 7%, var(--ev-ring-mid) 16%, var(--ev-ring-lo) 38%, var(--ev-ring-mid) 58%, var(--ev-ring-hi) 70%, var(--ev-ring-mid) 78%, var(--ev-ring-lo));
+	-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+	mask-composite: exclude;
+	opacity: var(--ev-ring-opacity);
+	transition: opacity var(--dur-fast) ease-out;
+}
+
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger):not(.quiet):hover:not(:disabled)::before,
+.app[data-posture='everyday'] .everyday-preview-pill:hover::before,
+.app[data-posture='everyday'] .icon-btn:hover::before,
+.app[data-posture='everyday'] .everyday-test-trigger:hover::before {
+	opacity: 0.65;
+}
+
+/* Pressed and selected sink further in; the ring comes up to full. */
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger):not(.quiet):active:not(:disabled),
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger):not(.quiet)[aria-pressed='true'],
+.app[data-posture='everyday'] .everyday-preview-pill[aria-pressed='true'],
+.app[data-posture='everyday'] .everyday-test-trigger.active {
+	background: var(--ev-soft-pressed);
+	color: var(--display);
+	box-shadow: inset 0 1px 3px var(--ev-press), inset 0 0 0 1px var(--ev-soft-drop);
+}
+
+.app[data-posture='everyday'] .btn:not(.primary):not(.danger):not(.quiet)[aria-pressed='true']::before,
+.app[data-posture='everyday'] .everyday-preview-pill[aria-pressed='true']::before,
+.app[data-posture='everyday'] .everyday-test-trigger.active::before {
+	opacity: 1;
+}
+
+/* The panel's top chamfer is polished: one catch of light where the glare crosses it. */
+.app[data-posture='everyday'] .everyday-panel::before {
+	content: '';
+	position: absolute;
+	left: 12px;
+	right: 12px;
+	top: 0;
+	height: 1px;
+	pointer-events: none;
+	background: linear-gradient(90deg, transparent, var(--ev-glint-base) 14%, var(--ev-glint) var(--ev-glare-pos), var(--ev-glint-base) 86%, transparent);
+	opacity: 0.7;
+}
+
+/* Glints are rare: only the first panel in a column catches the light; the rest keep the dim edge. */
+.app[data-posture='everyday'] .everyday-panel ~ .everyday-panel::before {
+	background: linear-gradient(90deg, transparent, var(--ev-glint-base) 14%, var(--ev-glint-base) 86%, transparent);
+}
+
+.everyday-topbar {
+	border-bottom: 0;
+	background: linear-gradient(90deg, transparent, var(--ev-glint-base) 14%, var(--ev-glint) var(--ev-glare-pos), var(--ev-glint-base) 86%, transparent) bottom / 100% 1px no-repeat;
+}
+
+/* Brushed silver primary: the one large piece of metal, with a streak where the glare falls. */
+.app[data-posture='everyday'] .btn.primary:not(:disabled) {
+	background:
+		linear-gradient(calc(var(--ev-bevel-angle) - 16deg), transparent calc(var(--ev-glare-pos) - 14%), var(--ev-primary-streak) var(--ev-glare-pos), transparent calc(var(--ev-glare-pos) + 12%)),
+		var(--ev-brush),
+		linear-gradient(calc(var(--ev-bevel-angle) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%);
+}
+
+/* One container level: a form's fields sit straight in the panel, no card inside the slab. */
+.app[data-posture='everyday'] .everyday-panel .field {
+	background: none;
+	box-shadow: none;
+	padding: 0;
+	gap: 6px;
+}
+
+/* Amount fields carry the money step below the hero: the number is the point of the form. */
+.app[data-posture='everyday'] .input.boxed.num {
+	min-height: 60px;
+	font-size: var(--money-lg);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Inputs are drawn by their edge and a recessed shadow; the face can't go darker than soft-touch. */
+.app[data-posture='everyday'] .input.boxed {
+	min-height: 48px;
+	background: transparent;
+	border-color: var(--ev-input-edge);
+	box-shadow: inset 0 1px 2px var(--ev-soft-drop);
+}
+
+.app[data-posture='everyday'] .input.boxed:focus {
+	border-color: var(--accent);
+	box-shadow: inset 0 1px 2px var(--ev-soft-drop), 0 0 0 3px var(--accent-dim);
+}
+
+/* Disabled is grey, never faded metal that still looks pressable. */
+/* The tint is taken from the ink, so it reads on soft-touch and on the ground in both themes. */
+.app[data-posture='everyday'] .btn.primary:disabled {
+	background: color-mix(in oklab, var(--ink) 8%, transparent);
+	border-color: transparent;
+	color: var(--ink-3);
+	box-shadow: none;
+	opacity: 1;
+}
+
+/* Sheets float over the lit ground, so they are frosted glass: the ground shows through as grey light. */
+.app[data-posture='everyday'] .sheet {
+	background: color-mix(in oklab, var(--surface) 72%, transparent);
+	backdrop-filter: blur(24px) saturate(0.6);
+	-webkit-backdrop-filter: blur(24px) saturate(0.6);
+	border-color: var(--line);
+	box-shadow: inset 0 1px 0 var(--ev-soft-rim), var(--shadow-sheet);
+}
+
+/* A toast floats: frosted glass, and its own dismiss control stays a bare glyph. */
+.app[data-posture='everyday'] .toast {
+	background: color-mix(in oklab, var(--surface-3) 74%, transparent);
+	backdrop-filter: blur(20px) saturate(0.6);
+	-webkit-backdrop-filter: blur(20px) saturate(0.6);
+	border-color: var(--line);
+	box-shadow: inset 0 1px 0 var(--ev-soft-rim), 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.app[data-posture='everyday'] .toast .icon-btn {
+	background: none;
+	box-shadow: none;
+}
+
+.app[data-posture='everyday'] .toast .icon-btn::before,
+.app[data-posture='everyday'] .toast .icon-btn::after {
+	display: none;
+}
+
+/* A quiet button is a text link: it keeps a 48px touch target but never takes a box or a material. */
+.app[data-posture='everyday'] .btn.quiet {
+	min-height: 48px;
+	background: none;
+	border-color: transparent;
+	box-shadow: none;
+	color: var(--accent);
+}
+
+.app[data-posture='everyday'] .btn.quiet:hover:not(:disabled) {
+	color: var(--accent-2);
+}
+
+/* Destructive stays red with its word; the soft-touch grip never hides it. */
+.app[data-posture='everyday'] .btn.danger {
+	background: var(--dispute-dim);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dispute) 30%, transparent);
+	color: color-mix(in oklab, var(--dispute) 70%, var(--ink));
+}
+
+.app[data-posture='everyday'] .btn.danger:hover:not(:disabled) {
+	color: color-mix(in oklab, var(--dispute) 58%, var(--ink));
+	background: color-mix(in oklab, var(--dispute) 20%, var(--dispute-dim));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dispute) 50%, transparent);
+}
+
+.app[data-posture='everyday'] .btn.danger:active:not(:disabled) {
+	color: color-mix(in oklab, var(--dispute) 58%, var(--ink));
+	background: color-mix(in oklab, var(--dispute) 14%, var(--dispute-dim));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dispute) 50%, transparent), inset 0 1px 3px var(--ev-soft-drop);
+}
+
+@media (forced-colors: active) {
+	.app[data-posture='everyday']::before,
+	.app[data-posture='everyday'] .btn::before,
+	.app[data-posture='everyday'] .btn::after,
+	.app[data-posture='everyday'] .everyday-preview-pill::before,
+	.app[data-posture='everyday'] .everyday-preview-pill::after,
+	.app[data-posture='everyday'] .everyday-test-trigger::before,
+	.app[data-posture='everyday'] .everyday-test-trigger::after,
+	.app[data-posture='everyday'] .everyday-panel::before,
+	.app[data-posture='everyday'] .everyday-panel::after {
+		display: none;
+	}
+}

@@ -9,7 +9,7 @@ import { protectVaultSecrets, unprotectVaultSecrets } from '../../../frontend/sr
 import { assertDemoNetwork } from '../../../frontend/src/lib/config/demo-accounts';
 import { useNavigate } from 'react-router-dom';
 import { HDNodeWallet } from 'ethers';
-import { explainWalletError } from '@xln/frontend/lib/utils/ui/walletError';
+import { explainWalletError, walletErrorLead } from '@xln/frontend/lib/utils/ui/walletError';
 import { PasswordEntry } from '../components/PasswordEntry';
 import { hasPasswordVault, savePasswordVault } from '../../../frontend/src/lib/security/passwordVault';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -18,6 +18,10 @@ import { Logo } from '../components/Logo';
 import { GateWelcome } from '../components/GateWelcome';
 import { RestoreChoice } from '../components/RestoreChoice';
 import { discoverFileRestore, discoverTowerRestore } from '../runtime/restore';
+import { resolveEffectivePosture } from '../runtime/everyday';
+import { resetReactRetiredTestnetState } from '../runtime/deploy-version';
+import { isDisposableLocalTestnet } from '@xln/frontend/lib/utils/deployVersionPolicy';
+import { parseStorageSchemaMismatch } from '@xln/frontend/lib/utils/recovery/storageSchemaRecovery';
 import { defaultTowerUrl, normalizeTowerUrl, saveRecovery } from '../runtime/recovery';
 import { useApp } from '../runtime/store';
 import { bootHostedVault, detectStack, type Stack } from '../runtime/hosted';
@@ -35,7 +39,7 @@ import type { RuntimeAdapterEntitySummary } from '@xln/core/api/public/runtime-m
 
 type GateMode = 'landing' | 'create' | 'import' | 'remote' | 'remote-import';
 
-export function Gate() {
+export function Gate({ ephemeralTestnet = false }: { ephemeralTestnet?: boolean }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState<GateMode>('landing');
   const [passwordEntry, setPasswordEntry] = useState<{
@@ -76,7 +80,7 @@ export function Gate() {
   const [restoreSource, setRestoreSource] = useState<'tower' | 'file'>('tower');
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [towerUrl, setTowerUrl] = useState(defaultTowerUrl);
-  const [backupEnabled, setBackupEnabled] = useState(() => Boolean(defaultTowerUrl()));
+  const [backupEnabled, setBackupEnabled] = useState(() => resolveEffectivePosture() === 'everyday' && Boolean(defaultTowerUrl()));
   const [wsUrl, setWsUrl] = useState('wss://xln.finance/rpc');
   const [authKey, setAuthKey] = useState('');
   const [importSource, setImportSource] = useState('');
@@ -123,6 +127,17 @@ export function Gate() {
       await work();
     } catch (workError) {
       const message = workError instanceof Error ? workError.message : String(workError);
+      if (
+        (ephemeralTestnet || isDisposableLocalTestnet(import.meta.env.DEV, window.location.hostname)) &&
+        parseStorageSchemaMismatch(message)
+      ) {
+        void resetReactRetiredTestnetState().catch(resetError => {
+          setError(resetError instanceof Error ? resetError.message : String(resetError));
+          setBusyStep(null);
+          setProgress(null);
+        });
+        return;
+      }
       setError(message);
       setBusyStep(null);
       setProgress(null);
@@ -138,9 +153,12 @@ export function Gate() {
     }
     return discoverTowerRestore(seed, towerUrl);
   };
-  const rememberTower = (vaultId: string): void => {
-    if ((restore && restoreSource === 'tower') || backupEnabled)
+  const rememberTower = (vaultId: string, allowAutoBackup: boolean): void => {
+    if ((restore && restoreSource === 'tower') || (allowAutoBackup && backupEnabled)) {
       saveRecovery(vaultId, { mode: 'tower', towers: [normalizeTowerUrl(towerUrl)] });
+    } else if (allowAutoBackup && !backupEnabled) {
+      saveRecovery(vaultId, { mode: 'local', towers: [] });
+    }
   };
 
   const NO_STACK =
@@ -175,7 +193,7 @@ export function Gate() {
         onStep: setBusyStep,
       });
       useApp.getState().setTour({ active: false, index: 0 });
-      navigate('/', { replace: true });
+      navigate({ pathname: '/', search: window.location.search }, { replace: true });
     });
   };
 
@@ -218,7 +236,7 @@ export function Gate() {
       await savePasswordVault(vaultId, result.mnemonic, passphrase);
       setPassphrase('');
       await bootHostedVault(result.mnemonic, { ...vaultOptions, stack, ...(recovery ? { recovery } : {}) });
-      rememberTower(vaultId);
+      rememberTower(vaultId, true);
       toast(recovery ? 'Verified backup restored.' : 'Wallet opened.');
       setBusyStep(null);
     });
@@ -246,7 +264,7 @@ export function Gate() {
         open: async (unlocked, currentStack) => {
           if (!currentStack) throw new Error(NO_STACK);
           await bootHostedVault(unlocked, { ...vaultOptions, stack: currentStack, ...(recovery ? { recovery } : {}) });
-          rememberTower(vaultId);
+          rememberTower(vaultId, false);
         },
       });
       setBusyStep(null);
@@ -440,11 +458,14 @@ export function Gate() {
         </p>
 
         {discoveryError ? (
-          <div className="gate-error" role="alert">
-            <p>{discoveryError}</p>
+          <div className="gate-recover" role="alert">
+            <p className="gate-sub muted">
+              {walletErrorLead(discoveryError) ?? 'The wallet could not reach the network. Check your connection, then retry.'}
+            </p>
             <button type="button" className="btn" onClick={() => setDiscoveryAttempt(attempt => attempt + 1)}>
               Retry
             </button>
+            <code className="gate-diagnostic">{discoveryError}</code>
           </div>
         ) : null}
 

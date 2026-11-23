@@ -1,0 +1,108 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--claude-haiku--baseline",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "claude-haiku",
+  "lineage": "anthropic-claude-haiku",
+  "specMode": "baseline",
+  "passed": false,
+  "statePassed": true,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": false
+    },
+    "rawAnswers": "1. I have $0.00 in settled Cash available to spend right now.\n2. The $50.00 incoming payment is still in transit—the system is retrying automatically to complete it.\n3. It could not settle yet because the payment is still finishing; the transfer has not completed to my wallet."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check incoming payment status and current cash balance",
+      "args": {
+        "intent": "Check incoming payment status and current cash balance",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 5440,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Wait for incoming payment to complete and check updated balance",
+      "args": {
+        "intent": "Wait for incoming payment to complete and check updated balance",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 3730,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check if incoming $50 payment has completed",
+      "args": {
+        "intent": "Check if incoming $50 payment has completed",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 3464,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Verify incoming payment status and assess ability to pay CornerCoffee",
+      "args": {
+        "intent": "Verify incoming payment status and assess ability to pay CornerCoffee",
+        "summary": "The $50.00 incoming payment is still processing. After multiple checks, the balance remains $0.00 with status 'Payment still finishing — we will keep retrying automatically.' I cannot pay CornerCoffee $10.00 now because the incoming funds have not yet settled into the wallet. Payment is blocked until the incoming transfer completes."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "The $50.00 incoming payment is still processing. After multiple checks, the balance remains $0.00 with status 'Payment still finishing — we will keep retrying automatically.' I cannot pay CornerCoffee $10.00 now because the incoming funds have not yet settled into the wallet. Payment is blocked until the incoming transfer completes."
+        }
+      },
+      "latencyMs": 5120,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Check your incoming $50.00 payment and wait to see if it finishes. Verify whether you can pay CornerCoffee $10.00 now, and explain why.\"\nNote: task verification failed (comprehension={\"q1StillZero\":true,\"q2Arriving\":true,\"q3HubOffline\":false}).\nHere is what you tried:\nTurn 1: discover(intent=\"Check incoming payment status and current cash balance\", args={\"intent\":\"Check incoming payment status and current cash balance\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"incoming-status\":\"Payment still finishing — we will keep retrying automatically.\"}\nTurn 2: discover(intent=\"Wait for incoming payment to complete and check updated balance\", args={\"intent\":\"Wait for incoming payment to complete and check updated balance\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"incoming-status\":\"Payment still finishing — we will keep retrying automatically.\"}\nTurn 3: discover(intent=\"Check if incoming $50 payment has completed\", args={\"intent\":\"Check if incoming $50 payment has completed\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"incoming-status\":\"Payment still finishing — we will keep retrying automatically.\"}\nTurn 4: done(intent=\"Verify incoming payment status and assess ability to pay CornerCoffee\", args={\"intent\":\"Verify incoming payment status and assess ability to pay CornerCoffee\",\"summary\":\"The $50.00 incoming payment is still processing. After multiple checks, the balance remains $0.00 with status 'Payment still finishing — we will keep retrying automatically.' I cannot pay CornerCoffee $10.00 now because the incoming funds have not yet settled into the wallet. Payment is blocked until the incoming transfer completes.\"}) -> OK: {\"done\":true,\"summary\":\"The $50.00 incoming payment is still processing. After multiple checks, the balance remains $0.00 with status 'Payment still finishing — we will keep retryi\nHere is what would have worked:\ndiscover(\"(cash)\"), act(\"wait-settlement\"), discover(\"(quote-pay \\\"CornerCoffee\\\" 10)\") or observe $0 Cash while $50 stays arriving, then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The interface actively hides the distinction between \"waiting for something to change\" and \"checking again.\"\n\nThree turns of `discover(intent=\"Wait for incoming payment...\", expr=\"(cash)\")` each returned identical state. The label says \"wait\" but the verb is \"discover\" — which is a read, not a blocking operation. So the interface permitted me to call a waiting-shaped intent with a read-shaped function and report success both times. I never knew I wasn't actually waiting.\n\nThe incoming payment's status label — \"Payment still finishing — we will keep retrying automatically\" — is accurate but it's doing two jobs at once:\n1. It tells me the state (finishing)\n2. It implicitly promises I don't need to do anything\n\nThat second promise is true *if* I actually wait. It's false if I just call `discover` again. The label doesn't warn me which one I'm doing.\n\nThe cash balance staying at `$0.00` while the status says \"arriving\" creates a visual stasis that reads like \"nothing is happening here, you can try something else.\" The balance is correctly showing settled funds (zero), and the status field correctly shows pending funds (arriving). But they're adjacent fields in the same response, so a quick read suggests they're two ways of describing the same thing — not two separate phases of a single transaction.\n\nWhat would fix it:\n- `discover` should be read-only. Create a separate `wait(expr)` that blocks until the expression changes.\n- The status label should end with an action cue: \"Payment still finishing — call `wait-settlement` to block until it arrives\" or similar.\n- Or: visually separate the settled balance from the pending balance so it's clear they're different money in different states.\n\nThe working approach used `wait-settlement` as an explicit operation. That exists, but nothing in the `discover` flow surfaced it as the thing to do when you're stuck in a loop.",
+    "latencyMs": 12281
+  },
+  "durationMs": 42649,
+  "finalSummary": "The $50.00 incoming payment is still processing. After multiple checks, the balance remains $0.00 with status 'Payment still finishing — we will keep retrying automatically.' I cannot pay CornerCoffee $10.00 now because the incoming funds have not yet settled into the wallet. Payment is blocked until the incoming transfer completes."
+}

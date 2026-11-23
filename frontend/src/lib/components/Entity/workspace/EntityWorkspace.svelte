@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
+  import { page } from '$app/state';
   import { runtimeControllerHandle } from '#lib/stores/runtimeControllerStore.ts';
   import { runtimeCommandLatestReceipt } from '#lib/stores/commands/runtimeCommandBus.ts';
   import {
@@ -9,9 +11,11 @@
     runtimeViewQueryAtHeight,
   } from '#lib/stores/runtimeViewStore.ts';
   import { runtimeQueryClient } from '#lib/stores/runtimeQueryClient.ts';
+  import { resolveEffectivePosture, walletPosture } from '#lib/stores/everyday/walletPostureStore.ts';
   import type { RuntimeAdapterViewFrame } from '@xln/core/api/public/runtime-module';
   import { REMOTE_RUNTIME } from '@xln/core/config/constants';
   import type { Tab } from '#lib/types/ui.ts';
+  import EverydayShell from '#lib/components/Everyday/EverydayShell.svelte';
   import EntityPanelTabs from './shell/EntityPanelTabs.svelte';
   import { runtimeProjectionMatchesRuntime } from '../core/entity-workspace';
   import {
@@ -34,6 +38,10 @@
   export let initialAction: EntityOpenAction | undefined = undefined;
   export let runtimeFrameContext: EntityWorkspaceRuntimeFrameContext = emptyEntityWorkspaceRuntimeFrameContext;
   export let embeddedRuntimeContext: EntityWorkspaceEmbeddedRuntimeContext = emptyEntityWorkspaceEmbeddedRuntimeContext;
+
+  const dispatch = createEventDispatcher();
+  $: effectivePosture = resolveEffectivePosture($walletPosture, typeof window !== 'undefined' ? page.url.search : '');
+  $: useEverydayShell = userModeHeader && effectivePosture === 'everyday';
 
   let workspaceProjectionFrame: RuntimeAdapterViewFrame | null = null;
   let workspaceProjectionError: string | null = null;
@@ -163,7 +171,7 @@
 </script>
 
 <div class="entity-workspace" data-testid="entity-workspace">
-  {#if workspaceProjectionError || isActionableRuntimeReceipt($runtimeCommandLatestReceipt?.status)}
+  {#if !useEverydayShell && (workspaceProjectionError || isActionableRuntimeReceipt($runtimeCommandLatestReceipt?.status))}
     <div class="workspace-status">
     {#if workspaceProjectionError}
       <span
@@ -188,26 +196,41 @@
   {/if}
 
   {#if runtimeFrameEnv || workspaceProjectionFrame}
-    <EntityPanelTabs
-      {tab}
-      {hideHeader}
-      {showJurisdiction}
-      {userModeHeader}
-      {selectedJurisdiction}
-      {allowHeaderAddRuntime}
-      {headerRuntimeAddLabel}
-      {initialAction}
-      runtimeFrameContext={frameContext}
-      embeddedRuntimeContext={embeddedFrameContext}
-      runtimeProjectionFrame={workspaceProjectionFrame}
-      on:signerSelect
-      on:addSigner
-      on:entitySelect
-      on:jurisdictionSelect
-      on:addJurisdiction
-      on:addEntity
-      on:addRuntime
-    />
+    {#if useEverydayShell}
+      <EverydayShell
+        {tab}
+        {allowHeaderAddRuntime}
+        {headerRuntimeAddLabel}
+        runtimeFrameContext={frameContext}
+        embeddedRuntimeContext={embeddedFrameContext}
+        runtimeProjectionFrame={workspaceProjectionFrame}
+        onEntitySelect={(detail: { jurisdiction: string; signerId: string; entityId: string }) => dispatch('entitySelect', detail)}
+        onAddRuntime={() => dispatch('addRuntime')}
+        onAddJurisdiction={() => dispatch('addJurisdiction')}
+        onAddEntity={() => dispatch('addEntity')}
+      />
+    {:else}
+      <EntityPanelTabs
+        {tab}
+        {hideHeader}
+        {showJurisdiction}
+        {userModeHeader}
+        {selectedJurisdiction}
+        {allowHeaderAddRuntime}
+        {headerRuntimeAddLabel}
+        {initialAction}
+        runtimeFrameContext={frameContext}
+        embeddedRuntimeContext={embeddedFrameContext}
+        runtimeProjectionFrame={workspaceProjectionFrame}
+        on:signerSelect
+        on:addSigner
+        on:entitySelect
+        on:jurisdictionSelect
+        on:addJurisdiction
+        on:addEntity
+        on:addRuntime
+      />
+    {/if}
   {:else}
     <section class="action-unavailable" data-testid="entity-workspace-action-unavailable">
       Runtime action surface requires a runtime frame.
@@ -254,8 +277,8 @@
     height: 28px;
     padding: 0 10px;
     border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 40%, transparent);
-    color: var(--theme-accent, #fbbf24);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent);
+    color: var(--theme-accent, #c5cfde);
     font-size: 12px;
     font-weight: 800;
   }
@@ -267,8 +290,8 @@
 
   .command-pill.pending,
   .command-pill.accepted {
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 38%, transparent);
-    color: var(--theme-accent, #fbbf24);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 38%, transparent);
+    color: var(--theme-accent, #c5cfde);
   }
 
   .command-pill.observed {

@@ -62,7 +62,7 @@ test(
     expect(idleAfter.accounts).toEqual(idleBefore.accounts);
     await page.getByTestId('home-faucet').click();
     await expect(page.getByTestId('test-money-status')).toContainText('100 USDC received', { timeout: 30_000 });
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/(?:\?[^#]*)?$/);
     await expect(page.getByTestId('token-net-USDC')).toContainText('100');
     await expect(page.getByText('liveness', { exact: true })).toHaveCount(0);
     await expect(page.getByText('proposeAccountsNow', { exact: true })).toHaveCount(0);

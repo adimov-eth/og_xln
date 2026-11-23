@@ -1,0 +1,211 @@
+{
+  "episodeId": "E1a_pay_across_buckets--claude-sonnet--baseline",
+  "scenarioId": "E1a_pay_across_buckets",
+  "modelId": "claude-sonnet",
+  "lineage": "anthropic-claude-sonnet",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Fee": true,
+      "q2Cash": true,
+      "q3NoManualMove": true
+    },
+    "rawAnswers": "1. The fee was $0.05.\n2. $54.95 cash remaining.\n3. No, the payment went directly from cash without manual bucket moves."
+  },
+  "turns": 7,
+  "phantoms": [
+    {
+      "episodeId": "E1a_pay_across_buckets--claude-sonnet--baseline",
+      "scenarioId": "E1a_pay_across_buckets",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "baseline",
+      "turn": 1,
+      "tool": "discover",
+      "actionOrExpr": "(cost 'pay' '((\"to\" \"CornerCoffee\") (\"amount_usd\" 65)))",
+      "intent": "Check the cost and fee for paying CornerCoffee $65",
+      "category": "eval",
+      "error": "Unbound variable `cost' — did you mean `cos`?"
+    },
+    {
+      "episodeId": "E1a_pay_across_buckets--claude-sonnet--baseline",
+      "scenarioId": "E1a_pay_across_buckets",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "baseline",
+      "turn": 3,
+      "tool": "discover",
+      "actionOrExpr": "(help 'pay')",
+      "intent": "Check help documentation to see if there's a way to preview payment costs",
+      "category": "parse",
+      "error": "Parse Error: expecting datum after ''' at 1:10"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check the cost and fee for paying CornerCoffee $65",
+      "args": {
+        "intent": "Check the cost and fee for paying CornerCoffee $65",
+        "expr": "(cost 'pay' '((\"to\" \"CornerCoffee\") (\"amount_usd\" 65)))"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unbound variable `cost' — did you mean `cos`?",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 7413,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check available actions to understand how to preview payment costs",
+      "args": {
+        "intent": "Check available actions to understand how to preview payment costs",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 4684,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check help documentation to see if there's a way to preview payment costs",
+      "args": {
+        "intent": "Check help documentation to see if there's a way to preview payment costs",
+        "expr": "(help 'pay')"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Parse Error: expecting datum after ''' at 1:10",
+        "phantomCategory": "parse"
+      },
+      "latencyMs": 4270,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Check help documentation for pay action syntax",
+      "args": {
+        "intent": "Check help documentation for pay action syntax",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 4384,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Get quote for paying CornerCoffee $65 to check cost and fees",
+      "args": {
+        "intent": "Get quote for paying CornerCoffee $65 to check cost and fees",
+        "expr": "(quote-pay \"CornerCoffee\" 65)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": true,
+          "inline-preview": "CornerCoffee · $65.00 + $0.05 fee",
+          "reason": "Ready for 1-tap inline Pay across your Cash."
+        }
+      },
+      "latencyMs": 6171,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "act",
+      "intent": "Pay CornerCoffee $65 after confirming fee is $0.05",
+      "args": {
+        "intent": "Pay CornerCoffee $65 after confirming fee is $0.05",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 65
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 54.95
+        }
+      },
+      "latencyMs": 4473,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "done",
+      "intent": "Completed payment to CornerCoffee",
+      "args": {
+        "intent": "Completed payment to CornerCoffee",
+        "summary": "Paid CornerCoffee $65.00 with $0.05 fee. $54.95 cash remaining."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Paid CornerCoffee $65.00 with $0.05 fee. $54.95 cash remaining."
+        }
+      },
+      "latencyMs": 6983,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Pay CornerCoffee $65.00 for supplies. Check what it will cost before paying, then send it.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check the cost and fee for paying CornerCoffee $65\", args={\"intent\":\"Check the cost and fee for paying CornerCoffee $65\",\"expr\":\"(cost 'pay' '((\\\"to\\\" \\\"CornerCoffee\\\") (\\\"amount_usd\\\" 65)))\"}) -> ERROR (eval): Unbound variable `cost' — did you mean `cos`?\nTurn 2: discover(intent=\"Check available actions to understand how to preview payment costs\", args={\"intent\":\"Check available actions to understand how to preview payment costs\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 3: discover(intent=\"Check help documentation to see if there's a way to preview payment costs\", args={\"intent\":\"Check help documentation to see if there's a way to preview payment costs\",\"expr\":\"(help 'pay')\"}) -> ERROR (parse): Parse Error: expecting datum after ''' at 1:10\nTurn 4: discover(intent=\"Check help documentation for pay action syntax\", args={\"intent\":\"Check help documentation for pay action syntax\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 5: discover(intent=\"Get quote for paying CornerCoffee $65 to check cost and fees\", args={\"intent\":\"Get quote for paying CornerCoffee $65 to check cost and fees\",\"expr\":\"(quote-pay \\\"CornerCoffee\\\" 65)\"}) -> OK: {\"recipient\":\"CornerCoffee\",\"amount-usd\":65,\"fee-usd\":0.05,\"max-fee-usd\":2,\"within-fee-cap\":true,\"can-complete\":true,\"inline-preview\":\"CornerCoffee · $65.00 + $0.05 fee\",\"reason\":\"\nTurn 6: act(intent=\"Pay CornerCoffee $65 after confirming fee is $0.05\", args={\"intent\":\"Pay CornerCoffee $65 after confirming fee is $0.05\",\"action\":\"pay\",\"args\":{\"to\":\"CornerCoffee\",\"amount_usd\":65}}) -> OK: {\"status\":\"Sent\",\"to\":\"CornerCoffee\",\"amount-usd\":65,\"fee-usd\":0.05,\"remaining-cash-usd\":54.95}\nTurn 7: done(intent=\"Completed payment to CornerCoffee\", args={\"intent\":\"Completed payment to CornerCoffee\",\"summary\":\"Paid CornerCoffee $65.00 with $0.05 fee. $54.95 cash remaining.\"}) -> OK: {\"done\":true,\"summary\":\"Paid CornerCoffee $65.00 with $0.05 fee. $54.95 cash remaining.\"}\nHere is what would have worked:\ndiscover(\"(quote-pay \\\"CornerCoffee\\\" 65)\") then act(\"pay\", { to: \"CornerCoffee\", amount_usd: 65 }) then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The core problem: **nothing in the surface suggested `quote-pay` existed or was needed**.\n\n## Concrete issues\n\n1. **`(help)` output was truncated** — it cut off mid-list (`\"(ac`), hiding what other functions existed. I couldn't see the full inventory of available operations.\n\n2. **`(actions)` returned action names, but not their preview/query counterparts** — it listed `\"pay\"` but not `quote-pay`. This made it look like `pay` was the only relevant primitive.\n\n3. **No pointer from actions to quotes** — when I called `(actions)`, there was no hint that \"most actions have a `quote-*` variant you should call first.\"\n\n4. **My initial guess `(cost 'pay' ...)` felt reasonable but failed silently** — the error message \"did you mean `cos`?\" was technically correct but offered no path forward. A better error: \"No `cost` function. Try `(quote-pay ...)` to preview payment costs.\"\n\n5. **`(help 'pay')` parse error was a dead-end** — I tried to get help on the `pay` action specifically, but the syntax was wrong and the error didn't tell me how to get help on a specific action (if that's even possible).\n\n## What would have helped\n\n- `(actions)` returning `[\"pay\", \"quote-pay\", \"cash-out\", \"quote-cash-out\", ...]` — or at minimum, a note like `\"Use (quote-<action> ...) to preview before acting.\"`\n- `(help)` output not truncating — I needed to see the full list.\n- Error message on `cost` suggesting `quote-pay` by name.\n\nThe working path was completely invisible until I stumbled onto `(help)` → saw the fragment `\"(quote-pay\"` → guessed the rest. That shouldn't require a stumble.",
+    "latencyMs": 22962
+  },
+  "durationMs": 66751,
+  "finalSummary": "Paid CornerCoffee $65.00 with $0.05 fee. $54.95 cash remaining."
+}

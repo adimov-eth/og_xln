@@ -1,0 +1,121 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--google/gemini-2.5-pro--baseline",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "google/gemini-2.5-pro",
+  "lineage": "google-gemini-2.5-pro",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": true
+    },
+    "rawAnswers": "1. I can spend $0.00 of settled Cash right now.\n2. The incoming payment is being held separately from my Cash.\n3. It could not settle because the payment provider is offline."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check transaction history for the incoming $50.00 payment.",
+      "args": {
+        "intent": "Check transaction history for the incoming $50.00 payment.",
+        "expr": "(screen 'activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "activity",
+          "purpose": "Recent payments, splits, and automatic protection status.",
+          "activity": {
+            "entries": [
+              {
+                "id": "act-1",
+                "summary": "Incoming $50.00 from Maya (finishing...)",
+                "kind": "arriving",
+                "amount-usd": 50
+              }
+            ],
+            "hub-online": false,
+            "dispute-active": false,
+            "tower-enrolled": true,
+            "backup-exported": false,
+            "protection-status": "Provider offline — moving your Cash back to your wallet automatically."
+          },
+          "buttons": [
+            "Clear test data"
+          ]
+        }
+      },
+      "latencyMs": 3733,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Wait for the incoming $50.00 payment to finish.",
+      "args": {
+        "intent": "Wait for the incoming $50.00 payment to finish.",
+        "args": {
+          "id": "act-1"
+        },
+        "action": "wait-settlement"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 4750,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check my cash balance to see if I can pay CornerCoffee.",
+      "args": {
+        "expr": "(cash)",
+        "intent": "Check my cash balance to see if I can pay CornerCoffee."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 3228,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Explain why I can't pay CornerCoffee.",
+      "args": {
+        "summary": "I cannot pay CornerCoffee $10.00 because my cash balance is $0.00. The incoming $50.00 payment is still pending because the payment provider is offline and has not been added to my cash balance.",
+        "intent": "Explain why I can't pay CornerCoffee."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I cannot pay CornerCoffee $10.00 because my cash balance is $0.00. The incoming $50.00 payment is still pending because the payment provider is offline and has not been added to my cash balance."
+        }
+      },
+      "latencyMs": 8542,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 40003,
+  "finalSummary": "I cannot pay CornerCoffee $10.00 because my cash balance is $0.00. The incoming $50.00 payment is still pending because the payment provider is offline and has not been added to my cash balance."
+}

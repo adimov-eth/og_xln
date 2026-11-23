@@ -1,0 +1,182 @@
+{
+  "episodeId": "E1a_pay_across_buckets--grok-4.7--baseline",
+  "scenarioId": "E1a_pay_across_buckets",
+  "modelId": "grok-4.7",
+  "lineage": "xai-grok-4.7",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Fee": true,
+      "q2Cash": true,
+      "q3NoManualMove": true
+    },
+    "rawAnswers": "1. The fee shown for sending $65.00 was $0.05.\n2. Cash left is $54.95.\n3. No manual move between wallet buckets was required before paying."
+  },
+  "turns": 6,
+  "phantoms": [
+    {
+      "episodeId": "E1a_pay_across_buckets--grok-4.7--baseline",
+      "scenarioId": "E1a_pay_across_buckets",
+      "modelId": "grok-4.7",
+      "lineage": "xai-grok-4.7",
+      "specMode": "baseline",
+      "turn": 2,
+      "tool": "discover",
+      "actionOrExpr": "(help \"pay\")",
+      "intent": "Learn how pay previews cost before sending $65 to CornerCoffee.",
+      "category": "eval",
+      "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "See wallet actions and how to preview the cost of paying CornerCoffee before sending $65.",
+      "args": {
+        "intent": "See wallet actions and how to preview the cost of paying CornerCoffee before sending $65.",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 12500,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Learn how pay previews cost before sending $65 to CornerCoffee.",
+      "args": {
+        "intent": "Learn how pay previews cost before sending $65 to CornerCoffee.",
+        "expr": "(help \"pay\")"
+      },
+      "outcome": {
+        "success": false,
+        "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 12704,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Read wallet help with no arguments after the pay help call was rejected.",
+      "args": {
+        "intent": "Read wallet help with no arguments after the pay help call was rejected.",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 14420,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Preview the cost of paying CornerCoffee $65 before sending it.",
+      "args": {
+        "intent": "Preview the cost of paying CornerCoffee $65 before sending it.",
+        "expr": "(quote-pay \"CornerCoffee\" 65)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": true,
+          "inline-preview": "CornerCoffee · $65.00 + $0.05 fee",
+          "reason": "Ready for 1-tap inline Pay across your Cash."
+        }
+      },
+      "latencyMs": 16041,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Send CornerCoffee $65 for supplies after the quote showed a $0.05 fee within the cap.",
+      "args": {
+        "intent": "Send CornerCoffee $65 for supplies after the quote showed a $0.05 fee within the cap.",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 65
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 54.95
+        }
+      },
+      "latencyMs": 15834,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "done",
+      "intent": "Confirm the CornerCoffee payment after the quote and send both succeeded.",
+      "args": {
+        "intent": "Confirm the CornerCoffee payment after the quote and send both succeeded.",
+        "summary": "Quoted CornerCoffee $65.00 plus a $0.05 fee (under the $2 cap), then sent it. Status: Sent. Remaining cash: $54.95."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Quoted CornerCoffee $65.00 plus a $0.05 fee (under the $2 cap), then sent it. Status: Sent. Remaining cash: $54.95."
+        }
+      },
+      "latencyMs": 10810,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Pay CornerCoffee $65.00 for supplies. Check what it will cost before paying, then send it.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"See wallet actions and how to preview the cost of paying CornerCoffee before sending $65.\", args={\"intent\":\"See wallet actions and how to preview the cost of paying CornerCoffee before sending $65.\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 2: discover(intent=\"Learn how pay previews cost before sending $65 to CornerCoffee.\", args={\"intent\":\"Learn how pay previews cost before sending $65 to CornerCoffee.\",\"expr\":\"(help \\\"pay\\\")\"}) -> ERROR (eval): help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items\nTurn 3: discover(intent=\"Read wallet help with no arguments after the pay help call was rejected.\", args={\"intent\":\"Read wallet help with no arguments after the pay help call was rejected.\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 4: discover(intent=\"Preview the cost of paying CornerCoffee $65 before sending it.\", args={\"intent\":\"Preview the cost of paying CornerCoffee $65 before sending it.\",\"expr\":\"(quote-pay \\\"CornerCoffee\\\" 65)\"}) -> OK: {\"recipient\":\"CornerCoffee\",\"amount-usd\":65,\"fee-usd\":0.05,\"max-fee-usd\":2,\"within-fee-cap\":true,\"can-complete\":true,\"inline-preview\":\"CornerCoffee · $65.00 + $0.05 fee\",\"reason\":\"\nTurn 5: act(intent=\"Send CornerCoffee $65 for supplies after the quote showed a $0.05 fee within the cap.\", args={\"intent\":\"Send CornerCoffee $65 for supplies after the quote showed a $0.05 fee within the cap.\",\"action\":\"pay\",\"args\":{\"to\":\"CornerCoffee\",\"amount_usd\":65}}) -> OK: {\"status\":\"Sent\",\"to\":\"CornerCoffee\",\"amount-usd\":65,\"fee-usd\":0.05,\"remaining-cash-usd\":54.95}\nTurn 6: done(intent=\"Confirm the CornerCoffee payment after the quote and send both succeeded.\", args={\"intent\":\"Confirm the CornerCoffee payment after the quote and send both succeeded.\",\"summary\":\"Quoted CornerCoffee $65.00 plus a $0.05 fee (under the $2 cap), then sent it. Status: Sent. Remaining cash: $54.95.\"}) -> OK: {\"done\":true,\"summary\":\"Quoted CornerCoffee $65.00 plus a $0.05 fee (under the $2 cap), then sent it. Status: Sent. Remaining cash: $54.95.\"}\nHere is what would have worked:\ndiscover(\"(quote-pay \\\"CornerCoffee\\\" 65)\") then act(\"pay\", { to: \"CornerCoffee\", amount_usd: 65 }) then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The preview lived outside the action list, and the obvious way to ask about `pay` was rejected with a size error.\n\n`(actions)` lists `pay` and nothing about cost. `quote-pay` only shows up inside a nullary `(help)` dump, next to `(screens)` and `(quote-cash-out 50)`. The name does not match the task language (\"cost\", \"fee\", \"preview\") or the action name `pay`, so the working form is invisible until you already call `(help)` with zero arguments.\n\n`(help \"pay\")` is the natural next call and it fails. The message is `args — Too big: expected array to have <=0 items`. That reads like a bug in the argument array, not \"help takes no arguments; forms are listed by `(help)`.\" There is no per-action help, and `(actions)` returns bare names with no argument shape, so `to` / `amount_usd` versus the positional `(quote-pay \"CornerCoffee\" 65)` is a second guess.\n\n`pay` itself has no preview flag, quote id, or fee field. Nothing on the send path points at `quote-pay`. Fee, cap, and `inline-preview` appear only after that form is already known. The hyphenated result keys (`fee-usd`) also diverge from the snake_case act args (`amount_usd`).",
+    "latencyMs": 27493
+  },
+  "durationMs": 237768,
+  "finalSummary": "Quoted CornerCoffee $65.00 plus a $0.05 fee (under the $2 cap), then sent it. Status: Sent. Remaining cash: $54.95."
+}

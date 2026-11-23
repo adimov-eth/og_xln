@@ -18,12 +18,14 @@ import { getXLN } from './xln-loader';
 import type { RuntimeRecoveryCandidate } from './restore';
 import { connectEmbedded, getEmbeddedEnv, lockEmbeddedRuntime, requireAdapter } from './adapter';
 import { readJson } from './http';
-import { waitFor } from './tx';
+import { haltedRuntimeMessage, waitFor } from './tx';
 import { accountDisputeConfig } from './financial/roles';
 import { entityTxOpensAccount } from './financial/open-account-match';
 import type { EntityTx, RuntimeAdapterEntitySummary, RuntimeReplica } from '@xln/core/api/public/runtime-module';
 import type { AccountDisputeConfig } from '@xln/core/account/config/dispute-config';
+import { resolveEffectivePosture } from './everyday';
 import { deriveJurisdictionSignerIndex } from '@xln/core/jurisdiction/machine/config/signer-derivation';
+import { ensureReactDefaultTowerProtection } from './recovery';
 import { useApp, type VaultKind } from './store';
 
 /**
@@ -71,9 +73,15 @@ async function relayConnected(
     return true;
   } catch (error) {
     if (isChainCatchupCancelled(error) || !owns()) throw error;
+    // A halted Runtime is not an unreachable relay: the relay rejects a second
+    // copy of this wallet, and the user must close one copy, not reconnect.
     useApp
       .getState()
-      .toast('The network relay is not reachable. Reconnect before opening your hub account from Home.', 'danger');
+      .toast(
+        haltedRuntimeMessage() ??
+          'The network relay is not reachable. Reconnect before opening your hub account from Home.',
+        'danger',
+      );
     return false;
   }
 }
@@ -263,21 +271,25 @@ export async function openFirstHubAccount(
         );
     }
     if (disputeConfig) {
-      await hydrateJurisdictionPolicyDefaults(stack.jurisdiction.name, () => assertSessionOwned(owns));
+      await hydrateJurisdictionPolicyDefaults(
+        stack.jurisdiction.name,
+        () => assertSessionOwned(owns),
+        resolveEffectivePosture(),
+      );
       assertSessionOwned(owns);
-      const rebalancePolicy = getOpenAccountRebalancePolicyData(USDC);
+      const posture = resolveEffectivePosture();
+      const rebalancePolicy = getOpenAccountRebalancePolicyData(USDC, posture);
       // The user (or another tab) may have opened this Account while the
       // automatic open awaited the network; decide in the same turn as sending.
       if (accountOpenedOrPending(env, entityId, hub.entityId)) return;
       await sendEntity(entityId, signerId, [
         {
           type: 'openAccount',
-          // Owner default: the user extends 10,000 USD of credit to
-          // its hub, so incoming payments arrive without collateral. Nothing
-          // raises it later; a full limit is shown and raised by the user.
+          // Everyday default extends a $250 transit credit cap with $1 auto-settle;
+          // Pro posture extends $10,000 with $500 soft limit.
           data: {
             targetEntityId: hub.entityId,
-            creditAmount: getHubOpeningCredit(USDC),
+            creditAmount: getHubOpeningCredit(USDC, posture),
             ...(rebalancePolicy ? { rebalancePolicy } : {}),
             tokenId: USDC,
             disputeConfig,
@@ -295,7 +307,9 @@ export async function openFirstHubAccount(
         );
       } catch (error) {
         if (isChainCatchupCancelled(error) || !owns()) throw error;
-        useApp.getState().toast(`${hub.name} has not answered yet; the account opens when it does.`);
+        const halted = haltedRuntimeMessage();
+        if (halted) useApp.getState().toast(halted, 'danger');
+        else useApp.getState().toast(`${hub.name} has not answered yet; the account opens when it does.`);
       }
     }
   }
@@ -496,6 +510,9 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
     void resumeWalletChainCatchup(env, stack);
 
     step('Ready');
+    if (options.stack !== null) {
+      ensureReactDefaultTowerProtection(options.vaultId);
+    }
     app.setActiveEntityId(entityId);
     app.setActiveVault(options.vaultId);
     app.unlockSeed(options.vaultId, seed);

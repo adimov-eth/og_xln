@@ -1,0 +1,25 @@
+{
+  "episodeId": "E2_friends_split_and_settle--grok-4.7--refined",
+  "scenarioId": "E2_friends_split_and_settle",
+  "modelId": "grok-4.7",
+  "lineage": "xai-grok-4.7",
+  "specMode": "refined",
+  "passed": false,
+  "statePassed": false,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1Jamie": false,
+      "q2SamZero": false,
+      "q3Cash": false
+    },
+    "rawAnswers": ""
+  },
+  "turns": 0,
+  "phantoms": [],
+  "defines": [],
+  "traces": [],
+  "transportError": "grok-4.7: CLI exit 1: Error: Internal error: {\n  \"message\": \"API error (status 402 Payment Required): Grok Build usage balance exhausted\",\n  \"http_status\": 402\n}",
+  "durationMs": 6239,
+  "finalSummary": ""
+}

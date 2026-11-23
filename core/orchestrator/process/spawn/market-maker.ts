@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { sanitizeChildProcessEnv } from '../../../api/server/child-process-env';
@@ -6,17 +6,8 @@ import { buildManagedRuntimeChildSecretEnv, writeInheritedChildSecrets } from '.
 import { buildRuntimeChildGcEnv } from '../../../support/process/runtime-gc-env';
 import type { Args, ManagedRuntimeSpec, MarketMakerChild } from '../../orchestrator-types';
 import { buildPublicDirectWsUrl } from '../../replica-import/runtime-import-manifest';
-import {
-  flushPrefixedLogChunk,
-  pushChildLogLines,
-  type PrefixLogState,
-  writePrefixedLogChunk,
-} from '../child-log-buffer';
-import {
-  selectChildFailureReason,
-  shouldCaptureUnexpectedChildExit,
-  type ChildFailureObservation,
-} from '../child-recovery-policy';
+import type { ChildFailureObservation } from '../child-recovery-policy';
+import { attachManagedChildProcess } from './attach-managed-child';
 import { attachManagedChildFatalIpc, type ManagedChildFatalReport } from '../managed-child-fatal-ipc';
 import { createManagedRuntimeLeaseManager } from '../managed-runtime-leases';
 import { safeStringify } from '../../../protocol/serialization';
@@ -43,51 +34,6 @@ type MarketMakerSpawnerDeps = {
   consumeControlledStop(pid: number | null | undefined): boolean;
   isOrchestratorShutdownStarted(): boolean;
   handleUnexpectedMarketMakerFailure(observation: ChildFailureObservation): void;
-};
-
-const attachMarketMakerProcess = (proc: ChildProcess, spec: ManagedRuntimeSpec, deps: MarketMakerSpawnerDeps): void => {
-  const child = deps.marketMakerChild;
-  const stdoutPrefixState: PrefixLogState = { pending: '' };
-  const stderrPrefixState: PrefixLogState = { pending: '' };
-  proc.stdout?.on('data', chunk => {
-    pushChildLogLines(child.recentStdout, chunk);
-    writePrefixedLogChunk(process.stdout, '[MM]', stdoutPrefixState, chunk);
-  });
-  proc.stderr?.on('data', chunk => {
-    pushChildLogLines(child.recentStderr, chunk);
-    writePrefixedLogChunk(process.stderr, '[MM:err]', stderrPrefixState, chunk, line =>
-      deps.captureManagedChildErrorLine(child, line),
-    );
-  });
-  proc.once('exit', (code, signal) => {
-    flushPrefixedLogChunk(process.stdout, '[MM]', stdoutPrefixState);
-    flushPrefixedLogChunk(process.stderr, '[MM:err]', stderrPrefixState, line =>
-      deps.captureManagedChildErrorLine(child, line),
-    );
-    const pid = proc.pid ?? null;
-    const controlledStop = deps.consumeControlledStop(pid);
-    const isCurrentProc = child.proc === proc;
-    deps.managedRuntimeLeases.removeLease(spec, pid);
-    if (isCurrentProc) {
-      child.exitedAt = Date.now();
-      child.exitCode = code ?? null;
-      child.exitSignal = signal ?? null;
-    }
-    if (shouldCaptureUnexpectedChildExit(controlledStop, deps.isOrchestratorShutdownStarted(), isCurrentProc)) {
-      deps.handleUnexpectedMarketMakerFailure({
-        role: 'market-maker',
-        name: child.name,
-        code: code ?? null,
-        signal: signal ?? null,
-        reason: selectChildFailureReason(
-          child.recentStderr,
-          child.recentStdout,
-          `MM_UNEXPECTED_EXIT code=${String(code)} signal=${String(signal)} phase=${String(child.lastStartupPhase)}`,
-          signal ?? null,
-        ),
-      });
-    }
-  });
 };
 
 export const createMarketMakerSpawner = (deps: MarketMakerSpawnerDeps) => async (): Promise<void> => {
@@ -150,7 +96,14 @@ export const createMarketMakerSpawner = (deps: MarketMakerSpawnerDeps) => async 
   if (!proc.pid) throw new Error('MM_SPAWN_FAILED_NO_PID');
   attachManagedChildFatalIpc(proc, report => deps.persistManagedChildFatalReport(child, report));
   await deps.managedRuntimeLeases.writeLease(spec, proc.pid, child.startedAt ?? Date.now());
-  attachMarketMakerProcess(proc, spec, deps);
+  attachManagedChildProcess(child, proc, spec, {
+    ...deps,
+    logPrefix: 'MM',
+    role: 'market-maker',
+    describeUnexpectedExit: (code, signal) =>
+      `MM_UNEXPECTED_EXIT code=${String(code)} signal=${String(signal)} phase=${String(child.lastStartupPhase)}`,
+    handleUnexpectedFailure: deps.handleUnexpectedMarketMakerFailure,
+  });
   await writeInheritedChildSecrets(proc, {
     runtimeSeed: child.seed,
     radapterAuthSeed: child.authSeed,

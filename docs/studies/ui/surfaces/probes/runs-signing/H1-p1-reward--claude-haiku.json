@@ -1,0 +1,15 @@
+{
+  "cellId": "H1-p1-reward",
+  "hypothesis": "H1",
+  "perspective": "p1-consumer",
+  "sheetId": "kernel-sheet",
+  "expectedDecision": "REJECT",
+  "runner": "claude-haiku",
+  "lineage": "anthropic-claude",
+  "matchesExpected": true,
+  "decision": "REJECT",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: $10,000.00",
+  "q3Fee": "FEE: $0.00",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: You lose the $10,000 unsecured credit line; nothing is locked to recover.",
+  "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: $10,000.00\n3. FEE: $0.00\n4. IF_COUNTERPARTY_VANISHES: You lose the $10,000 unsecured credit line; nothing is locked to recover."
+}

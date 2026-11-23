@@ -6,7 +6,6 @@
  * graph. This direction keeps deterministic Entity admission independent from
  * process-local networking.
  */
-import { logDebug } from '../../../support/logger';
 import { buildNetworkGraph } from '../../../pathfinding/graph';
 import { PathFinder, type PaymentRoute } from '../../../pathfinding/pathfinding';
 import { canonicalizeProfile, isHubProfile, type Profile } from '../../../entity/profile';
@@ -57,7 +56,6 @@ export function createGossipLayer(options: GossipLayerOptions = {}): GossipLayer
       .toLowerCase();
 
   const installProfile = (profile: Profile, publish: boolean): void => {
-    logDebug('GOSSIP', `📢 gossip.announce INPUT: ${profile.entityId.slice(-4)} accounts=${profile.accounts.length}`);
     const normalized = canonicalizeProfile(profile);
     const existing = profiles.get(normalized.entityId);
     const newTimestamp = normalized.lastUpdated;
@@ -71,7 +69,6 @@ export function createGossipLayer(options: GossipLayerOptions = {}): GossipLayer
           existing.accounts.length !== normalized.accounts.length));
 
     if (!shouldUpdate) {
-      logDebug('GOSSIP', `📡 Gossip REJECTED: ${profile.entityId.slice(-4)} ts=${newTimestamp}<=${existingTimestamp}`);
       return;
     }
     if (publish) options.onAnnounce?.(normalized);
@@ -88,10 +85,6 @@ export function createGossipLayer(options: GossipLayerOptions = {}): GossipLayer
       byEntity.set(normalized.entityId, normalized);
       runtimeProfiles.set(runtimeId, byEntity);
     }
-    logDebug(
-      'GOSSIP',
-      `📡 Gossip SAVED: ${profile.entityId.slice(-4)} ts=${newTimestamp} accounts=${normalized.accounts.length}`,
-    );
   };
   const announce = (profile: Profile): void => installProfile(profile, true);
 

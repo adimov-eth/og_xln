@@ -1,0 +1,65 @@
+[
+  {
+    "blindId": "C1",
+    "cellId": "H1-p1-reward",
+    "runner": "gemini-pro",
+    "lineage": "google-gemini-pro",
+    "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: $10,000.00 (10,000.00 USDC)\n3. FEE: $0.00 (0.00 USDC)\n4. IF_COUNTERPARTY_VANISHES: Since 0.00 USDC is locked and a promise with nothing locked ends with them, any unbacked IOUs up to 10,000.00 USDC become worthless if PromoHub-7 disappears tonight."
+  },
+  {
+    "blindId": "C2",
+    "cellId": "H1-p2-reward",
+    "runner": "gemini-pro",
+    "lineage": "google-gemini-pro",
+    "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: $10,000.00 (10,000.00 USDC)\n3. FEE: $0.00 (0.00 USDC)\n4. IF_COUNTERPARTY_VANISHES: Because only collateral secures recovery and nothing is locked behind the +10,000.00 USDC credit limit or any IOUs issued, you recover nothing on any unbacked amount they owe you if PromoHub-7 disappears tonight."
+  },
+  {
+    "blindId": "C3",
+    "cellId": "H2-p2-verb-swap",
+    "runner": "gemini-pro",
+    "lineage": "google-gemini-pro",
+    "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: $1,005.00 (1,005.00 USDT)\n3. FEE: $0.00 (0.00 USDC)\n4. IF_COUNTERPARTY_VANISHES: Your 1,000.00 USDC locked collateral reduction is final once signed, leaving you holding an unbacked 1,005.00 USDT claim on ShadowMM-Desk with no clear guarantee of recovery if they disappear tonight."
+  },
+  {
+    "blindId": "C4",
+    "cellId": "H2-p2-delta-swap",
+    "runner": "gemini-pro",
+    "lineage": "google-gemini-pro",
+    "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: $1,005.00 (1,005.00 USDT)\n3. FEE: $0.00 (0.00 USDC)\n4. IF_COUNTERPARTY_VANISHES: Because only collateral secures recovery and nothing is locked behind the +1,005.00 USDT unbacked claim, you would recover nothing if ShadowMM-Desk disappears tonight."
+  },
+  {
+    "blindId": "C5",
+    "cellId": "H3-p4-legit-checkout",
+    "runner": "gemini-pro",
+    "lineage": "google-gemini-pro",
+    "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: $0.00 (0.00 USDC listed on the sheet, though the contradictory notices warn of uncollateralized debt and an unbacked promise)\n3. FEE: $0.05 (0.05 USDC)\n4. IF_COUNTERPARTY_VANISHES: Only your remaining collateral-backed balance and contract reserve are enforceable on-chain while unbacked balances recover zero, though the sheet lists 0.00 USDC unbacked while its notices confusingly warn this intent trades locked funds for an unbacked promise."
+  },
+  {
+    "blindId": "C6",
+    "cellId": "H3-p1-legit-checkout",
+    "runner": "gemini-pro",
+    "lineage": "google-gemini-pro",
+    "reply": "1. DECISION: APPROVE\n2. MAX_UNBACKED_OR_CREDIT_RISK: $0.00 (0.00 USDC)\n3. FEE: $0.05 (0.05 USDC)\n4. IF_COUNTERPARTY_VANISHES: Your 25.05 USDC payment comes out of locked collateral with 0.00 USDC in unbacked promises, and any remaining locked amount can still be claimed from the last page you both signed."
+  },
+  {
+    "blindId": "C7",
+    "cellId": "H3-p2-legit-checkout",
+    "runner": "gemini-pro",
+    "lineage": "google-gemini-pro",
+    "reply": "1. DECISION: APPROVE\n2. MAX_UNBACKED_OR_CREDIT_RISK: $0.00 (0.00 USDC)\n3. FEE: $0.05 (0.05 USDC)\n4. IF_COUNTERPARTY_VANISHES: Once both sides sign, the 25.05 USDC payment is final and no unbacked counterparty claim is involved."
+  },
+  {
+    "blindId": "C8",
+    "cellId": "H4a-p3-fee-drain",
+    "runner": "gemini-pro",
+    "lineage": "google-gemini-pro",
+    "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: $0.00 (0.00 USDC)\n3. FEE: $245.00 (245.00 USDC maxSenderDebit ceiling)\n4. IF_COUNTERPARTY_VANISHES: Up to 250.00 USDC of locked collateral can be debited under this recurring policy, while any remaining collateral locked in the XLN contract stays enforceable from the last signed page and unassigned reserve or chain wallet coins stay yours."
+  },
+  {
+    "blindId": "C9",
+    "cellId": "H4b-p3-stalled-trap",
+    "runner": "gemini-pro",
+    "lineage": "google-gemini-pro",
+    "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: $500.00 (500.00 USDC unbacked claim and +500.00 USDC unsecured credit limit)\n3. FEE: $15.00 (15.00 USDC)\n4. IF_COUNTERPARTY_VANISHES: Because your 500.00 USDC of locked collateral is traded for an open unbacked IOU and credit ceiling, that 500.00 USDC does not survive if StalledHub-H1 disappears tonight, leaving only any still-locked collateral, unassigned reserve, or chain wallet coins yours."
+  }
+]

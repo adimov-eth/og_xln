@@ -1,5 +1,5 @@
 import { createStructuredLogger } from '../../support/logger.ts';
-import { normalizeRuntimeId } from '../../network/p2p/auth/runtime-id.ts';
+import { normalizeRuntimeId } from '../../protocol/identity/runtime-id.ts';
 import { safeStringify } from '../../protocol/serialization';
 import {
   runtimeInputRequiresOutboxCapacity,
@@ -28,10 +28,12 @@ import {
   type RuntimeP2PLifecycleDeps,
 } from '../envelope/p2p-lifecycle.ts';
 import { ensureRuntimeInfrastructure } from '../envelope/replica-envelope.ts';
+import { notifyRuntimeStateChanged } from '../frame/notifications.ts';
 import { assertScheduledWakeTxAuthorized } from '../mempool/scheduled-wake.ts';
 import { assertProposeAccountsNowTxAuthorized } from '../mempool/propose-accounts-now.ts';
 import { assertRuntimeCommandReady } from '../replica/lifecycle.ts';
-import { MAX_PENDING_NETWORK_OUTPUTS, sendEntityInputWithRouting } from '../delivery/topology/output-routing.ts';
+import { MAX_PENDING_NETWORK_OUTPUTS } from '../delivery/pending.ts';
+import { sendEntityInputWithRouting } from '../delivery/dispatch.ts';
 import { normalizeDbNamespace } from '../../storage/runtime-dbs.ts';
 import { decodeRoutedEntityInput } from '../delivery/topology/routing-validation.ts';
 import type { EntityInput } from '../../entity/types.ts';
@@ -249,3 +251,5 @@ export const createRuntimeRoutingApi = (deps: RuntimeRoutingApiDeps) => {
       clearRuntimeGossip(env, deps.notifyEnvChange, options),
   };
 };
+
+export const runtimeRouting = createRuntimeRoutingApi({ notifyEnvChange: notifyRuntimeStateChanged });

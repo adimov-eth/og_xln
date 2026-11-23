@@ -1,0 +1,120 @@
+{
+  "episodeId": "E1c_pay_l1_reject_reload--grok-4.7-build-fast--baseline",
+  "scenarioId": "E1c_pay_l1_reject_reload",
+  "modelId": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7-build-fast",
+  "specMode": "baseline",
+  "passed": false,
+  "statePassed": false,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Failed": true,
+      "q2CashIntact": true,
+      "q3NoLoss": true
+    },
+    "rawAnswers": "1. The $50.00 payment to CornerCoffee did not go through.\n2. After reloading, Cash is still $120.00.\n3. No money was lost or stuck mid-way."
+  },
+  "turns": 4,
+  "phantoms": [
+    {
+      "episodeId": "E1c_pay_l1_reject_reload--grok-4.7-build-fast--baseline",
+      "scenarioId": "E1c_pay_l1_reject_reload",
+      "modelId": "grok-4.7-build-fast",
+      "lineage": "xai-grok-4.7-build-fast",
+      "specMode": "baseline",
+      "turn": 2,
+      "tool": "act",
+      "actionOrExpr": "pay",
+      "intent": "Pay CornerCoffee $50 from Cash",
+      "category": "runtime",
+      "error": "Auto-route L1 sweep rejected — your Cash was not touched."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check Cash balance before paying CornerCoffee $50",
+      "args": {
+        "intent": "Check Cash balance before paying CornerCoffee $50",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 10627,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Pay CornerCoffee $50 from Cash",
+      "args": {
+        "intent": "Pay CornerCoffee $50 from Cash",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 50
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Auto-route L1 sweep rejected — your Cash was not touched.",
+        "phantomCategory": "runtime"
+      },
+      "latencyMs": 15004,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Reload Cash after the rejected pay to confirm the $120 balance was not touched",
+      "args": {
+        "intent": "Reload Cash after the rejected pay to confirm the $120 balance was not touched",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 19504,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Payment was rejected and Cash is unchanged, so stop",
+      "args": {
+        "intent": "Payment was rejected and Cash is unchanged, so stop",
+        "summary": "Pay to CornerCoffee for $50.00 did not go through (auto-route L1 sweep rejected). Cash was not touched and is still $120.00."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Pay to CornerCoffee for $50.00 did not go through (auto-route L1 sweep rejected). Cash was not touched and is still $120.00."
+        }
+      },
+      "latencyMs": 13357,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Pay CornerCoffee $50.00. If something goes wrong while moving your funds, reload and check your Cash again to verify whether your money is safe.\"\nNote: task verification failed (comprehension={\"q1Failed\":true,\"q2CashIntact\":true,\"q3NoLoss\":true}).\nHere is what you tried:\nTurn 1: discover(intent=\"Check Cash balance before paying CornerCoffee $50\", args={\"intent\":\"Check Cash balance before paying CornerCoffee $50\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 2: act(intent=\"Pay CornerCoffee $50 from Cash\", args={\"intent\":\"Pay CornerCoffee $50 from Cash\",\"action\":\"pay\",\"args\":{\"to\":\"CornerCoffee\",\"amount_usd\":50}}) -> ERROR (runtime): Auto-route L1 sweep rejected — your Cash was not touched.\nTurn 3: discover(intent=\"Reload Cash after the rejected pay to confirm the $120 balance was not touched\", args={\"intent\":\"Reload Cash after the rejected pay to confirm the $120 balance was not touched\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 4: done(intent=\"Payment was rejected and Cash is unchanged, so stop\", args={\"intent\":\"Payment was rejected and Cash is unchanged, so stop\",\"summary\":\"Pay to CornerCoffee for $50.00 did not go through (auto-route L1 sweep rejected). Cash was not touched and is still $120.00.\"}) -> OK: {\"done\":true,\"summary\":\"Pay to CornerCoffee for $50.00 did not go through (auto-route L1 sweep rejected). Cash was not touched and is still $120.00.\"}\nHere is what would have worked:\nact(\"pay\", { to: \"CornerCoffee\", amount_usd: 50 }), then act(\"reload-wallet\"), discover(\"(cash)\"), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The failure is in the action surface, not the balance math. I'll look at how pay, reload, and cash are actually named.\n\nThe pay error already answered the safety question the task told you to check by reloading, so the recovery action never looked necessary.\n\n**The rejection reads as a settled outcome.** `Auto-route L1 sweep rejected — your Cash was not touched.` names an internal router and then states the balance fact. \"Rejected\" plus \"not touched\" is a stop signal. Nothing in that string says the displayed Cash is untrustworthy until another call runs, and it never names `reload-wallet`.\n\n**\"Reload\" has no visible verb.** The only balance read is `discover(\"(cash)\")`, and its note is `Your money, ready to spend or cash out anytime.` That is a spendability claim, not a freshness claim. A second `(cash)` that still returns `$120.00` looks exactly like \"reload and check your Cash again.\" The payload has no `stale`, `as-of`, or `needs-reload` field, so the repeat read confirms the error text instead of exposing that it was a cache read.\n\n**`reload-wallet` is invisible from the failure.** The working path is pay, then `reload-wallet`, then `(cash)`. The error from `pay` does not list that action, and `(cash)` does not point at it. An agent that treats a runtime error as \"do not retry the thing that just failed\" will re-read Cash and call `done`. `done` accepted that summary, so the interface agreed the task was finished while the payment had never been recovered.",
+    "latencyMs": 35304
+  },
+  "durationMs": 206055,
+  "finalSummary": "Pay to CornerCoffee for $50.00 did not go through (auto-route L1 sweep rejected). Cash was not touched and is still $120.00."
+}

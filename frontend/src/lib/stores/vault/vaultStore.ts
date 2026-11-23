@@ -1,3 +1,4 @@
+import { VALUELESS_CHAIN_IDS } from '@xln/core/jurisdiction/adapter/chain-ids';
 import { assertDemoNetwork } from '#lib/config/demo-accounts.ts';
 import { closeRuntimeSession, suspendRuntimeActivity } from '#lib/security/runtimeSession.ts';
 import { hasPasswordVault, removePasswordVault } from '#lib/security/passwordVault.ts';
@@ -39,7 +40,9 @@ import { toasts } from '../ui/toastStore';
 
 import { errorLog } from '../errorLogStore';
 
-import { writeHubJoinPreference, writeSavedCollateralPolicy } from '../../utils/onboarding/onboardingPreferences';
+import { seedDefaultCollateralPolicy, writeHubJoinPreference } from '../../utils/onboarding/onboardingPreferences';
+import { ensureDefaultTowerProtection } from '../../everyday/everyday-recovery';
+import { readWalletPosture } from '../../everyday/wallet-posture';
 
 import { writeOnboardingCompleteForEntities } from '../../utils/onboarding/onboardingState';
 
@@ -88,6 +91,7 @@ import {
   buildRuntimeRecoverySigners,
   buildSignerEntityConfig,
   buildTowerRequestUrl,
+  clearRetiredTestnetRebootstrap,
   deriveAddress,
   derivePrivateKey,
   discoverRuntimeRecoveryCandidates,
@@ -101,6 +105,7 @@ import {
   getReplayMeta,
   getRuntimeP2PHandle,
   getSignerDerivationIndex,
+  hasRetiredTestnetRebootstrap,
   installVaultRuntimeCommandJournalKeys,
   mergeRuntimeRecoveryTowerReceipts,
   normalizeEntityId,
@@ -466,6 +471,13 @@ export async function tryRestoreRuntimeEnvFromTower(
   return restoreRuntimeEnvFromRecoveryCandidate(runtime, xln, best);
 }
 
+/** True only when the env has jurisdictions and every one names a valueless chain; an unknown chain id fails closed. */
+function runsOnlyOnValuelessChains(env: RuntimeReplica): boolean {
+  const replicas = [...(env.state.jReplicas?.values() ?? [])];
+  return replicas.length > 0 && replicas.every(replica =>
+    typeof replica.chainId === 'number' && VALUELESS_CHAIN_IDS.has(replica.chainId));
+}
+
 async function uploadRuntimeRecoverySnapshot(
   runtimeId: string,
   env: RuntimeReplica,
@@ -520,6 +532,12 @@ async function uploadRuntimeRecoverySnapshot(
   }
 
   const signedAt = Date.now();
+  // A retired-testnet rebuild starts again at a low height on the same seed. The
+  // tower still holds the dead chain's higher snapshot and refuses a lower height
+  // unless the owner signs consent to replace the slot. Only the rebuild signs it.
+  // The marker alone is not enough: a misplaced reset could set it on a real-funds
+  // wallet. Sign consent only when every jurisdiction is a known valueless chain.
+  const replaceSlot = hasRetiredTestnetRebootstrap(normalizedRuntimeId) && runsOnlyOnValuelessChains(env);
   const message = xln.buildTowerAppointmentOwnerMessage(
     normalizedRuntimeId,
     'blind_backup',
@@ -528,6 +546,7 @@ async function uploadRuntimeRecoverySnapshot(
     encrypted,
     signedAt,
     undefined,
+    replaceSlot,
   );
   const signature = await new Wallet(derivePrivateKey(runtime.seed, 0)).signMessage(message);
   const appointment: TowerAppointmentV1 = {
@@ -537,6 +556,7 @@ async function uploadRuntimeRecoverySnapshot(
     lookupKey: encrypted.lookupKey,
     slot: backupSlot,
     bundle: encrypted,
+    ...(replaceSlot ? { replaceSlot: true as const } : {}),
     ownerProof: {
       runtimeId: normalizedRuntimeId,
       signedAt,
@@ -613,7 +633,9 @@ async function uploadRuntimeRecoverySnapshot(
       // An account that cannot be appointed is reported; the others still upload.
       for (const failure of lastResortAppointments.failures) {
         const errorText = `${failure.entityId}:${failure.counterpartyId}:${failure.error}`;
-        activeTowerErrors.push(`${tower.url}:${errorText}`);
+        if (!failure.error.includes('WATCHTOWER_TRON_SUBMISSION_UNSUPPORTED')) {
+          activeTowerErrors.push(`${tower.url}:${errorText}`);
+        }
         failureSummaries.push(summarizeRuntimeRecoveryTowerFailure(tower, errorText, uploadCheckedAt));
       }
       for (const upload of lastResortAppointments.uploads) {
@@ -961,9 +983,11 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
   }
   await registerRuntimeSignerKeys(runtime, xln);
   const runtimeSeed = runtime.seed;
+  const rebootstrapRequested = hasRetiredTestnetRebootstrap(runtimeIdLower);
   let env: RuntimeReplica | null = null;
   let signerMetadataChanged = false;
   let restoredFromTower = false;
+  let bootstrappedFreshEnv = false;
 
   const persistRuntimeMetadataIfChanged = (): void => {
     if (!signerMetadataChanged) return;
@@ -997,19 +1021,6 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
     }
   };
 
-  for (const signer of runtime.signers || []) {
-    if (!signer?.address) continue;
-    const canonicalEntityId = String(xln.generateLazyEntityId([signer.address], 1n)).toLowerCase();
-    if (normalizeEntityId(signer.entityId) === canonicalEntityId) continue;
-    signer.entityId = canonicalEntityId;
-    signerMetadataChanged = true;
-    errorLog.log(
-      `[VaultStore] Canonical signer/entity mismatch detected for ${signer.address.slice(0, 10)}; forcing lazy entity ${canonicalEntityId.slice(0, 12)} without deleting persisted runtime`,
-      'Runtime Restore',
-      { runtimeId: runtime.id, signerAddress: signer.address, canonicalEntityId },
-    );
-  }
-
   try {
     if (xln.loadEnvFromDB) {
       env = await xln.loadEnvFromDB(runtimeIdLower, runtimeSeed);
@@ -1030,17 +1041,24 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
     });
   }
 
-  if (!env) {
+  if (!env && !rebootstrapRequested) {
     await restoreFromTower('missing_local_env');
   }
 
   persistRuntimeMetadataIfChanged();
 
   if (!env) {
-    throw new Error(`[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: persisted env missing`);
+    if (!rebootstrapRequested) {
+      throw new Error(`[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: persisted env missing`);
+    }
+    bootstrappedFreshEnv = true;
   }
 
-  if (env && (!env.state.jReplicas || env.state.jReplicas.size === 0)) {
+  // A rebuild interrupted before its first network import keeps its env: the repair below imports
+  // the primary network into it. A fresh env cannot replace it, because its frames would be older
+  // than the saved head and the storage writer would refuse them.
+  const unfinishedRebuild = Boolean(env) && rebootstrapRequested && !restoredFromTower;
+  if (env && !unfinishedRebuild && (!env.state.jReplicas || env.state.jReplicas.size === 0)) {
     if (!restoredFromTower) {
       throw new Error(
         `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: restored env missing jReplicas`,
@@ -1074,27 +1092,46 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
     return false;
   };
 
-  if (env && !restoredFromTower) {
+  // Which entity id each signer should carry, judged against the restored env. It reaches the
+  // vault only after the strict check below passes, so a failed restore never rewrites metadata.
+  const signerEntityIds = reconcileSignerEntityIds(runtime, env, xln, !env || unfinishedRebuild);
+
+  // While the rebuild marker is set the env is a disposable testnet still being rebuilt, not
+  // restored state; the rebuild below finishes it. Every other wallet stays strict.
+  if (env && !restoredFromTower && !rebootstrapRequested) {
     for (const signer of runtime.signers || []) {
-      if (!signer?.entityId) continue;
-      if (!hasEntityReplica(signer.entityId)) {
+      const entityId = signerEntityIds.get(signer) ?? signer?.entityId;
+      if (!entityId) continue;
+      if (!hasEntityReplica(entityId)) {
         const restoredEntityKeys = env.state.eReplicas ? Array.from(env.state.eReplicas.keys()).map(key => String(key)) : [];
         errorLog.log(
-          `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: missing restored entity ${signer.entityId.slice(0, 12)}`,
+          `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: missing restored entity ${entityId.slice(0, 12)}`,
           'Runtime Restore',
           {
             runtimeId: runtime.id,
-            signerEntityId: signer.entityId,
+            signerEntityId: entityId,
+            storedEntityId: signer.entityId,
             restoredEntityKeys,
             replayMeta: getReplayMeta(env),
           },
         );
         throw new Error(
-          `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: missing restored entity ${signer.entityId.slice(0, 12)}`,
+          `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: missing restored entity ${entityId.slice(0, 12)}`,
         );
       }
     }
   }
+
+  for (const [signer, entityId] of signerEntityIds) {
+    errorLog.log(
+      `[VaultStore] Signer ${signer.address.slice(0, 10)} now carries entity ${entityId.slice(0, 12)} (was ${String(signer.entityId).slice(0, 12)})`,
+      'Runtime Restore',
+      { runtimeId: runtime.id, signerAddress: signer.address, previousEntityId: signer.entityId, entityId },
+    );
+    signer.entityId = entityId;
+    signerMetadataChanged = true;
+  }
+  persistRuntimeMetadataIfChanged();
 
   const baseOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://xln.finance';
   const jurisdictions = await fetchJurisdictions(baseOrigin);
@@ -1131,6 +1168,7 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
               ),
               blockTimeMs: primaryBlockTimeMs,
               contracts: primaryConfig.contracts,
+              startAtCurrentBlock: false,
             },
           },
         ],
@@ -1145,6 +1183,7 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
       `importJ(${primaryJurisdictionName}).addresses`,
       45_000,
     );
+    await importMissingSecondaryJurisdictions(xln, env, defaultJurisdictionImports, baseOrigin);
   } else {
     applyRuntimeLogPreference(env);
     env.runtimeSeed = runtimeSeed;
@@ -1186,6 +1225,9 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
               ),
               blockTimeMs: primaryBlockTimeMs,
               contracts: primaryConfig.contracts,
+              // An interrupted rebuild may have saved its import as a pending intent. Re-send the
+              // rebuild's exact request so it matches that intent instead of conflicting with it.
+              ...(unfinishedRebuild ? { startAtCurrentBlock: false } : {}),
             },
           },
         ],
@@ -1203,6 +1245,10 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
   }
 
   ensureRuntimeLoopRunning(env, xln, `post-restore:${runtimeIdLower.slice(0, 12)}`);
+  if (unfinishedRebuild) {
+    // Finish the interrupted rebuild of a disposable testnet: the primary is repaired above.
+    await importMissingSecondaryJurisdictions(xln, env, defaultJurisdictionImports, baseOrigin);
+  }
 
   for (const signer of runtime.signers || []) {
     const entityId = normalizeEntityId(signer?.entityId);
@@ -1242,13 +1288,15 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
       continue;
     }
 
-    if (!anyEntityReplica) {
+    if (!anyEntityReplica && !bootstrappedFreshEnv && !rebootstrapRequested) {
       throw new Error(
         `[VaultStore] Strict restore failed for ${runtime.id.slice(0, 12)}: entity missing after restore ${entityId.slice(0, 12)}`,
       );
     }
 
-    const entityConfig = buildSignerEntityConfig(signerAddress, jReplica, preferredJurisdictionName, chainId);
+    const targetChainId = Number(jReplica.chainId ?? chainId);
+    const resolvedChainId = Number.isFinite(targetChainId) && targetChainId > 0 ? targetChainId : chainId;
+    const entityConfig = buildSignerEntityConfig(signerAddress, jReplica, preferredJurisdictionName, resolvedChainId);
     await enqueueAndAwait(
       xln,
       env,
@@ -1261,7 +1309,7 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
             data: {
               isProposer: true,
               config: entityConfig,
-              profileName: runtime.label,
+              profileName: signer.index === 0 ? runtime.label : `${runtime.label} ${preferredJurisdictionName}`,
             },
           }),
         ],
@@ -1283,7 +1331,115 @@ async function buildOrRestoreRuntimeEnv(runtime: Runtime, xln: XLNModule): Promi
     });
   }
 
+  if (rebootstrapRequested) {
+    await clearRebootstrapOnceRebuildIsDurable(xln, env, runtime, runtimeIdLower);
+  }
+
   return env;
+}
+
+/** The rebuild ends only when every signer's entity exists and is saved; until then the marker stays. */
+async function clearRebootstrapOnceRebuildIsDurable(
+  xln: XLNModule,
+  env: RuntimeReplica,
+  runtime: Runtime,
+  runtimeIdLower: string,
+): Promise<void> {
+  const missing = (runtime.signers || []).filter(signer =>
+    signer?.entityId && !findEntityReplicaByEntityId(env, normalizeEntityId(signer.entityId)));
+  if (missing.length > 0) {
+    errorLog.log('Rebuild left signers without an entity; it continues on the next open', 'Runtime Restore', {
+      runtimeId: runtime.id,
+      missingEntityIds: missing.map(signer => signer.entityId),
+    });
+    return;
+  }
+  const targetHeight = Math.floor(Number(env.state.height || 0));
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const savedHeight = Math.floor(Number((await xln.readPersistedStorageHead(env))?.latestHeight ?? 0));
+    if (savedHeight >= targetHeight) {
+      clearRetiredTestnetRebootstrap(runtimeIdLower);
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  errorLog.log('Rebuild not saved yet; it continues on the next open', 'Runtime Restore', { runtimeId: runtime.id, targetHeight });
+}
+
+/**
+ * The signers whose stored entity id should change, and to what. A stored id whose replica is in
+ * the restored env is kept, whatever it is. The lazy canonical id replaces it only when the stored
+ * one is absent and the canonical one is present, or when the env is being built from scratch.
+ * When neither is present nothing changes, and the strict check fails on the id the vault holds.
+ */
+function reconcileSignerEntityIds(
+  runtime: Runtime,
+  env: RuntimeReplica | null,
+  xln: XLNModule,
+  buildingFresh: boolean,
+): Map<Signer, string> {
+  const changes = new Map<Signer, string>();
+  for (const signer of runtime.signers || []) {
+    if (!signer?.address) continue;
+    const canonicalEntityId = String(xln.generateLazyEntityId([signer.address], 1n)).toLowerCase();
+    const storedEntityId = normalizeEntityId(signer.entityId);
+    if (storedEntityId === canonicalEntityId) continue;
+    if (env && storedEntityId && findEntityReplicaByEntityId(env, storedEntityId)) continue;
+    if (buildingFresh || (env && findEntityReplicaByEntityId(env, canonicalEntityId))) {
+      changes.set(signer, canonicalEntityId);
+    }
+  }
+  return changes;
+}
+
+async function importMissingSecondaryJurisdictions(
+  xln: XLNModule,
+  env: RuntimeReplica,
+  defaultJurisdictionImports: ReturnType<typeof listDefaultJurisdictionImports>,
+  baseOrigin: string,
+): Promise<void> {
+  for (const secondary of defaultJurisdictionImports.slice(1)) {
+    if (hasRuntimeJurisdictionAddresses(findJReplicaByName(env, secondary.name))) continue;
+    const secondaryRpcUrl = resolveRpcUrl(resolveJurisdictionRpc(secondary.config), baseOrigin);
+    const secondaryChainId = resolveJurisdictionChainId(secondary.config, `VaultStore.restore.${secondary.name}`);
+    await enqueueAndAwait(
+      xln,
+      env,
+      {
+        runtimeTxs: [
+          {
+            type: 'importJ',
+            data: {
+              name: secondary.name,
+              chainId: secondaryChainId,
+              ticker: String((secondary.config as { currency?: unknown }).currency || 'USDC'),
+              rpcs: [secondaryRpcUrl],
+              entityProviderDeploymentBlock: requireEntityProviderDeploymentBlock(
+                secondary.config.entityProviderDeploymentBlock,
+                `VaultStore.restore.${secondary.name}`,
+              ),
+              blockTimeMs: requireJurisdictionBlockTimeMs(
+                secondary.config.blockTimeMs,
+                `VaultStore.restore.${secondary.name}`,
+              ),
+              contracts: secondary.config.contracts,
+              startAtCurrentBlock: false,
+            },
+          },
+        ],
+        entityInputs: [],
+      },
+      () => hasRuntimeJurisdictionAddresses(findJReplicaByName(env, secondary.name)),
+      `importJ(${secondary.name})`,
+      45_000,
+    );
+    await waitForCondition(
+      () => hasRuntimeJurisdictionAddresses(findJReplicaByName(env, secondary.name)),
+      `importJ(${secondary.name}).addresses`,
+      45_000,
+    );
+  }
 }
 
 function registerRuntimeResumeListener(): void {
@@ -2091,12 +2247,7 @@ export const vaultOperations = {
           });
         }
         if (!requiresOnboarding) {
-          writeSavedCollateralPolicy({
-            mode: 'autopilot',
-            softLimitUsd: 500,
-            hardLimitUsd: 10_000,
-            maxFeeUsd: 15,
-          });
+          seedDefaultCollateralPolicy();
           writeHubJoinPreference(loginType === 'demo' ? '1' : 'manual');
           // Runtime creation imports every local signer/entity lane up front
           // (primary Testnet plus cross-j siblings such as Tron). Onboarding is
@@ -2723,6 +2874,74 @@ export const vaultOperations = {
   getActiveEntityId(): string | null {
     const signer = get(activeSigner);
     return signer?.entityId || null;
+  },
+
+  ensureEverydayTowerDefaults(runtimeId?: string | null): void {
+    const normalizedRuntimeId = normalizeRuntimeId(runtimeId || get(activeRuntimeId));
+    if (!normalizedRuntimeId) return;
+    const state = get(runtimesState);
+    const runtime = state.runtimes[normalizedRuntimeId];
+    if (!runtime) return;
+    ensureDefaultTowerProtection({
+      posture: readWalletPosture(),
+      vaultId: normalizedRuntimeId,
+      readExplicitConfig: () => {
+        if (runtime.recovery?.towers && runtime.recovery.towers.length > 0) {
+          return { mode: 'tower', towers: runtime.recovery.towers.map(t => t.url) };
+        }
+        return runtime.recovery?.useDefaultTowers === false ? { mode: 'local', towers: [] } : null;
+      },
+      saveConfig: (_vaultId, cfg) => {
+        if (cfg.mode !== 'tower' || cfg.towers.length === 0) return;
+        const nextConfig: RuntimeRecoveryConfig = {
+          ...(runtime.recovery ?? {}),
+          useDefaultTowers: false,
+          towers: cfg.towers.map((url, idx) => ({ id: `official-${idx + 1}`, url, towerMode: 'delayed_last_resort', enabled: true })),
+        };
+        void this.updateRuntimeRecovery(normalizedRuntimeId, nextConfig).catch(error => {
+          errorLog.log(
+            `Failed to persist default Everyday recovery towers for ${normalizedRuntimeId.slice(0, 12)}`,
+            'Runtime Recovery',
+            { runtimeId: normalizedRuntimeId, error },
+          );
+        });
+      },
+      resolveUrls: () => buildDefaultRuntimeRecoveryConfig().towers?.map(t => t.url) ?? [],
+    });
+  },
+
+  async exportRecoveryBundle(runtimeId?: string | null): Promise<{ filename: string; json: string }> {
+    const normalizedRuntimeId = normalizeRuntimeId(runtimeId || get(activeRuntimeId));
+    if (!normalizedRuntimeId) throw new Error('No active wallet selected.');
+    const runtime = get(runtimesState).runtimes[normalizedRuntimeId];
+    if (!runtime) throw new Error('Active wallet metadata is unavailable.');
+    assertRuntimeAuthorityLease(runtime);
+    const entry = get(runtimes).get(normalizedRuntimeId);
+    const env = entry?.env ? (unwrapLiveRuntimeEnv(entry.env) ?? entry.env) : null;
+    if (!env) throw new Error('Unlock an in-browser wallet before saving an encrypted backup.');
+    const xln = await getXLN();
+    if (typeof xln.buildRuntimeRecoveryBundle !== 'function' || typeof xln.encryptRuntimeRecoveryBundle !== 'function') {
+      throw new Error('Recovery bundle exporter is unavailable.');
+    }
+    const bundle = await withRuntimeCommittedRead(env, async () => {
+      const height = Math.max(0, Math.floor(Number(env.state.height || 0)));
+      if (height <= 0 || env.state.eReplicas.size === 0) {
+        throw new Error('There is no committed wallet state to back up yet.');
+      }
+      const frame = await xln.readPersistedFrameJournal(env, height);
+      if (!frame) throw new Error(`RECOVERY_EXPORT_TIP_JOURNAL_MISSING:${height}`);
+      return xln.buildRuntimeRecoveryBundle(env, {
+        signers: buildRuntimeRecoverySigners(runtime),
+        meta: buildRuntimeRecoveryMeta(runtime),
+        kind: 'snapshot',
+        frames: [frame],
+      });
+    });
+    const encrypted = await xln.encryptRuntimeRecoveryBundle(bundle, runtime.seed);
+    return {
+      filename: `xln-recovery-${normalizedRuntimeId.slice(2, 10)}.json`,
+      json: JSON.stringify({ bundle: encrypted }),
+    };
   },
 };
 

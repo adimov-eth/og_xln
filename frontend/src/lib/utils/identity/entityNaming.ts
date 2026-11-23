@@ -1,5 +1,6 @@
 import type { Profile as GossipProfile } from '@xln/core/api/public/runtime-module';
 import { formatEntityId } from '../format';
+import { normalizeId } from '../primitives';
 
 type GossipSource = {
   gossip?: {
@@ -7,10 +8,6 @@ type GossipSource = {
     profiles?: GossipProfile[] | Map<string, GossipProfile>;
   };
 } | GossipProfile[] | null | undefined;
-
-function normalizeId(value: string): string {
-  return value.trim().toLowerCase();
-}
 
 export function getGossipProfiles(source: GossipSource): GossipProfile[] {
   if (!source) return [];

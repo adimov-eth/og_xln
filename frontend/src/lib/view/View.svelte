@@ -68,8 +68,6 @@
     }
   }
 
-  export let layout: string = 'default'; void layout;
-  export let networkMode: 'simnet' | 'testnet' | 'mainnet' = 'simnet'; void networkMode;
   export let embedMode = false;
   export let userMode = false;
   /** Presentation mode (embed `present=1`): DockRoot renders a graph-dominant workspace. */

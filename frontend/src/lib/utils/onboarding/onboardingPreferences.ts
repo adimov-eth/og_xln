@@ -1,5 +1,8 @@
 import type { TokenId } from '@xln/core/protocol/units';
 import { wholeUsdToTokenAmount } from '@xln/core/jurisdiction/machine/config/usd-reference-rate';
+import { EVERYDAY_HUB_POLICY_USD, PRO_HUB_POLICY_USD, resolvePolicyForPosture } from '../../everyday/everyday-policy';
+import { readWalletPosture, type WalletPosture } from '../../everyday/wallet-posture';
+import { isUnknownRecord, parseJsonUnknown, readJsonUnknown } from '../boundary/index.ts';
 
 export type HubJoinPreference = 'manual' | '1' | '2' | '3';
 
@@ -20,15 +23,15 @@ type PolicyDefaults = {
 const COLLATERAL_POLICY_KEY = 'xln-collateral-policy';
 const HUB_JOIN_PREF_KEY = 'xln-hub-join-preference';
 
-const DEFAULT_POLICY: PolicyDefaults = {
-  softLimitUsd: 500,
-  hardLimitUsd: 10_000,
-  maxFeeUsd: 15,
+const DEFAULT_PRO_POLICY: PolicyDefaults = {
+  softLimitUsd: PRO_HUB_POLICY_USD.softLimitUsd,
+  hardLimitUsd: PRO_HUB_POLICY_USD.hardLimitUsd,
+  maxFeeUsd: PRO_HUB_POLICY_USD.maxFeeUsd,
 };
 
 let cachedPolicyDefaultsByJurisdiction: Map<string, PolicyDefaults> | null = null;
 let policyDefaultsLoadPromise: Promise<Map<string, PolicyDefaults>> | null = null;
-let runtimePolicyDefaults: PolicyDefaults = { ...DEFAULT_POLICY };
+let runtimePolicyDefaults: PolicyDefaults = { ...DEFAULT_PRO_POLICY };
 
 const toUsdInt = (value: unknown, defaultValue: number): number => {
   const raw = Number(value);
@@ -54,9 +57,9 @@ const normalizePolicyDefaults = (value: unknown): PolicyDefaults | null => {
     if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount < 0)
       throw new Error(`COLLATERAL_POLICY_INVALID:${key}`);
   }
-  const softLimitUsd = toUsdInt(raw['r2cRequestSoftLimit'], DEFAULT_POLICY.softLimitUsd);
-  const hardLimitUsd = toUsdInt(raw['hardLimit'], DEFAULT_POLICY.hardLimitUsd);
-  const maxFeeUsd = toUsdInt(raw['maxFee'], DEFAULT_POLICY.maxFeeUsd);
+  const softLimitUsd = toUsdInt(raw['r2cRequestSoftLimit'], DEFAULT_PRO_POLICY.softLimitUsd);
+  const hardLimitUsd = toUsdInt(raw['hardLimit'], DEFAULT_PRO_POLICY.hardLimitUsd);
+  const maxFeeUsd = toUsdInt(raw['maxFee'], DEFAULT_PRO_POLICY.maxFeeUsd);
   if (softLimitUsd <= 0 || hardLimitUsd < softLimitUsd) throw new Error('COLLATERAL_POLICY_LIMITS_INVALID');
   return { softLimitUsd, hardLimitUsd, maxFeeUsd };
 };
@@ -67,7 +70,7 @@ const loadPolicyDefaultsFromJurisdictions = async (): Promise<Map<string, Policy
 
   policyDefaultsLoadPromise = (async () => {
     const result = new Map<string, PolicyDefaults>();
-    result.set('default', { ...DEFAULT_POLICY });
+    result.set('default', { ...DEFAULT_PRO_POLICY });
 
     if (typeof window === 'undefined') {
       cachedPolicyDefaultsByJurisdiction = result;
@@ -112,6 +115,7 @@ const loadPolicyDefaultsFromJurisdictions = async (): Promise<Map<string, Policy
 export const hydrateJurisdictionPolicyDefaults = async (
   jurisdictionName?: string,
   beforeApply?: () => void,
+  posture: WalletPosture = readWalletPosture(),
 ): Promise<PolicyDefaults> => {
   const defaultsByJurisdiction = await loadPolicyDefaultsFromJurisdictions();
   beforeApply?.();
@@ -119,12 +123,35 @@ export const hydrateJurisdictionPolicyDefaults = async (
   runtimePolicyDefaults =
     (key ? defaultsByJurisdiction.get(key) : undefined) ??
     defaultsByJurisdiction.get('default') ??
-    DEFAULT_POLICY;
+    DEFAULT_PRO_POLICY;
+  if (posture === 'everyday') {
+    return {
+      softLimitUsd: EVERYDAY_HUB_POLICY_USD.softLimitUsd,
+      hardLimitUsd: EVERYDAY_HUB_POLICY_USD.hardLimitUsd,
+      maxFeeUsd: EVERYDAY_HUB_POLICY_USD.maxFeeUsd,
+    };
+  }
   return runtimePolicyDefaults;
 };
 
-export const readSavedCollateralPolicy = (): SavedCollateralPolicy => {
-  const defaults = runtimePolicyDefaults;
+const everydaySavedCollateralPolicy = (): SavedCollateralPolicy => ({
+  mode: 'autopilot',
+  softLimitUsd: EVERYDAY_HUB_POLICY_USD.softLimitUsd,
+  hardLimitUsd: EVERYDAY_HUB_POLICY_USD.hardLimitUsd,
+  maxFeeUsd: EVERYDAY_HUB_POLICY_USD.maxFeeUsd,
+  timestamp: 0,
+});
+
+export const readSavedCollateralPolicy = (
+  posture: WalletPosture = readWalletPosture(),
+): SavedCollateralPolicy => {
+  if (posture === 'everyday') return everydaySavedCollateralPolicy();
+  const resolved = resolvePolicyForPosture(posture, runtimePolicyDefaults);
+  const defaults: PolicyDefaults = {
+    softLimitUsd: resolved.softLimitUsd,
+    hardLimitUsd: resolved.hardLimitUsd,
+    maxFeeUsd: resolved.maxFeeUsd,
+  };
   if (typeof localStorage === 'undefined') return { mode: 'autopilot', ...defaults, timestamp: 0 };
   try {
     const raw = localStorage.getItem(COLLATERAL_POLICY_KEY);
@@ -158,7 +185,9 @@ export const readSavedCollateralPolicy = (): SavedCollateralPolicy => {
 
 export const writeSavedCollateralPolicy = (
   policy: Pick<SavedCollateralPolicy, 'mode' | 'softLimitUsd' | 'hardLimitUsd' | 'maxFeeUsd'>,
+  posture: WalletPosture = readWalletPosture(),
 ): SavedCollateralPolicy => {
+  if (posture === 'everyday') return everydaySavedCollateralPolicy();
   const defaults = runtimePolicyDefaults;
   const softLimitUsd = toUsdInt(policy.softLimitUsd, defaults.softLimitUsd);
   const hardLimitUsd = toUsdInt(policy.hardLimitUsd, defaults.hardLimitUsd);
@@ -180,6 +209,22 @@ export const writeSavedCollateralPolicy = (
   return saved;
 };
 
+export const seedDefaultCollateralPolicy = (
+  posture: WalletPosture = readWalletPosture(),
+): SavedCollateralPolicy | null => {
+  if (posture !== 'pro') return null;
+  const defaultPolicy = resolvePolicyForPosture('pro');
+  return writeSavedCollateralPolicy(
+    {
+      mode: 'autopilot',
+      softLimitUsd: defaultPolicy.softLimitUsd,
+      hardLimitUsd: defaultPolicy.hardLimitUsd,
+      maxFeeUsd: defaultPolicy.maxFeeUsd,
+    },
+    posture,
+  );
+};
+
 export const readHubJoinPreference = (): HubJoinPreference => {
   if (typeof localStorage === 'undefined') return 'manual';
   return normalizeHubJoinPreference(localStorage.getItem(HUB_JOIN_PREF_KEY));
@@ -193,12 +238,15 @@ export const writeHubJoinPreference = (value: HubJoinPreference): HubJoinPrefere
   return normalized;
 };
 
-export const getOpenAccountRebalancePolicyData = (tokenId: TokenId): {
+export const getOpenAccountRebalancePolicyData = (
+  tokenId: TokenId,
+  posture: WalletPosture = readWalletPosture(),
+): {
   r2cRequestSoftLimit: bigint;
   hardLimit: bigint;
   maxAcceptableFee: bigint;
 } | null => {
-  const policy = readSavedCollateralPolicy();
+  const policy = readSavedCollateralPolicy(posture);
   if (policy.mode === 'manual') return null;
   const r2cRequestSoftLimit = usdToRawTokenAmount(policy.softLimitUsd, tokenId);
   const hardLimit = usdToRawTokenAmount(policy.hardLimitUsd, tokenId);
@@ -206,6 +254,8 @@ export const getOpenAccountRebalancePolicyData = (tokenId: TokenId): {
   if (r2cRequestSoftLimit <= 0n || hardLimit < r2cRequestSoftLimit || maxAcceptableFee < 0n) return null;
   return { r2cRequestSoftLimit, hardLimit, maxAcceptableFee };
 };
-import { isUnknownRecord, parseJsonUnknown, readJsonUnknown } from '../boundary/index.ts';
 
-export const getHubOpeningCredit = (tokenId: TokenId): bigint => usdToRawTokenAmount(10_000, tokenId);
+export const getHubOpeningCredit = (
+  tokenId: TokenId,
+  posture: WalletPosture = readWalletPosture(),
+): bigint => usdToRawTokenAmount(resolvePolicyForPosture(posture).transitCreditUsd, tokenId);

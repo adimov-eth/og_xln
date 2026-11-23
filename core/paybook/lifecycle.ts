@@ -1,4 +1,4 @@
-import type { HtlcLock } from '../types/account';
+import type { AccountTx, HtlcLock } from '../types/account';
 import type { EntityCandidateEffect, EntityState, PaybookEntry } from '../entity/types';
 import { hasInboundPayment } from './views';
 import type { BookIntentSlotWriter } from '../entity/books/book-intents';
@@ -101,6 +101,33 @@ export function armPaymentSecretAckTimeout(
   entry.secretAckPending = true;
   entry.secretAckStartedAt = state.timestamp;
   entry.secretAckDeadlineAt = state.timestamp + HTLC_SECRET_ACK_TIMEOUT_MS;
+}
+
+/**
+ * Queue an outbound `htlc_resolve` (`outcome: 'secret'`) on an inbound route
+ * and atomically arm its secret-ACK watchdog so a peer withholding ACK cannot
+ * run out `timelock` un-disputed.
+ */
+export function queueInboundSecretResolution(
+  state: EntityState,
+  entry: PaybookEntry,
+  accountTxs: { push(item: { accountId: string; tx: Extract<AccountTx, { type: 'htlc_resolve' }> }): unknown },
+  lockId = entry.hashlock,
+): void {
+  if (!hasInboundPayment(entry)) {
+    throw new Error(`PAYBOOK_SECRET_ACK_INBOUND_REQUIRED:${entry.hashlock}`);
+  }
+  if (!entry.secret) {
+    throw new Error(`PAYBOOK_SECRET_REQUIRED:${entry.hashlock}`);
+  }
+  accountTxs.push({
+    accountId: entry.inboundEntity,
+    tx: {
+      type: 'htlc_resolve',
+      data: { lockId, outcome: 'secret', secret: entry.secret },
+    },
+  });
+  armPaymentSecretAckTimeout(state, entry);
 }
 
 export function programPaymentTermination(

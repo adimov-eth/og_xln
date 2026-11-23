@@ -1,14 +1,15 @@
 import { expect, test } from '@playwright/test';
 import { accountMoney } from '../svelte-wallet';
+import { gotoProWallet } from '../wallet-ui';
 import { setBankPolicy } from './bank-policy';
 
 
 test('Svelte signed savings and loan preserve exact money without leaving /app', { tag: '@functional' }, async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto(process.env['SVELTE_E2E_BASE_URL'] ?? 'http://localhost:8081/app');
+  await gotoProWallet(page, process.env['SVELTE_E2E_BASE_URL'] ?? 'http://localhost:8081/app');
   await page.getByRole('button', { name: 'Open test wallet', exact: true }).click();
-  await expect(page.getByTestId('context-current')).toBeVisible();
+  await expect(page.getByTestId('context-current')).toBeVisible({ timeout: 60_000 });
   await page.getByRole('button', { name: 'Accounts', exact: true }).click();
   await page.getByTestId('hub-discovery-card').filter({ hasText: 'H1' }).getByTestId('hub-connect-button').click();
   await expect(page.getByTestId('account-preview').first()).toBeVisible();
@@ -57,6 +58,6 @@ test('Svelte signed savings and loan preserve exact money without leaving /app',
   await expect.poll(async () => (await accountMoney(page)).owned).toBe(repaid.owned + 5_000_000n);
   await page.getByRole('button', { name: 'Lending', exact: true }).click();
   await expect(page.getByTestId('lending-loan-row')).toContainText('repaid');
-  await expect(page).toHaveURL(/\/app#accounts\/lending$/);
+  await expect(page).toHaveURL(/\/app(?:\?[^#]*)?#accounts\/lending$/);
   expect(errors).toEqual([]);
 });

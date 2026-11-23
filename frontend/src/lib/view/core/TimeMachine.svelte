@@ -570,7 +570,6 @@
 
   $: currentTime = formatTime(selectedFrameIndex);
   $: totalTime = formatTime(maxTimeIndex);
-  $: progressPercent = maxTimeIndex > 0 ? (selectedFrameIndex / maxTimeIndex) * 100 : 0;
   $: selectedRuntimeHistoryHeight = isRemoteRuntime
     ? Number($runtimeHistoryFrames[selectedFrameIndex]?.height || 0)
     : Number($history[selectedFrameIndex]?.state.height || 0);
@@ -798,7 +797,6 @@
       max={maxTimeIndex}
       value={selectedFrameIndex}
       on:input={handleSliderInput}
-      style="--xln-slider-progress: {progressPercent}%"
       disabled={$history.length === 0}
     />
     <span class="time-label end">{totalTime}</span>

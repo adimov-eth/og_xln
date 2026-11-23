@@ -1,3 +1,5 @@
+import type { RuntimeReplica } from '@xln/core/api/public/runtime-module';
+
 export type RuntimeFailureKind = 'drop' | 'defer' | 'debug-assert' | 'fatal';
 
 export type RuntimeFailureClassification = {
@@ -68,4 +70,14 @@ export function classifyRuntimeFailure(error: unknown): RuntimeFailureClassifica
   }
 
   return { kind: 'fatal', retryable: false, message };
+}
+
+/** Why the Runtime stopped, in the user's words; null while it runs. Same copy as the React wallet. */
+export function haltedRuntimeMessage(env: Pick<RuntimeReplica, 'infrastructure'> | null | undefined): string | null {
+  const state = env?.infrastructure;
+  if (!state?.halted) return null;
+  const cause = state.fatalDebugPayload?.message ?? 'HALTED_REQUIRES_OPERATOR';
+  return /DUPLICATE_RUNTIME_CONNECTION|DIRECT_DUPLICATE_RUNTIME_SESSION/.test(cause)
+    ? 'This wallet is already open elsewhere. Close the other wallet before reopening here.'
+    : `Wallet stopped. Reopen it before continuing. (${cause})`;
 }

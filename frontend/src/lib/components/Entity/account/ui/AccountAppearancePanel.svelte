@@ -187,7 +187,7 @@
   .account-appearance-panel {
     border: 1px solid #27272a;
     border-radius: 10px;
-    background: #101114;
+    background: var(--theme-surface, #121418);
     padding: 14px;
   }
 
@@ -220,7 +220,7 @@
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #a1a1aa;
+    color: var(--theme-text-secondary, #a1a1aa);
   }
 
   .appearance-pill-group {
@@ -228,9 +228,9 @@
     align-items: center;
     gap: 0;
     padding: 3px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.03);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 3%, transparent);
     width: fit-content;
   }
 
@@ -243,7 +243,7 @@
     border: none;
     border-radius: 8px;
     background: transparent;
-    color: #71717a;
+    color: var(--theme-text-muted, #71717a);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
@@ -257,14 +257,14 @@
   }
 
   .appearance-pill:hover {
-    color: #d4d4d8;
-    background: rgba(255, 255, 255, 0.04);
+    color: var(--theme-text-primary, #d4d4d8);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .appearance-pill.active {
-    color: #fbbf24;
-    background: rgba(251, 191, 36, 0.12);
-    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2) inset;
+    color: var(--theme-accent, #c5cfde);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--theme-accent, #c5cfde) 20%, transparent) inset;
   }
 
   .appearance-pill.active .pill-icon {
@@ -274,8 +274,8 @@
   .appearance-select {
     margin-top: 6px;
     width: 100%;
-    background: #11151a;
-    color: #e5e7eb;
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-primary, #e5e7eb);
     border: 1px solid #2c333d;
     border-radius: 6px;
     padding: 6px 8px;
@@ -305,13 +305,13 @@
   }
 
   .appearance-scale-value {
-    color: #f3f4f6;
+    color: var(--theme-text-primary, #f3f4f6);
     font-size: 13px;
     font-weight: 600;
   }
 
   .appearance-scale-bound {
-    color: #71717a;
+    color: var(--theme-text-muted, #71717a);
     font-size: 11px;
     font-family: 'JetBrains Mono', monospace;
   }
@@ -333,7 +333,7 @@
     align-items: center;
     gap: 10px;
     padding: 8px 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
     cursor: pointer;
     user-select: none;
   }
@@ -346,7 +346,7 @@
   .appearance-hint {
     flex: 1;
     font-size: 11px;
-    color: #71717a;
+    color: var(--theme-text-muted, #71717a);
   }
 
   .appearance-checkbox {
@@ -356,14 +356,14 @@
 
   .section-head {
     margin: 0 0 12px;
-    color: #f5f5f5;
+    color: var(--theme-text-primary, #f5f5f5);
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.01em;
   }
 
   .muted {
-    color: #52525b;
+    color: var(--theme-text-muted, #52525b);
     line-height: 1.5;
     margin: 0 0 12px;
   }

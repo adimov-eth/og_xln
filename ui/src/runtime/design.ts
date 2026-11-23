@@ -5,7 +5,7 @@
  * them before first paint so nothing flashes.
  */
 export type Material = 'obsidian' | 'bank' | 'terminal';
-export type Accent = 'indigo' | 'mono' | 'brass' | 'custom';
+export type Accent = 'silver' | 'indigo' | 'mono' | 'custom';
 export type NumberFont = 'sans' | 'serif' | 'tight';
 export type RiskColor = 'violet' | 'red' | 'orange';
 
@@ -18,20 +18,21 @@ export type DesignPrefs = {
 	risk: RiskColor;
 };
 
-export const DESIGN_KEY = 'xln-ui-design';
+/** v2: the default moved to obsidian and silver; v1 prefs (indigo, brass) are disposable testnet state. */
+export const DESIGN_KEY = 'xln-ui-design-v2';
 
-export const DEFAULT_DESIGN: DesignPrefs = { material: 'obsidian', accent: 'indigo', accentHex: '#c9a962', numbers: 'sans', risk: 'violet' };
+export const DEFAULT_DESIGN: DesignPrefs = { material: 'obsidian', accent: 'silver', accentHex: '#c5cfde', numbers: 'sans', risk: 'violet' };
 
 export const MATERIALS: Array<{ id: Material; title: string; hint: string }> = [
-	{ id: 'obsidian', title: 'Studio', hint: 'Cool neutral surfaces, slate ink, hairlines. Dark theme is deep navy.' },
+	{ id: 'obsidian', title: 'Obsidian', hint: 'Black and silver. Matte ground, soft-touch controls, polished edges. Light is porcelain and graphite.' },
 	{ id: 'bank', title: 'Private bank', hint: 'Warm off-white first, ink on paper. Dark theme is charcoal.' },
 	{ id: 'terminal', title: 'Terminal', hint: 'Graphite, phosphor green, numbers in mono everywhere.' },
 ];
 
 export const ACCENTS: Array<{ id: Accent; title: string; hint: string; swatch: string }> = [
+	{ id: 'silver', title: 'Silver', hint: 'Sterling on obsidian, graphite on porcelain. Colour is left for the money.', swatch: '#c5cfde' },
 	{ id: 'indigo', title: 'Indigo', hint: 'Buttons, links and the active tab in one calm indigo.', swatch: '#635bff' },
 	{ id: 'mono', title: 'Monochrome', hint: 'Ink on ink. The only colors left are the money.', swatch: '#ecedef' },
-	{ id: 'brass', title: 'Brass', hint: 'Warm metal. Expensive, close to the edge.', swatch: '#c9a962' },
 	{ id: 'custom', title: 'Custom', hint: 'Any hex you like.', swatch: '' },
 ];
 
@@ -44,7 +45,7 @@ export const NUMBER_FONTS: Array<{ id: NumberFont; title: string; hint: string; 
 export const RISK_COLORS: Array<{ id: RiskColor; title: string; hint: string; swatch: string }> = [
 	{ id: 'violet', title: 'Violet', hint: 'Risk is trust, not alarm. Red stays for disputes.', swatch: '#a78bfa' },
 	{ id: 'red', title: 'Red', hint: 'Hurts on sight. Same color as a dispute.', swatch: '#f26d6d' },
-	{ id: 'orange', title: 'Orange', hint: 'Warm spectrum: obligations amber, exposure orange.', swatch: '#fb923c' },
+	{ id: 'orange', title: 'Orange', hint: 'Exposure in orange; obligations stay ice blue.', swatch: '#fb923c' },
 ];
 
 const isHex = (value: string): boolean => /^#[0-9a-f]{6}$/i.test(value);
@@ -110,12 +111,11 @@ export function applyDesign(prefs: DesignPrefs): void {
 		root.style.setProperty('--accent', hex);
 		root.style.setProperty('--accent-2', mix(hex, 255, 0.25));
 		root.style.setProperty('--accent-dim', rgba(hex, 0.16));
-		root.style.setProperty('--credit', hex);
 		// Dark accents want white button ink, light ones black.
 		const luma = 0.299 * parseInt(hex.slice(1, 3), 16) + 0.587 * parseInt(hex.slice(3, 5), 16) + 0.114 * parseInt(hex.slice(5, 7), 16);
 		root.style.setProperty('--btn-ink', luma > 160 ? '#0b0d12' : '#ffffff');
 	} else {
-		for (const name of ['--accent', '--accent-2', '--accent-dim', '--credit', '--btn-ink']) root.style.removeProperty(name);
+		for (const name of ['--accent', '--accent-2', '--accent-dim', '--btn-ink']) root.style.removeProperty(name);
 	}
 }
 

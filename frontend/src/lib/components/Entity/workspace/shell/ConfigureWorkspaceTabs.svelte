@@ -61,20 +61,20 @@
   }
 
   .configure-tab.active {
-    color: var(--theme-accent, #fbbf24);
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 65%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 10%, transparent);
+    color: var(--theme-accent, #c5cfde);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 65%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent);
   }
 
   .configure-tab.danger {
-    color: #fca5a5;
-    border-color: rgba(239, 68, 68, 0.4);
+    color: color-mix(in srgb, var(--theme-debit, #f43f5e) 76%, var(--theme-text-primary, white) 24%);
+    border-color: color-mix(in srgb, var(--theme-debit, #f43f5e) 45%, transparent);
   }
 
   .configure-tab.danger:hover,
   .configure-tab.danger.active {
-    color: #fecaca;
-    border-color: rgba(239, 68, 68, 0.8);
-    background: rgba(127, 29, 29, 0.25);
+    color: color-mix(in srgb, var(--theme-debit, #f43f5e) 70%, var(--theme-text-primary, white) 30%);
+    border-color: var(--theme-debit, #f43f5e);
+    background: color-mix(in srgb, var(--theme-debit, #f43f5e) 12%, transparent);
   }
 </style>

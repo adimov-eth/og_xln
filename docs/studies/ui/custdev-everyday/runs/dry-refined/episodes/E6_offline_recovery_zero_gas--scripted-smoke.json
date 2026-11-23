@@ -1,0 +1,94 @@
+{
+  "episodeId": "E6_offline_recovery_zero_gas--scripted-smoke--refined",
+  "scenarioId": "E6_offline_recovery_zero_gas",
+  "modelId": "scripted-smoke",
+  "lineage": "scripted-deterministic",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Backup": true,
+      "q2ZeroGas": true,
+      "q3HonestGas": true
+    },
+    "rawAnswers": "1. Yes, exported encrypted backup.\n2. 0 ETH network gas.\n3. Cannot start a fresh user-initiated withdrawal with 0 gas; watchtower still guards stale claims."
+  },
+  "turns": 3,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "inspect activity and protection status",
+      "args": {
+        "intent": "inspect activity and protection status",
+        "expr": "(activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "entries": [
+            {
+              "id": "act-1",
+              "summary": "Payment provider H1 offline — protection check active",
+              "kind": "recovery",
+              "amount-usd": 145
+            }
+          ],
+          "hub-online": false,
+          "dispute-active": true,
+          "tower-enrolled": true,
+          "backup-exported": false,
+          "protection-status": "Recovery service guards against stale provider claims automatically, while starting a fresh user-initiated withdrawal requires network gas (0 ETH available).",
+          "native-gas-wei": "0",
+          "native-gas-eth": "0 ETH",
+          "recovery-shield-policy": "Provider offline — recovery service blocks stale claims automatically, while starting your own on-chain exit requires network gas (0 ETH available)."
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "export encrypted backup",
+      "args": {
+        "intent": "export encrypted backup",
+        "action": "export-backup",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Encrypted backup exported",
+          "native-gas-wei": "0"
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "report honest 0 gas boundary",
+      "args": {
+        "intent": "report honest 0 gas boundary",
+        "summary": "Exported backup; 0 ETH gas means watchtower guards stale claims but fresh exit needs gas."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Exported backup; 0 ETH gas means watchtower guards stale claims but fresh exit needs gas."
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 103,
+  "finalSummary": "Exported backup; 0 ETH gas means watchtower guards stale claims but fresh exit needs gas."
+}

@@ -3,7 +3,7 @@ import { blake3 } from '@noble/hashes/blake3.js';
 import { resolveKdfParams } from './primitives/kdf.ts';
 import type { BrainvaultKdfParams } from './primitives/kdf.ts';
 import { bytesToHex } from './primitives/encoding.ts';
-import { BRAINVAULT_MAX_SHARD_COUNT } from './primitives/spec.ts';
+import { BRAINVAULT_MAX_SHARD_COUNT, BRAINVAULT_V1 } from './primitives/spec.ts';
 
 /** Frozen V1 factor for an exact positive shard count. */
 export function factorForShardCount(shardCount: number): number {
@@ -29,8 +29,8 @@ export function rootDomain(
   if (factor !== expectedFactor) {
     throw new Error(`BRAINVAULT_FACTOR_SHARD_MISMATCH:${factor}:${expectedFactor}:${shardCount}`);
   }
-  return `${kdf.algId}|mem=${kdf.shardMemoryKb}|t=${kdf.argonTimeCost}`
-    + `|p=${kdf.argonParallelism}|out=${kdf.shardOutputBytes}`
+  return `${kdf.algId}|mem=${kdf.shardMemoryKb}|t=${BRAINVAULT_V1.ARGON_TIME_COST}`
+    + `|p=${BRAINVAULT_V1.ARGON_PARALLELISM}|out=${BRAINVAULT_V1.SHARD_OUTPUT_BYTES}`
     + `|shards=${shardCount}|factor=${factor}`;
 }
 
@@ -44,17 +44,17 @@ export async function combineShardsWithParams(
   // concurrent/native caller must first use shard-collector, which rejects a
   // duplicate, missing, malformed, wrong-index, or foreign response and then
   // materializes this array in numeric index order.
-  const kdf = resolveKdfParams(params);
+  resolveKdfParams(params);
   if (shards.length < 1) throw new Error('BRAINVAULT_SHARDS_EMPTY');
   for (const [index, shard] of shards.entries()) {
-    if (!(shard instanceof Uint8Array) || shard.length !== kdf.shardOutputBytes) {
+    if (!(shard instanceof Uint8Array) || shard.length !== BRAINVAULT_V1.SHARD_OUTPUT_BYTES) {
       throw new Error(`BRAINVAULT_SHARD_LENGTH_INVALID:${index}:${shard?.length ?? 'not-bytes'}`);
     }
   }
   const domain = new TextEncoder().encode(rootDomain(factor, shards.length, params));
-  const input = new Uint8Array((shards.length * kdf.shardOutputBytes) + domain.length);
-  for (const [index, shard] of shards.entries()) input.set(shard, index * kdf.shardOutputBytes);
-  input.set(domain, shards.length * kdf.shardOutputBytes);
+  const input = new Uint8Array((shards.length * BRAINVAULT_V1.SHARD_OUTPUT_BYTES) + domain.length);
+  for (const [index, shard] of shards.entries()) input.set(shard, index * BRAINVAULT_V1.SHARD_OUTPUT_BYTES);
+  input.set(domain, shards.length * BRAINVAULT_V1.SHARD_OUTPUT_BYTES);
   try {
     return blake3(input);
   } finally {

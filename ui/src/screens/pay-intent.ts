@@ -23,13 +23,4 @@ export function assertInvoiceJurisdiction(invoice: ParsedXlnInvoice, accepted: r
   }
 }
 
-/** Keep the PaymentPanel invoice attribution and note-lock semantics. */
-export function invoiceNote(invoice: ParsedXlnInvoice): { description: string; locked: boolean } {
-  const parts: string[] = [];
-  if (invoice.description) parts.push(invoice.description);
-  if (invoice.recipientUserId) parts.push(`uid:${invoice.recipientUserId}`);
-  return {
-    description: parts.join(' | '),
-    locked: invoice.noteLocked || Boolean(invoice.description) || Boolean(invoice.recipientUserId),
-  };
-}
+export { invoiceNote } from '$lib/utils/xlnInvoice';

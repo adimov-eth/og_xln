@@ -68,12 +68,16 @@ export const ensureTokenCatalog = async (jadapter: JAdapter, allowDeploy: boolea
   throw new Error(`TOKEN_CATALOG_INCOMPLETE required=${HUB_REQUIRED_TOKEN_COUNT} actual=${current.length}`);
 };
 
-export const waitForTokenCatalog = async (jadapter: JAdapter, rounds = 80): Promise<JTokenInfo[]> => {
+export const waitForTokenCatalog = async (
+  jadapter: JAdapter,
+  requiredCount = requiredHubTokenCount(jadapter.chainId),
+  rounds = 80,
+): Promise<JTokenInfo[]> => {
   let lastReadError: unknown = null;
   for (let i = 0; i < rounds; i += 1) {
     try {
       const tokens = await jadapter.getTokenRegistry();
-      if (tokens.length >= requiredHubTokenCount(jadapter.chainId)) return tokens;
+      if (tokens.length >= requiredCount) return tokens;
       lastReadError = null;
     } catch (error) {
       lastReadError = error;
@@ -84,5 +88,5 @@ export const waitForTokenCatalog = async (jadapter: JAdapter, rounds = 80): Prom
     const message = lastReadError instanceof Error ? lastReadError.message : String(lastReadError);
     throw new Error(`TOKEN_CATALOG_READ_FAILED:${message}`, { cause: lastReadError });
   }
-  throw new Error(`TOKEN_CATALOG_INCOMPLETE required=${requiredHubTokenCount(jadapter.chainId)}`);
+  throw new Error(`TOKEN_CATALOG_INCOMPLETE required=${requiredCount}`);
 };

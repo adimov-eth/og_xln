@@ -1,0 +1,20 @@
+[
+  {
+    "key": "runtime::pay",
+    "category": "runtime",
+    "actionOrExpr": "pay",
+    "count": 1,
+    "models": [
+      "scripted-smoke"
+    ],
+    "lineages": [
+      "scripted-deterministic"
+    ],
+    "isCrossModel": false,
+    "scenarios": [
+      "E1c_pay_l1_reject_reload"
+    ],
+    "sampleIntent": "attempt $50 payment",
+    "sampleError": "Auto-route L1 sweep rejected — your Cash was not touched."
+  }
+]

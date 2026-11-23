@@ -1,30 +1,38 @@
-import { useEffect, useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
-import { useApp } from '../runtime/store';
-import type { ReactNode } from 'react';
-import { Icon, type IconName } from './Icons';
-import { Toasts } from './Toasts';
-import { Palette } from './Palette';
-import { JurisdictionBanner } from './JurisdictionBanner';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { VALUELESS_CHAIN_IDS } from '@xln/core/jurisdiction/adapter/chain-ids';
+import { attachEverydayGlare } from '@xln/frontend/lib/everyday/wallet-posture';
+import { SignSheets } from './SignSheets';
 import { getJurisdictionBadgeInfo } from '@xln/frontend/lib/utils/identity/jurisdictionBadge';
-import { Tour } from './Tour';
-import { Guide } from './guide/Guide';
+import { getAdapter, getEmbeddedEnv } from '../runtime/adapter';
 import { useExternalWalletSync } from '../runtime/financial/external';
+import { observeFundingBatches } from '@xln/frontend/lib/everyday/funding-submission';
+import { useRecoverySync } from '../runtime/recovery-sync';
+import { useApp } from '../runtime/store';
+import { useWalletPosture } from '../runtime/use-everyday-wallet';
 import { useWallet } from '../runtime/views';
+import { Guide } from './guide/Guide';
+import { Icon, type IconName } from './Icons';
+import { JurisdictionBanner } from './JurisdictionBanner';
 import { Logo } from './Logo';
 import { NetworkRpc } from './Networks';
-import { getEmbeddedEnv } from '../runtime/adapter';
-import { observeFundingBatches } from '../runtime/financial/funding-submission';
-import { useRecoverySync } from '../runtime/recovery-sync';
+import { Palette } from './Palette';
+import { Toasts } from './Toasts';
+import { Tour } from './Tour';
 
-/**
- * Destinations only. Pay, Receive and Swap are flows pushed over Home with a
- * back control, so no action is ever offered twice on one screen.
- */
-const NAV: Array<{ to: string; label: string; icon: IconName; match: (pathname: string) => boolean }> = [
+type NavDestination = {
+  to: string;
+  label: string;
+  testId: string;
+  icon: IconName;
+  match: (pathname: string) => boolean;
+};
+
+const PRO_NAV: NavDestination[] = [
   {
     to: '/',
     label: 'Home',
+    testId: 'nav-home',
     icon: 'home',
     match: pathname =>
       pathname === '/' ||
@@ -34,20 +42,28 @@ const NAV: Array<{ to: string; label: string; icon: IconName; match: (pathname: 
       pathname === '/swap' ||
       pathname === '/move',
   },
-  { to: '/activity', label: 'Activity', icon: 'activity', match: pathname => pathname.startsWith('/activity') },
+  { to: '/activity', label: 'Activity', testId: 'nav-activity', icon: 'activity', match: pathname => pathname.startsWith('/activity') },
   {
     to: '/manage',
     label: 'Manage',
+    testId: 'nav-manage',
     icon: 'accounts',
     match: pathname =>
       pathname.startsWith('/manage') ||
       pathname.startsWith('/assets') ||
       pathname.startsWith('/lend') ||
       pathname.startsWith('/ownership') ||
-      pathname.startsWith('/sovereignty') ||
-      pathname.startsWith('/desk'),
+      pathname.startsWith('/sovereignty'),
   },
-  { to: '/settings', label: 'Settings', icon: 'settings', match: pathname => pathname.startsWith('/settings') },
+  { to: '/settings', label: 'Settings', testId: 'nav-settings', icon: 'settings', match: pathname => pathname.startsWith('/settings') },
+];
+
+const EVERYDAY_NAV: NavDestination[] = [
+  { to: '/', label: 'Cash', testId: 'nav-cash', icon: 'wallet', match: pathname => pathname === '/' },
+  { to: '/friends', label: 'Friends', testId: 'nav-friends', icon: 'accounts', match: pathname => pathname.startsWith('/friends') },
+  { to: '/savings', label: 'Savings', testId: 'nav-savings', icon: 'bank', match: pathname => pathname.startsWith('/savings') },
+  { to: '/activity', label: 'Activity', testId: 'nav-activity', icon: 'activity', match: pathname => pathname.startsWith('/activity') },
+  { to: '/settings', label: 'Settings', testId: 'nav-settings', icon: 'settings', match: pathname => pathname.startsWith('/settings') },
 ];
 
 /** Screens with their own back control and one primary action; the tab bar would compete with them on a phone. */
@@ -55,6 +71,7 @@ const FLOW_ROUTES = new Set(['/pay', '/receive', '/swap', '/move']);
 
 export function Shell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
+  const { posture, preserveModeTo } = useWalletPosture();
   const entityId = useApp(s => s.activeEntityId);
   const wallet = useWallet(entityId);
   useRecoverySync();
@@ -72,12 +89,32 @@ export function Shell({ children }: { children: ReactNode }) {
     ]);
   }, [wallet.entityId, batches]);
   const clearToasts = useApp(s => s.clearToasts);
-  // A toast belongs to the screen that raised it.
   useEffect(() => clearToasts(), [pathname, clearToasts]);
+  const appRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (posture !== 'everyday') return;
+    return attachEverydayGlare(appRef.current);
+  }, [posture]);
+
+  const navItems = posture === 'pro' ? PRO_NAV : EVERYDAY_NAV;
+  const navigate = useNavigate();
+  const commandReady = useApp(s => s.commandReady);
+  const runtimeId = getAdapter()?.runtimeId ?? '';
+  const chainId = wallet.frame?.activeEntity?.core?.config.jurisdiction?.chainId;
+  const isDemoChain = chainId !== undefined && VALUELESS_CHAIN_IDS.has(Number(chainId));
+  const onTestScreen = pathname.startsWith('/test');
+  const hasDisputed = wallet.accounts.some(account => account.disputed);
+  const hasArriving = wallet.accounts.some(
+    account => account.isHub && !account.disputed && account.tokens.some(token => token.derived.outPeerCredit > 0n),
+  );
+  const evState = hasDisputed ? 'disputed' : !commandReady ? 'syncing' : hasArriving ? 'arriving' : 'settled';
 
   return (
     <div
+      ref={appRef}
       className="app jurisdiction-surface"
+      data-posture={posture}
+      data-ev-state={posture === 'everyday' ? evState : undefined}
       data-jurisdiction={
         getJurisdictionBadgeInfo(wallet.jurisdiction, wallet.frame?.activeEntity?.core?.config.jurisdiction?.chainId)
           ?.className ?? 'generic'
@@ -86,7 +123,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <a className="skip-link" href="#wallet-content">
         Skip to content
       </a>
-      <Palette />
+      {posture === 'pro' ? <Palette /> : null}
       <nav className="rail" aria-label="Primary">
         <div className="rail-brand" aria-hidden>
           <span className="rail-mark">
@@ -94,12 +131,12 @@ export function Shell({ children }: { children: ReactNode }) {
           </span>
           <span className="rail-brand-name">xln</span>
         </div>
-        {NAV.map(item => (
+        {navItems.map(item => (
           <NavLink
             key={item.to}
-            to={item.to}
+            to={preserveModeTo(item.to)}
             className={`rail-item${item.match(pathname) ? ' active' : ''}`}
-            data-testid={`nav-${item.label.toLowerCase()}`}
+            data-testid={item.testId}
             aria-label={item.label}
             title={item.label}
           >
@@ -108,18 +145,51 @@ export function Shell({ children }: { children: ReactNode }) {
           </NavLink>
         ))}
         <div className="rail-spacer" />
-        <div className="rail-foot">
-          <span className="net-badge">{wallet.jurisdiction || 'Testnet'}</span>
-          <span>Frame #{wallet.frameHeight.toLocaleString('en-US')}</span>
-        </div>
+        {posture === 'pro' ? (
+          <div className="rail-foot">
+            <span className="net-badge">{wallet.jurisdiction || 'Testnet'}</span>
+            <span>Frame #{wallet.frameHeight.toLocaleString('en-US')}</span>
+          </div>
+        ) : null}
       </nav>
 
       <main className="main" id="wallet-content" tabIndex={-1}>
-        <JurisdictionBanner wallet={wallet} />
-        {/* Asset refresh must not remount the guide and replay its chapter navigation. */}
-        <Tour />
-        {/* Preserve a flow's draft during refresh/entity changes without showing
-            stale balances or allowing commands before the new snapshot is ready. */}
+        {posture === 'pro' ? (
+          <div
+            data-testid={wallet.entityId ? 'context-current' : undefined}
+            data-runtime-id={runtimeId}
+            data-entity-id={wallet.entityId}
+          >
+            <JurisdictionBanner wallet={wallet} />
+          </div>
+        ) : wallet.entityId ? (
+          <div
+            className="everyday-topbar"
+            data-testid="context-current"
+            data-runtime-id={runtimeId}
+            data-entity-id={wallet.entityId}
+          >
+            <span className="everyday-brand">
+              <span className="rail-mark" aria-hidden="true">
+                <Logo size={17} />
+              </span>
+              <span className="everyday-brand-name">xln</span>
+            </span>
+            {isDemoChain ? (
+              <button
+                type="button"
+                className={`everyday-test-trigger${onTestScreen ? ' active' : ''}`}
+                onClick={() => navigate(preserveModeTo(onTestScreen ? '/' : '/test'))}
+                aria-pressed={onTestScreen}
+                data-testid="everyday-test-btn"
+              >
+                Test
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {posture === 'pro' ? <Tour /> : null}
+        <SignSheets />
         <div hidden={!assets.ready} inert={!assets.ready} style={{ display: assets.ready ? 'contents' : 'none' }}>
           {contentMounted || assets.ready ? children : null}
         </div>
@@ -133,8 +203,8 @@ export function Shell({ children }: { children: ReactNode }) {
               {assets.sourceAdvance
                 ? 'The chain advanced during the balance read. Waiting for a consistent snapshot…'
                 : assets.error
-                  ? 'Could not load your assets.'
-                  : 'Loading your assets…'}
+                  ? 'Could not load your wallet.'
+                  : 'Loading your wallet…'}
             </p>
             {assets.error && (
               <>
@@ -142,20 +212,20 @@ export function Shell({ children }: { children: ReactNode }) {
                 <button className="btn" onClick={assets.retry}>
                   Retry
                 </button>
-                <AssetRpcRecovery name={wallet.jurisdiction} onReplaced={assets.retry} />
+                {posture === 'pro' ? <AssetRpcRecovery name={wallet.jurisdiction} onReplaced={assets.retry} /> : null}
               </>
             )}
           </section>
         ) : null}
       </main>
 
-      <nav className={`tabbar${FLOW_ROUTES.has(pathname) ? ' flow' : ''}`} aria-label="Primary">
-        {NAV.map(item => (
+      <nav className={`tabbar${posture === 'pro' && FLOW_ROUTES.has(pathname) ? ' flow' : ''}`} aria-label="Primary">
+        {navItems.map(item => (
           <NavLink
             key={item.to}
-            to={item.to}
+            to={preserveModeTo(item.to)}
             className={`tabbar-item${item.match(pathname) ? ' active' : ''}`}
-            data-testid={`nav-${item.label.toLowerCase()}`}
+            data-testid={item.testId}
           >
             <Icon name={item.icon} size={20} />
             <span>{item.label}</span>
@@ -163,7 +233,7 @@ export function Shell({ children }: { children: ReactNode }) {
         ))}
       </nav>
 
-      <Guide />
+      {posture === 'pro' ? <Guide /> : null}
       <Toasts />
     </div>
   );

@@ -1,0 +1,162 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--grok-4.7-build-fast--baseline",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7-build-fast",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": true
+    },
+    "rawAnswers": "1. Settled Cash you can spend right now is $0.00.\n2. The $50.00 is still arriving and kept separate from Cash.\n3. It could not settle because the payment provider is offline."
+  },
+  "turns": 6,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Inspect wallet help and how to see incoming payments and cash before deciding if CornerCoffee can be paid $10.",
+      "args": {
+        "intent": "Inspect wallet help and how to see incoming payments and cash before deciding if CornerCoffee can be paid $10.",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 9045,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "See cash on hand and whether the incoming $50 is still pending before judging a $10 CornerCoffee payment.",
+      "args": {
+        "intent": "See cash on hand and whether the incoming $50 is still pending before judging a $10 CornerCoffee payment.",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 14762,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Quote a $10 CornerCoffee payment against $0 cash while the $50 incoming payment is still finishing.",
+      "args": {
+        "intent": "Quote a $10 CornerCoffee payment against $0 cash while the $50 incoming payment is still finishing.",
+        "expr": "(quote-pay \"CornerCoffee\" 10)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 10,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": false,
+          "inline-preview": "CornerCoffee · $10.00 + $0.05 fee",
+          "reason": "Insufficient settled Cash ($0.00); $50.00 is still arriving."
+        }
+      },
+      "latencyMs": 8489,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Find whether the wallet can wait or refresh the unfinished $50 incoming payment before judging the $10 CornerCoffee pay.",
+      "args": {
+        "intent": "Find whether the wallet can wait or refresh the unfinished $50 incoming payment before judging the $10 CornerCoffee pay.",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 15243,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Wait for the unfinished $50 incoming payment to settle before judging whether CornerCoffee can be paid $10.",
+      "args": {
+        "intent": "Wait for the unfinished $50 incoming payment to settle before judging whether CornerCoffee can be paid $10.",
+        "action": "wait-settlement",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 8936,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "done",
+      "intent": "Report that the $50 is still unfinished and a $10 CornerCoffee payment cannot complete.",
+      "args": {
+        "intent": "Report that the $50 is still unfinished and a $10 CornerCoffee payment cannot complete.",
+        "summary": "The $50.00 incoming payment is still finishing: the payment provider is offline, and those funds stay separate from Cash ($0.00 settled, $50.00 arriving). CornerCoffee $10.00 cannot be paid now — the quote needs $10.00 plus a $0.05 fee and can-complete is false because settled Cash is $0.00."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "The $50.00 incoming payment is still finishing: the payment provider is offline, and those funds stay separate from Cash ($0.00 settled, $50.00 arriving). CornerCoffee $10.00 cannot be paid now — the quote needs $10.00 plus a $0.05 fee and can-complete is false because settled Cash is $0.00."
+        }
+      },
+      "latencyMs": 8824,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 182657,
+  "finalSummary": "The $50.00 incoming payment is still finishing: the payment provider is offline, and those funds stay separate from Cash ($0.00 settled, $50.00 arriving). CornerCoffee $10.00 cannot be paid now — the quote needs $10.00 plus a $0.05 fee and can-complete is false because settled Cash is $0.00."
+}

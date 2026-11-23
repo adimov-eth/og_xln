@@ -1,0 +1,283 @@
+{
+  "episodeId": "E3a_newcomer_arriving_and_request--grok-4.7-build-fast--baseline",
+  "scenarioId": "E3a_newcomer_arriving_and_request",
+  "modelId": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7-build-fast",
+  "specMode": "baseline",
+  "passed": false,
+  "statePassed": false,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1ZeroInitially": true,
+      "q2Settled": true,
+      "q3Link": true
+    },
+    "rawAnswers": "1. Before waiting, settled Cash you could spend right away was $0.00.\n2. After the incoming payment finished settling, Cash was $49.95.\n3. No — no payment-request action turned up, so the $25.00 link for Maya was never created."
+  },
+  "turns": 10,
+  "phantoms": [
+    {
+      "episodeId": "E3a_newcomer_arriving_and_request--grok-4.7-build-fast--baseline",
+      "scenarioId": "E3a_newcomer_arriving_and_request",
+      "modelId": "grok-4.7-build-fast",
+      "lineage": "xai-grok-4.7-build-fast",
+      "specMode": "baseline",
+      "turn": 3,
+      "tool": "discover",
+      "actionOrExpr": "(help \"wait-settlement\")",
+      "intent": "Learn how wait-settlement works before the Maya request",
+      "category": "eval",
+      "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check how much Cash is spendable right now",
+      "args": {
+        "intent": "Check how much Cash is spendable right now",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 17254,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "See available actions while the incoming payment is still settling",
+      "args": {
+        "intent": "See available actions while the incoming payment is still settling",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 18560,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Learn how wait-settlement works before the Maya request",
+      "args": {
+        "intent": "Learn how wait-settlement works before the Maya request",
+        "expr": "(help \"wait-settlement\")"
+      },
+      "outcome": {
+        "success": false,
+        "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 17385,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Read help with no arguments after the previous call was rejected",
+      "args": {
+        "intent": "Read help with no arguments after the previous call was rejected",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 10485,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Wait until the incoming payment finishes settling before requesting money from Maya",
+      "args": {
+        "intent": "Wait until the incoming payment finishes settling before requesting money from Maya",
+        "action": "wait-settlement",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Settled into Cash",
+          "cash-usd": 49.95,
+          "arriving-usd": 0,
+          "fee-usd": 0.05
+        }
+      },
+      "latencyMs": 16249,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "discover",
+      "intent": "Find Maya and how to create a payment request link",
+      "args": {
+        "intent": "Find Maya and how to create a payment request link",
+        "expr": "(friends)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "maya",
+            "name": "Maya",
+            "balance-usd": 0,
+            "status": "All settled up"
+          }
+        ]
+      },
+      "latencyMs": 10617,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "discover",
+      "intent": "See the people screen for how to request $25 from Maya",
+      "args": {
+        "intent": "See the people screen for how to request $25 from Maya",
+        "expr": "(screen 'people)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "people",
+          "purpose": "See who owes whom, split a shared bill, or settle up.",
+          "friends": [
+            {
+              "id": "maya",
+              "name": "Maya",
+              "balance-usd": 0,
+              "status": "All settled up"
+            }
+          ],
+          "buttons": [
+            "Split a bill",
+            "Settle up"
+          ]
+        }
+      },
+      "latencyMs": 9481,
+      "definesRecorded": []
+    },
+    {
+      "turn": 8,
+      "tool": "discover",
+      "intent": "See pending requests so I can learn how a $25 Maya payment request is created",
+      "args": {
+        "intent": "See pending requests so I can learn how a $25 Maya payment request is created",
+        "expr": "(pending-requests)"
+      },
+      "outcome": {
+        "success": true,
+        "data": []
+      },
+      "latencyMs": 18716,
+      "definesRecorded": []
+    },
+    {
+      "turn": 9,
+      "tool": "discover",
+      "intent": "Find the screen or action that creates a payment request link",
+      "args": {
+        "intent": "Find the screen or action that creates a payment request link",
+        "expr": "(screens)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "home",
+            "purpose": "See your Cash, pay anyone, or request money in one tap."
+          },
+          {
+            "id": "people",
+            "purpose": "See who owes whom, split a shared bill, or settle up."
+          },
+          {
+            "id": "earn",
+            "purpose": "Put money aside to earn interest, separate from your Cash."
+          },
+          {
+            "id": "activity",
+            "purpose": "Recent payments, splits, and automatic protection status."
+          }
+        ]
+      },
+      "latencyMs": 18570,
+      "definesRecorded": []
+    },
+    {
+      "turn": 10,
+      "tool": "discover",
+      "intent": "Open the home screen where a payment request can be created in one tap",
+      "args": {
+        "intent": "Open the home screen where a payment request can be created in one tap",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 49.95,
+            "cash-formatted": "$49.95",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 14654,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"You just installed the wallet. Check how much Cash you can spend right now, wait for any incoming payment to finish settling, and then create a $25.00 payment request link for Maya.\"\nNote: task verification failed (comprehension={\"q1ZeroInitially\":true,\"q2Settled\":true,\"q3Link\":true}).\nHere is what you tried:\nTurn 1: discover(intent=\"Check how much Cash is spendable right now\", args={\"intent\":\"Check how much Cash is spendable right now\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"incoming-status\":\"Payment still finishing — we will keep retrying automatically.\"}\nTurn 2: discover(intent=\"See available actions while the incoming payment is still settling\", args={\"intent\":\"See available actions while the incoming payment is still settling\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 3: discover(intent=\"Learn how wait-settlement works before the Maya request\", args={\"intent\":\"Learn how wait-settlement works before the Maya request\",\"expr\":\"(help \\\"wait-settlement\\\")\"}) -> ERROR (eval): help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items\nTurn 4: discover(intent=\"Read help with no arguments after the previous call was rejected\", args={\"intent\":\"Read help with no arguments after the previous call was rejected\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 5: act(intent=\"Wait until the incoming payment finishes settling before requesting money from Maya\", args={\"intent\":\"Wait until the incoming payment finishes settling before requesting money from Maya\",\"action\":\"wait-settlement\",\"args\":{}}) -> OK: {\"status\":\"Settled into Cash\",\"cash-usd\":49.95,\"arriving-usd\":0,\"fee-usd\":0.05}\nTurn 6: discover(intent=\"Find Maya and how to create a payment request link\", args={\"intent\":\"Find Maya and how to create a payment request link\",\"expr\":\"(friends)\"}) -> OK: [{\"id\":\"maya\",\"name\":\"Maya\",\"balance-usd\":0,\"status\":\"All settled up\"}]\nTurn 7: discover(intent=\"See the people screen for how to request $25 from Maya\", args={\"intent\":\"See the people screen for how to request $25 from Maya\",\"expr\":\"(screen 'people)\"}) -> OK: {\"id\":\"people\",\"purpose\":\"See who owes whom, split a shared bill, or settle up.\",\"friends\":[{\"id\":\"maya\",\"name\":\"Maya\",\"balance-usd\":0,\"status\":\"All settled up\"}],\"buttons\":[\"Split\nTurn 8: discover(intent=\"See pending requests so I can learn how a $25 Maya payment request is created\", args={\"intent\":\"See pending requests so I can learn how a $25 Maya payment request is created\",\"expr\":\"(pending-requests)\"}) -> OK: []\nTurn 9: discover(intent=\"Find the screen or action that creates a payment request link\", args={\"intent\":\"Find the screen or action that creates a payment request link\",\"expr\":\"(screens)\"}) -> OK: [{\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\"},{\"id\":\"people\",\"purpose\":\"See who owes whom, split a shared bill, or settle up.\"},{\"id\":\"earn\",\"p\nTurn 10: discover(intent=\"Open the home screen where a payment request can be created in one tap\", args={\"intent\":\"Open the home screen where a payment request can be created in one tap\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":49.95,\"cash-formatted\":\"$49.95\",\"note\":\"Your money, ready to spend or cash out a\nHere is what would have worked:\ndiscover(\"(cash)\"), act(\"wait-settlement\"), act(\"request-link\", { amount_usd: 25, to: \"Maya\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The action that works never showed up in the catalog you were given. I'll check the wallet surface for the exact labels around Cash, settlement, and request links.\n\n`request-link` never appeared on any surface you could read. The only complete action list was `(actions)`, and it stopped at `pay`, `cash-out`, `split-bill`, `settle-up`, `add-savings`, `move-to-cash`, `approve-request`, `reject-request`, `export-backup`, `wait-settlement`, `reload-wallet`, and `clear-test-data`. Settlement was findable because `wait-settlement` was in that list. The request was not.\n\nWhat the screens did say pointed elsewhere:\n\n- Home's purpose is \"request money in one tap,\" and that sentence is the only place you initiate a request. It never names `request-link`, and the payload comes back as Cash (`$49.95`), so the control the sentence promises is not in the data.\n- People is \"who owes whom, split a shared bill, or settle up,\" and the buttons begin with Split. Maya is `id: \"maya\"`, `balance-usd: 0`, `status: \"All settled up\"`. A $25 link is none of those. The working call also uses `to: \"Maya\"` (display name), while the record you are shown leads with `maya`.\n- `(pending-requests)` returns `[]`. An empty collection reads as the place requests live, with no create action beside it. `approve-request` and `reject-request` are the nearby names, and they are responses to someone else's request.\n\nHelp could not close the gap. `(help \"wait-settlement\")` is rejected with `expected array to have <=0 items`, so help is nullary and you cannot ask about an action by name. The nullary text teaches `(quote-pay \"CornerCoffee\" 65)` and `(quote-cash-out 50)`: paying out, positional args, no `amount_usd` or `to`. Nothing in that brochure shows `request-link`.\n\n`(cash)` did carry a cue for the other half of the task (`incoming-status`: \"Payment still finishing\"), which is why waiting worked. There is no matching field for an outbound payment-request link, and the task's words (\"payment request link\") share no token with `request-link`.",
+    "latencyMs": 30678
+  },
+  "durationMs": 404163,
+  "finalSummary": ""
+}

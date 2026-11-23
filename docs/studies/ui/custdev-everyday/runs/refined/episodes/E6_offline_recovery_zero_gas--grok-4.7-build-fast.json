@@ -1,0 +1,206 @@
+{
+  "episodeId": "E6_offline_recovery_zero_gas--grok-4.7-build-fast--refined",
+  "scenarioId": "E6_offline_recovery_zero_gas",
+  "modelId": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7-build-fast",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Backup": true,
+      "q2ZeroGas": true,
+      "q3HonestGas": true
+    },
+    "rawAnswers": "1. Yes — the encrypted backup export succeeded.\n2. This wallet currently has 0 ETH of native network gas.\n3. A fresh user-initiated on-chain withdrawal cannot run right now; it needs network gas, and the recovery service only blocks stale provider claims automatically."
+  },
+  "turns": 5,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "See how to inspect activity, protection, and whether funds return automatically after the provider outage",
+      "args": {
+        "intent": "See how to inspect activity, protection, and whether funds return automatically after the provider outage",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "discovery": [
+            "(screens)",
+            "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+            "(cash)",
+            "(quote-pay \"CornerCoffee\" 65)",
+            "(quote-cash-out 50)",
+            "(friends)",
+            "(savings)",
+            "(activity)",
+            "(pending-requests)",
+            "(terms)",
+            "(actions)",
+            "(actions 'pay)",
+            "(help 'split-bill)"
+          ],
+          "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+        }
+      },
+      "latencyMs": 13172,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Inspect activity and protection status after the payment provider outage",
+      "args": {
+        "intent": "Inspect activity and protection status after the payment provider outage",
+        "expr": "(activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "entries": [
+            {
+              "id": "act-1",
+              "summary": "Payment provider H1 offline — protection check active",
+              "kind": "recovery",
+              "amount-usd": 145
+            }
+          ],
+          "hub-online": false,
+          "dispute-active": true,
+          "tower-enrolled": true,
+          "backup-exported": false,
+          "protection-status": "Recovery service guards against stale provider claims automatically, while starting a fresh user-initiated withdrawal requires network gas (0 ETH available).",
+          "native-gas-wei": "0",
+          "native-gas-eth": "0 ETH",
+          "recovery-shield-policy": "Provider offline — recovery service blocks stale claims automatically, while starting your own on-chain exit requires network gas (0 ETH available)."
+        }
+      },
+      "latencyMs": 13796,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Find the export-backup action now that Activity shows backup-exported false and gas is 0 ETH",
+      "args": {
+        "intent": "Find the export-backup action now that Activity shows backup-exported false and gas is 0 ETH",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "actions": [
+            {
+              "action": "pay",
+              "args": "{ to: string, amount_usd: number }",
+              "quote": "(quote-pay to amount_usd)",
+              "note": "Check (quote-pay ...) first to verify fee cap and settled Cash."
+            },
+            {
+              "action": "cash-out",
+              "args": "{ amount_usd: number }",
+              "quote": "(quote-cash-out amount_usd)"
+            },
+            {
+              "action": "request-link",
+              "args": "{ amount_usd: number, to?: string, note?: string }",
+              "note": "Create a shareable payment request link."
+            },
+            {
+              "action": "split-bill",
+              "args": "{ person: string, total_usd: number, note?: string, friend_share_usd?: number, your_share_usd?: number }",
+              "note": "Human friends only from (friends)."
+            },
+            {
+              "action": "settle-up",
+              "args": "{ person: string }",
+              "note": "Settle what you owe a human friend from (friends)."
+            },
+            {
+              "action": "add-savings",
+              "args": "{ amount_usd: number, accept_risk: true }",
+              "note": "Requires explicit accept_risk: true after reading (savings)."
+            },
+            {
+              "action": "move-to-cash",
+              "args": "{ amount_usd: number }"
+            },
+            {
+              "action": "approve-request",
+              "args": "{ request_id: string }",
+              "note": "Inspect id and deltas via (pending-requests) first."
+            },
+            {
+              "action": "reject-request",
+              "args": "{ request_id: string }",
+              "note": "Reject deceptive or unwanted requests from (pending-requests)."
+            },
+            {
+              "action": "export-backup",
+              "args": "{}"
+            },
+            {
+              "action": "wait-settlement",
+              "args": "{}"
+            },
+            {
+              "action": "reload-wallet",
+              "args": "{}"
+            },
+            {
+              "action": "clear-test-data",
+              "args": "{}"
+            }
+          ],
+          "note": "Invoke via act(action, args) with a non-empty intent."
+        }
+      },
+      "latencyMs": 13933,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Export the encrypted backup because Activity shows backup-exported is false during the provider outage",
+      "args": {
+        "intent": "Export the encrypted backup because Activity shows backup-exported is false during the provider outage",
+        "action": "export-backup",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Encrypted backup exported",
+          "native-gas-wei": "0"
+        }
+      },
+      "latencyMs": 21653,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "done",
+      "intent": "Report protection status and whether funds return automatically after the outage",
+      "args": {
+        "intent": "Report protection status and whether funds return automatically after the outage",
+        "summary": "Activity shows the payment provider hub offline, a dispute active, tower enrolled, and $145 in a recovery entry. Protection: the recovery service blocks stale provider claims automatically. Your own on-chain exit is not moving; it needs network gas and native gas is 0 ETH. Encrypted backup export succeeded."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Activity shows the payment provider hub offline, a dispute active, tower enrolled, and $145 in a recovery entry. Protection: the recovery service blocks stale provider claims automatically. Your own on-chain exit is not moving; it needs network gas and native gas is 0 ETH. Encrypted backup export succeeded."
+        }
+      },
+      "latencyMs": 38809,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 122002,
+  "finalSummary": "Activity shows the payment provider hub offline, a dispute active, tower enrolled, and $145 in a recovery entry. Protection: the recovery service blocks stale provider claims automatically. Your own on-chain exit is not moving; it needs network gas and native gas is 0 ETH. Encrypted backup export succeeded."
+}

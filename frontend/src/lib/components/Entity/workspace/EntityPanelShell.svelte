@@ -12,7 +12,7 @@
     --space-2: 12px;
     --space-3: 16px;
     --space-4: 20px;
-    --panel-gutter-x: 16px;
+    --panel-gutter-x: var(--content-pad, 16px);
     display: flex;
     flex-direction: column;
     width: 100%;
@@ -37,10 +37,10 @@
     min-width: 0;
   }
 
-  .entity-panel :global(.content input:not([type="range"]):not([type="checkbox"]):not(.entity-input-field):not(.move-amount-input):not(.move-external-input):not(.swap-ticket-amount):not(.swap-ticket-rate-input)),
+  .entity-panel :global(.content input:not([type="range"]):not([type="checkbox"]):not(.entity-input-field):not(.money-input):not(.move-amount-input):not(.move-external-input):not(.swap-ticket-amount):not(.swap-ticket-rate-input)),
   .entity-panel :global(.content select:not(.move-token-select):not(.swap-ticket-native)) {
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 88%, transparent) !important;
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #27272a) 82%, transparent) !important;
+    border: 1px solid var(--theme-input-border, #27272a) !important;
     border-radius: 6px !important;
     color: var(--theme-text-primary, #e4e4e7) !important;
     padding: 10px 12px !important;
@@ -50,14 +50,14 @@
   .entity-panel :global(.content input:not([type="range"]):not([type="checkbox"]):not(.swap-ticket-amount):not(.swap-ticket-rate-input):focus),
   .entity-panel :global(.content select:not(.swap-ticket-native):focus) {
     outline: none !important;
-    border-color: var(--theme-input-focus, #fbbf24) !important;
+    border-color: var(--theme-input-focus, #c5cfde) !important;
   }
 
   .entity-panel :global(.content input::placeholder) {
     color: var(--theme-text-muted, #71717a) !important;
   }
 
-  .entity-panel :global(.content button:not(.tab):not(.toggle):not(.back-btn):not(.btn-add):not(.btn-live):not(.c-delete):not(.account-workspace-tab):not(.configure-tab):not(.btn-add-token):not(.scope-btn):not(.primary-btn):not(.cancel-btn):not(.summary-action):not(.summary-action-inline):not(.delta-capacity-bar):not(.delta-faucet):not(.delta-expand):not(.step-btn):not(.step-auto-btn):not(.move-node):not(.move-primary-cta):not(.refresh-btn):not(.hub-primary):not(.btn-connect):not(.expand-toggle):not(.closed-trigger):not(.dropdown-toggle):not(.dropdown-item):not(.settings-tab):not(.compact-btn):not(.pill):not(.theme-swatch):not(.icon-btn):not(.danger-icon):not(.close-btn):not(.file-btn):not(.danger-btn):not(.btn-table-action):not(.wallet-meta-copy)) {
+  .entity-panel :global(.content button:not(.tab):not([role="radio"]):not(.btn-pay):not(.primary-inline):not(.toggle):not(.back-btn):not(.btn-add):not(.btn-live):not(.c-delete):not(.account-workspace-tab):not(.configure-tab):not(.btn-add-token):not(.scope-btn):not(.primary-btn):not(.cancel-btn):not(.summary-action):not(.summary-action-inline):not(.delta-capacity-bar):not(.delta-faucet):not(.delta-expand):not(.step-btn):not(.step-auto-btn):not(.move-node):not(.move-primary-cta):not(.refresh-btn):not(.hub-primary):not(.btn-connect):not(.expand-toggle):not(.closed-trigger):not(.dropdown-toggle):not(.dropdown-item):not(.settings-tab):not(.compact-btn):not(.pill):not(.theme-swatch):not(.icon-btn):not(.danger-icon):not(.close-btn):not(.file-btn):not(.danger-btn):not(.btn-table-action):not(.wallet-meta-copy)) {
     background: color-mix(in srgb, var(--theme-surface, #18181b) 88%, transparent) !important;
     border: 1px solid color-mix(in srgb, var(--theme-border, #27272a) 76%, transparent) !important;
     border-radius: 6px !important;
@@ -65,6 +65,38 @@
     padding: 10px 14px !important;
     font-size: 12px !important;
     cursor: pointer !important;
+  }
+
+  /* On touch screens a generic Pro button takes taps across at least 48px without changing how it looks, matching React. */
+  @media (pointer: coarse) {
+    .entity-panel :global(.content button:not(.tab):not([role="radio"]):not(.btn-pay):not(.primary-inline):not(.toggle):not(.back-btn):not(.btn-add):not(.btn-live):not(.c-delete):not(.account-workspace-tab):not(.configure-tab):not(.btn-add-token):not(.scope-btn):not(.primary-btn):not(.cancel-btn):not(.summary-action):not(.summary-action-inline):not(.delta-capacity-bar):not(.delta-faucet):not(.delta-expand):not(.step-btn):not(.step-auto-btn):not(.move-node):not(.move-primary-cta):not(.refresh-btn):not(.hub-primary):not(.btn-connect):not(.expand-toggle):not(.closed-trigger):not(.dropdown-toggle):not(.dropdown-item):not(.settings-tab):not(.compact-btn):not(.pill):not(.theme-swatch):not(.icon-btn):not(.danger-icon):not(.close-btn):not(.file-btn):not(.danger-btn):not(.btn-table-action):not(.wallet-meta-copy)) {
+      position: relative !important; /* Pay's buttons reset with all: unset !important, which would leave the overlay unanchored. */
+    }
+
+    .entity-panel :global(.content button:not(.tab):not([role="radio"]):not(.btn-pay):not(.primary-inline):not(.toggle):not(.back-btn):not(.btn-add):not(.btn-live):not(.c-delete):not(.account-workspace-tab):not(.configure-tab):not(.btn-add-token):not(.scope-btn):not(.primary-btn):not(.cancel-btn):not(.summary-action):not(.summary-action-inline):not(.delta-capacity-bar):not(.delta-faucet):not(.delta-expand):not(.step-btn):not(.step-auto-btn):not(.move-node):not(.move-primary-cta):not(.refresh-btn):not(.hub-primary):not(.btn-connect):not(.expand-toggle):not(.closed-trigger):not(.dropdown-toggle):not(.dropdown-item):not(.settings-tab):not(.compact-btn):not(.pill):not(.theme-swatch):not(.icon-btn):not(.danger-icon):not(.close-btn):not(.file-btn):not(.danger-btn):not(.btn-table-action):not(.wallet-meta-copy)::after) {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: max(100%, 48px);
+      transform: translateY(-50%);
+    }
+
+    /* Compact controls that style themselves (faucet pills, capacity bars) take the same 48px band. */
+    .entity-panel :global(.content :is(.summary-action, .summary-action-inline, .delta-capacity-bar, .delta-faucet, .delta-expand)) {
+      position: relative !important;
+    }
+
+    .entity-panel :global(.content :is(.summary-action, .summary-action-inline, .delta-capacity-bar, .delta-faucet, .delta-expand)::after) {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: max(100%, 48px);
+      transform: translateY(-50%);
+    }
   }
 
   .entity-panel :global(.content h3),
@@ -75,7 +107,7 @@
 
   @media (max-width: 900px) {
     .entity-panel {
-      --panel-gutter-x: 10px;
+      --panel-gutter-x: var(--content-pad, 16px);
       --space-2: 10px;
       --space-3: 12px;
     }

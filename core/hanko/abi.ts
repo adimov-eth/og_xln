@@ -1,15 +1,13 @@
+import { abiSchemaFromFragment, encodeAbi } from '../protocol/crypto/abi-encode';
+
 /**
- * Direct ABI codec for the Hanko envelope tuple
+ * ABI codec for the Hanko envelope tuple
  * `tuple(bytes32[],bytes,tuple(bytes32,uint256[],uint256[],uint256,uint32,uint32,uint32)[],bytes[])`
  * (HankoVerifier.HankoBytes: placeholders, packedSignatures, claims, memberSignatures).
  *
  * Byte-identical to `AbiCoder.encode/decode` of that type (differential test in
- * `__tests__/security/hanko/hanko-abi.test.ts`). The generic coder parses
- * fragments, wraps every value in Typed/Result objects and copies bytes per
- * word; a busy hub encodes one envelope per certified output, which made the
- * generic path ~5% of hub CPU. Values are already validated by the caller;
- * this module only lays out words. Decoding is bounds-checked and the caller
- * still enforces canonical form by re-encoding.
+ * `__tests__/security/hanko/hanko-abi.test.ts`). Decoding is a direct,
+ * bounds-checked reader; the caller still enforces canonical form by re-encoding.
  */
 
 const WORD = 64; // hex chars per 32-byte word
@@ -32,88 +30,29 @@ export type HankoAbiEnvelope = readonly [
   memberSignatures: readonly string[],
 ];
 
-const uintWord = (value: bigint): string => value.toString(16).padStart(WORD, '0');
-const bytes32Word = (value: string): string => value.slice(2).toLowerCase();
-
-/** ABI `bytes`: length word + payload right-padded to a word boundary. */
-const bytesEnc = (value: string): string => {
-  const hex = value.slice(2).toLowerCase();
-  return uintWord(BigInt(hex.length / 2)) + hex + '0'.repeat((WORD - (hex.length % WORD)) % WORD);
-};
-
-/** ABI `bytes[]`: length word, one offset word per item, then each `bytes` tail. */
-const bytesArrayEnc = (values: readonly string[]): string => {
-  let heads = '';
-  let tails = '';
-  let offset = 32 * values.length;
-  for (let index = 0; index < values.length; index += 1) {
-    const encoded = bytesEnc(values[index]!);
-    heads += uintWord(BigInt(offset));
-    tails += encoded;
-    offset += encoded.length / 2;
-  }
-  return uintWord(BigInt(values.length)) + heads + tails;
-};
-
-const uintArray = (values: readonly bigint[]): string => {
-  let out = uintWord(BigInt(values.length));
-  for (let index = 0; index < values.length; index += 1) out += uintWord(values[index]!);
-  return out;
-};
-
-const encodeClaim = (claim: HankoAbiClaim): string => {
-  const [entityId, indexes, weights, threshold, board, control, dividend] = claim;
-  const indexesOffset = 7 * 32;
-  const weightsOffset = indexesOffset + 32 * (1 + indexes.length);
-  return bytes32Word(entityId)
-    + uintWord(BigInt(indexesOffset))
-    + uintWord(BigInt(weightsOffset))
-    + uintWord(threshold)
-    + uintWord(board)
-    + uintWord(control)
-    + uintWord(dividend)
-    + uintArray(indexes)
-    + uintArray(weights);
-};
+const HANKO_SCHEMA = abiSchemaFromFragment({
+  type: 'tuple',
+  components: [
+    { type: 'bytes32[]' },
+    { type: 'bytes' },
+    {
+      type: 'tuple[]',
+      components: [
+        { type: 'bytes32' },
+        { type: 'uint256[]' },
+        { type: 'uint256[]' },
+        { type: 'uint256' },
+        { type: 'uint32' },
+        { type: 'uint32' },
+        { type: 'uint32' },
+      ],
+    },
+    { type: 'bytes[]' },
+  ],
+});
 
 /** `0x`-prefixed lowercase hex, identical to `AbiCoder.encode([HANKO_TYPE], [envelope])`. */
-export const encodeHankoAbi = (envelope: HankoAbiEnvelope): string => {
-  const [placeholders, packed, claims, memberSignatures] = envelope;
-
-  let placeholdersEnc = uintWord(BigInt(placeholders.length));
-  for (let index = 0; index < placeholders.length; index += 1) {
-    placeholdersEnc += bytes32Word(placeholders[index]!);
-  }
-  const packedEnc = bytesEnc(packed);
-
-  const claimEncodings = claims.map(encodeClaim);
-  let claimsHeads = '';
-  let claimsTails = '';
-  let claimOffset = 32 * claims.length;
-  for (let index = 0; index < claimEncodings.length; index += 1) {
-    const encoded = claimEncodings[index]!;
-    claimsHeads += uintWord(BigInt(claimOffset));
-    claimsTails += encoded;
-    claimOffset += encoded.length / 2;
-  }
-  const claimsEnc = uintWord(BigInt(claims.length)) + claimsHeads + claimsTails;
-  const membersEnc = bytesArrayEnc(memberSignatures);
-
-  const placeholdersOffset = 4 * 32;
-  const packedOffset = placeholdersOffset + placeholdersEnc.length / 2;
-  const claimsOffset = packedOffset + packedEnc.length / 2;
-  const membersOffset = claimsOffset + claimsEnc.length / 2;
-  return '0x'
-    + uintWord(32n)
-    + uintWord(BigInt(placeholdersOffset))
-    + uintWord(BigInt(packedOffset))
-    + uintWord(BigInt(claimsOffset))
-    + uintWord(BigInt(membersOffset))
-    + placeholdersEnc
-    + packedEnc
-    + claimsEnc
-    + membersEnc;
-};
+export const encodeHankoAbi = (envelope: HankoAbiEnvelope): string => encodeAbi(HANKO_SCHEMA, envelope);
 
 class HankoAbiReader {
   constructor(private readonly hex: string) {}

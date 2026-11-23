@@ -205,7 +205,7 @@
 
   .btn-table-action.deposit {
     background: linear-gradient(135deg, #16a34a, #15803d);
-    color: #f0fdf4;
+    color: #050608;
   }
 
   .btn-table-action.deposit:hover:not(:disabled) {

@@ -1,5 +1,5 @@
 import type { TokenDecimals } from '@xln/core/account/tx/units';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { explainWalletError } from '@xln/frontend/lib/utils/ui/walletError';
 import { HOME, PageHead } from '../components/PageHead';
@@ -42,13 +42,10 @@ import { counterpartyFeePolicy } from '../runtime/financial/manage';
 import { getAdapter } from '../runtime/adapter';
 import { TOUR_STEPS } from '../tour/steps';
 import { useTutorialTrade } from '../tour/trade';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
 
 type Mode = 'same' | 'cross';
 
-const normalizeId = (value: unknown): string =>
-  String(value || '')
-    .trim()
-    .toLowerCase();
 
 export function Swap() {
   const [params] = useSearchParams();
@@ -206,6 +203,18 @@ export function Swap() {
     if (!assetsReady || (mode === 'cross' && !crossMarket)) return;
     const { base, quote } = bookMetadata;
     const selectedGive = side === 'ask' ? book.quoteTokenId : book.baseTokenId;
+    const selectedWant = side === 'ask' ? book.baseTokenId : book.quoteTokenId;
+    const giveDecimals = side === 'ask' ? quote.decimals : base.decimals;
+    const wantDecimals = side === 'ask' ? base.decimals : quote.decimals;
+    // An amount typed for the same pay asset is the person's decision: the pick prices it and never replaces it.
+    let typedGive = 0n;
+    if ((mode === 'cross' || selectedGive === giveTokenId) && giveText.trim()) {
+      try {
+        typedGive = parseAmount(giveText, giveMeta.decimals);
+      } catch {
+        typedGive = 0n;
+      }
+    }
     // The target hub can own the book; spendable capacity still belongs to our source Account.
     const picked = pickBookLevel({
       side,
@@ -214,45 +223,26 @@ export function Swap() {
       quoteDecimals: quote.decimals,
       capacity: hub?.tokens.find(token => token.tokenId === selectedGive)?.derived.outCapacity ?? 0n,
       ...(crossMarket ? { crossSourceIsBase: crossMarket.sourceIsBase } : {}),
+      ...(typedGive > 0n ? { typedGive } : {}),
     });
     if (!picked) return;
     if (mode === 'same') {
       setGiveTokenId(selectedGive);
-      setWantTokenId(side === 'ask' ? book.baseTokenId : book.quoteTokenId);
+      setWantTokenId(selectedWant);
     }
-    const giveDecimals = side === 'ask' ? quote.decimals : base.decimals;
-    const wantDecimals = side === 'ask' ? base.decimals : quote.decimals;
-    setGiveText(amountInputText(picked.give, giveDecimals));
-    setWantTextState(amountInputText(picked.want, wantDecimals));
+    if (picked.give !== typedGive) setGiveText(amountInputText(picked.give, giveDecimals));
+    // Same-network orders execute at the pinned price, so the field can show the lot-rounded amount.
+    // A Cross minimum defines its own limit price; rounding it here would move that limit.
+    const atPrice =
+      mode === 'same'
+        ? requantizeRemainingSwapAtPriceForDimensions(selectedGive, selectedWant, picked.give, level.priceTicks, {
+            giveTokenDecimals: giveDecimals,
+            wantTokenDecimals: wantDecimals,
+          })
+        : null;
+    setWantTextState(amountInputText(atPrice ? atPrice.effectiveWant : picked.want, wantDecimals));
     setPickedPriceTicks(mode === 'same' ? level.priceTicks : null);
   };
-
-  // A level picked on the Desk arrives as query parameters, because the Desk
-  // renders the book of a hub the Swap screen has not chosen yet. It is applied
-  // once, so it can never fight what the person types afterwards.
-  const deskPick = useRef(false);
-  useEffect(() => {
-    if (deskPick.current || !hub || !assetsReady) return;
-    const side = params.get('side');
-    const price = params.get('price');
-    const size = params.get('size');
-    if (side === null && price === null && size === null) return;
-    deskPick.current = true;
-    // A shared Desk URL is untrusted input, not an admitted market level.
-    // Reject malformed or nonpositive quotes before BigInt can crash the wallet.
-    if (
-      (side !== 'ask' && side !== 'bid') ||
-      !price ||
-      !size ||
-      !/^[1-9]\d*$/.test(price) ||
-      !/^[1-9]\d*$/.test(size)
-    ) {
-      toast('Invalid swap link. Choose a price from the order book.', 'danger');
-      return;
-    }
-    pickLevel(side, { priceTicks: BigInt(price), size: BigInt(size) });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hub, params, assetsReady]);
 
   const giveToken = hub?.tokens.find(token => token.tokenId === giveTokenId) ?? null;
   const giveSpendable = giveToken?.derived.outCapacity ?? 0n;

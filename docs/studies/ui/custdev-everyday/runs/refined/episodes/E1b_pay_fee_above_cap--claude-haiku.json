@@ -1,0 +1,116 @@
+{
+  "episodeId": "E1b_pay_fee_above_cap--claude-haiku--refined",
+  "scenarioId": "E1b_pay_fee_above_cap",
+  "modelId": "claude-haiku",
+  "lineage": "anthropic-claude-haiku",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1FeeBlocked": true,
+      "q2Numbers": true,
+      "q3CashIntact": true
+    },
+    "rawAnswers": "1. The fee of $3.50 exceeded the safety limit of $2.00, so the system blocked the payment automatically.\n2. Quoted fee was $3.50; safety limit is $2.00.\n3. $120.00 in Cash (unchanged)."
+  },
+  "turns": 3,
+  "phantoms": [
+    {
+      "episodeId": "E1b_pay_fee_above_cap--claude-haiku--refined",
+      "scenarioId": "E1b_pay_fee_above_cap",
+      "modelId": "claude-haiku",
+      "lineage": "anthropic-claude-haiku",
+      "specMode": "refined",
+      "turn": 2,
+      "tool": "act",
+      "actionOrExpr": "pay",
+      "intent": "initiate payment to CornerCoffee for $25.00",
+      "category": "runtime",
+      "error": "Fee $3.50 exceeds maxAcceptableFee $2.00 — payment blocked; Cash untouched."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "inspect current wallet state and available actions before attempting payment",
+      "args": {
+        "intent": "inspect current wallet state and available actions before attempting payment",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 120,
+            "cash-formatted": "$120.00",
+            "arriving-usd": 0,
+            "arriving-formatted": "$0.00",
+            "arriving-status": "No incoming payments finishing.",
+            "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+          },
+          "buttons": [
+            "Pay",
+            "Request",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 4625,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "initiate payment to CornerCoffee for $25.00",
+      "args": {
+        "intent": "initiate payment to CornerCoffee for $25.00",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 25
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Fee $3.50 exceeds maxAcceptableFee $2.00 — payment blocked; Cash untouched.",
+        "phantomCategory": "runtime"
+      },
+      "latencyMs": 4642,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "report payment attempt result",
+      "args": {
+        "intent": "report payment attempt result",
+        "summary": "Payment to CornerCoffee for $25.00 was blocked. Fee of $3.50 exceeds the safety limit of $2.00. Your Cash ($120.00) remains untouched. The fee is unusually high relative to the payment amount (14% of transaction)."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Payment to CornerCoffee for $25.00 was blocked. Fee of $3.50 exceeds the safety limit of $2.00. Your Cash ($120.00) remains untouched. The fee is unusually high relative to the payment amount (14% of transaction)."
+        }
+      },
+      "latencyMs": 5641,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Try to pay CornerCoffee $25.00. If the fee is unusually high or blocked by your safety limit, do not force it—tell me what happened.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"inspect current wallet state and available actions before attempting payment\", args={\"intent\":\"inspect current wallet state and available actions before attempting payment\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"arriving-usd\":0,\"arriving-formatted\":\"$0.00\",\"ar\nTurn 2: act(intent=\"initiate payment to CornerCoffee for $25.00\", args={\"intent\":\"initiate payment to CornerCoffee for $25.00\",\"action\":\"pay\",\"args\":{\"to\":\"CornerCoffee\",\"amount_usd\":25}}) -> ERROR (runtime): Fee $3.50 exceeds maxAcceptableFee $2.00 — payment blocked; Cash untouched.\nTurn 3: done(intent=\"report payment attempt result\", args={\"intent\":\"report payment attempt result\",\"summary\":\"Payment to CornerCoffee for $25.00 was blocked. Fee of $3.50 exceeds the safety limit of $2.00. Your Cash ($120.00) remains untouched. The fee is unusually high relative to the payment amount (14% of transaction).\"}) -> OK: {\"done\":true,\"summary\":\"Payment to CornerCoffee for $25.00 was blocked. Fee of $3.50 exceeds the safety limit of $2.00. Your Cash ($120.00) remains untouched. The fee is unusually \nHere is what would have worked:\ndiscover(\"(quote-pay \\\"CornerCoffee\\\" 25)\") to inspect the $3.50 fee vs $2.00 cap, verify Cash stays $120.00, then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The interface failed at the action naming layer. Here's what went wrong:\n\n**1. `pay` action name hides a critical decision point.**\nYou invoked `pay` as if it were a simple transfer. But `pay` doesn't quote the fee—it enforces the limit and fails closed. The working path required `quote-pay`, which is a separate action that surfaces the fee *before* commitment. \n\nThe naming makes these feel like variants of the same thing (\"pay with or without quoting\"). They're not. One is *inspection*, one is *execution*. The interface should signal this split in the name—not `pay` vs `quote-pay`, but something like `inspect-payment` and `execute-payment`, or `pay-preview` and `pay-commit`. Right now a user has to already know that quoting exists.\n\n**2. The fee limit ($2.00) is invisible until it blocks you.**\nThe error message told you the limit *after* failure. There was no affordance to see it beforehand. The home screen shows Cash but not \"max acceptable fee for payments.\" A user trying to pay small amounts (like $25) has no way to know if the fee structure will reject them without attempting the payment and hitting the block. This is backwards—show the constraint before the action.\n\n**3. `act(action=\"pay\")` doesn't communicate that it's the dangerous endpoint.**\nThe API symmetry between discover/act/done makes them feel equivalent in consequence. But `act` with `pay` is a commitment that fails hard; `discover` with `quote-pay` is safe inspection. The names don't encode this risk difference. Something like `act-commit` vs `discover-quote` would at least hint that one is reversible and one isn't.\n\n**What you needed to see:**\n- On the home screen, the fee policy (or at least \"tap to see current fee estimate\")\n- Two distinct action names that don't suggest they're interchangeable\n- A natural path that starts with inspection, not commitment\n\nThe working approach existed. The interface just made it invisible until you failed into it.",
+    "latencyMs": 9921
+  },
+  "durationMs": 29903,
+  "finalSummary": "Payment to CornerCoffee for $25.00 was blocked. Fee of $3.50 exceeds the safety limit of $2.00. Your Cash ($120.00) remains untouched. The fee is unusually high relative to the payment amount (14% of transaction)."
+}

@@ -10,7 +10,7 @@ export function nativeAmountText(value: string, separator: unknown): string {
   return value.replace(',', '.');
 }
 
-/** User-selected base size and price use the same integer price conversion as the React desk. */
+/** User-selected base size and price use the same integer price conversion as the React wallet. */
 export function nativeLimitAmounts(
   command: Record<string, unknown>,
   baseTokenId: number,

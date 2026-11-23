@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { normalizeId } from '../../../../utils/primitives';
   import { createEventDispatcher, onMount } from 'svelte';
   import Dropdown from '#lib/components/UI/Dropdown.svelte';
   import { allRuntimes, activeRuntime, vaultOperations } from '#lib/stores/vault/vaultStore.ts';
@@ -26,6 +27,7 @@
   export let allowAddJurisdiction = false;
   export let allowAddEntity = false;
   export let addRuntimeLabel = '+ Add Runtime';
+  export let brandTrigger = false;
 
   const dispatch = createEventDispatcher();
 
@@ -398,9 +400,6 @@
       : currentGroup.derivedEntities.find((entity) => normalizeId(entity.entityId) === currentEntityId) || currentGroup.selfEntity;
   }
 
-  function normalizeId(value: string | null | undefined): string {
-    return String(value || '').trim().toLowerCase();
-  }
 
   function truncateMiddle(value: string | null | undefined, head = 6, tail = 4): string {
     const text = String(value || '').trim();
@@ -531,7 +530,6 @@
   bind:open
   minWidth={300}
   maxWidth={620}
-  local={true}
   ariaLabel={currentTitle}
   triggerTestId="context-current"
   triggerRuntimeId={currentRuntimeId}
@@ -543,27 +541,40 @@
   <span
     slot="trigger"
     class="pill-trigger"
+    class:brand-trigger={brandTrigger}
   >
-    <span class="pill-avatar-wrap">
-      {#if currentAvatar}
-        <img src={currentAvatar} alt="" class="pill-avatar" />
-      {:else}
-        <span class="pill-avatar placeholder">◎</span>
-      {/if}
-      {#if currentJurisdictionBadge}
-        <span
-          class={`jurisdiction-badge ${currentJurisdictionBadge.className}`}
-          title={currentJurisdictionBadge.title}
-        >
-          {currentJurisdictionBadge.symbol}
-        </span>
-      {/if}
-    </span>
-    <span class="pill-copy">
-      <span class="pill-title">{currentTitle}</span>
-      <span class="pill-subtitle">{currentSubtitle}</span>
-    </span>
-    <span class="pill-arrow" class:open aria-hidden="true">›</span>
+    {#if brandTrigger}
+      <span class="ev-brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+          <path d="M12 3L3 20h18L12 3Z" />
+          <path d="M7.5 11.5h9" />
+          <path d="M5.4 15.8h13.2" />
+        </svg>
+      </span>
+      <span class="ev-brand-wordmark">xln</span>
+      <span class="pill-arrow" class:open aria-hidden="true">›</span>
+    {:else}
+      <span class="pill-avatar-wrap">
+        {#if currentAvatar}
+          <img src={currentAvatar} alt="" class="pill-avatar" />
+        {:else}
+          <span class="pill-avatar placeholder">◎</span>
+        {/if}
+        {#if currentJurisdictionBadge}
+          <span
+            class={`jurisdiction-badge ${currentJurisdictionBadge.className}`}
+            title={currentJurisdictionBadge.title}
+          >
+            {currentJurisdictionBadge.symbol}
+          </span>
+        {/if}
+      </span>
+      <span class="pill-copy">
+        <span class="pill-title">{currentTitle}</span>
+        <span class="pill-subtitle">{currentSubtitle}</span>
+      </span>
+      <span class="pill-arrow" class:open aria-hidden="true">›</span>
+    {/if}
   </span>
 
   <div slot="menu" class="switcher-menu">
@@ -700,10 +711,10 @@
 <style>
   .context-switcher {
     --dropdown-bg: color-mix(in srgb, var(--theme-card-bg, #151515) 96%, black);
-    --dropdown-bg-hover: color-mix(in srgb, var(--theme-card-bg, #151515) 90%, var(--theme-accent, #fbbf24));
+    --dropdown-bg-hover: color-mix(in srgb, var(--theme-card-bg, #151515) 90%, var(--theme-accent, #c5cfde));
     --dropdown-menu-bg: color-mix(in srgb, var(--theme-card-bg, #111111) 97%, black);
     --dropdown-border: color-mix(in srgb, var(--theme-card-border, #3f3f46) 82%, transparent);
-    --dropdown-border-hover: color-mix(in srgb, var(--theme-accent, #fbbf24) 42%, transparent);
+    --dropdown-border-hover: color-mix(in srgb, var(--theme-accent, #c5cfde) 42%, transparent);
     --dropdown-radius: 10px;
     display: inline-block;
     width: auto;
@@ -810,7 +821,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 14px;
   }
 
@@ -831,7 +842,7 @@
 
   .pill-title {
     font-weight: 750;
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
     font-size: 13px;
     line-height: 1.15;
   }
@@ -839,7 +850,7 @@
   .pill-subtitle,
   .entity-meta {
     font-size: 10.5px;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
   }
 
   .entity-name {
@@ -847,7 +858,7 @@
   }
 
   .pill-arrow {
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -940,19 +951,19 @@
   }
 
   .runtime-menu-group:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .runtime-menu-group.focused {
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 34%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 8%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 34%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 8%, transparent);
   }
 
   .runtime-status {
     width: 7px;
     height: 7px;
     border-radius: 999px;
-    background: #57534e;
+    background: #5d636c;
   }
 
   .runtime-status.connected {
@@ -961,7 +972,7 @@
   }
 
   .runtime-status.syncing {
-    background: #fbbf24;
+    background: var(--theme-accent, #c5cfde);
   }
 
   .runtime-status.error {
@@ -983,7 +994,7 @@
   }
 
   .runtime-heading-title {
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
     font-size: 12px;
     font-weight: 750;
   }
@@ -991,18 +1002,18 @@
   .runtime-heading-meta {
     display: flex;
     gap: 4px;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 9.5px;
   }
 
   .current-mark {
-    color: #34d399;
+    color: var(--theme-text-primary, #e6ebf2);
     font-size: 11px;
     font-weight: 900;
   }
 
   .runtime-chevron {
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
     font-size: 16px;
   }
 
@@ -1038,7 +1049,7 @@
   .focus-heading code {
     padding: 3px 5px;
     border-radius: 5px;
-    background: rgba(255, 255, 255, 0.04);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .jurisdiction-list {
@@ -1119,22 +1130,22 @@
     border: 0;
     border-radius: 0;
     background: transparent;
-    color: #d6d3d1;
+    color: var(--theme-text-secondary, #d6d3d1);
     cursor: pointer;
     text-align: left;
   }
 
   .entity-row + .entity-row {
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    border-top: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .entity-row:hover,
   .entity-row.active {
-    background: rgba(255, 255, 255, 0.06);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
   }
 
   .entity-row.active {
-    box-shadow: inset 2px 0 var(--theme-accent, #fbbf24);
+    box-shadow: inset 2px 0 var(--theme-accent, #c5cfde);
   }
 
   .entity-current,
@@ -1145,11 +1156,11 @@
   }
 
   .entity-current {
-    color: #34d399;
+    color: var(--theme-text-secondary, #9aa3b2);
   }
 
   .entity-select {
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
     opacity: 0;
   }
 
@@ -1183,10 +1194,10 @@
   .add-runtime-btn {
     min-height: 30px;
     padding: 0 9px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 28%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 28%, transparent);
     border-radius: 6px;
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 9%, transparent);
-    color: #fde68a;
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 9%, transparent);
+    color: var(--theme-accent, #c5cfde);
     cursor: pointer;
     font-size: 10px;
     font-weight: 750;
@@ -1195,25 +1206,25 @@
   .add-runtime-btn.secondary-action {
     background: transparent;
     border-color: color-mix(in srgb, var(--theme-card-border, #3f3f46) 82%, transparent);
-    color: #d6d3d1;
+    color: var(--theme-text-secondary, #d6d3d1);
   }
 
   .add-runtime-btn:hover {
-    background: rgba(255, 255, 255, 0.07);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 7%, transparent);
   }
 
   .reset-btn {
     padding: 5px 7px;
     border: 0;
     background: transparent;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 10px;
     cursor: pointer;
     white-space: nowrap;
   }
 
   .reset-btn:hover {
-    color: #fca5a5;
+    color: color-mix(in srgb, var(--theme-debit, #f43f5e) 76%, var(--theme-text-primary, white) 24%);
   }
 
   @media (max-width: 680px) {

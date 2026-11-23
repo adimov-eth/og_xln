@@ -1,5 +1,5 @@
 import { isAddress } from 'ethers';
-import type { EntityTx, JBatch, RuntimeAdapterViewFrame } from '@xln/core/api/public/runtime-module';
+import type { EntityTx, RuntimeAdapterViewFrame } from '@xln/core/api/public/runtime-module';
 import {
 	buildBroadcastTx,
 	buildExternalToReserveTx,
@@ -24,12 +24,14 @@ import {
 	type MoveEndpoint,
 } from '@xln/frontend/lib/components/Entity/move-routes';
 import { normalizeExternalRecipient } from '@xln/frontend/lib/components/Entity/move/external-recipient';
+import { draftReserveDelta } from '@xln/frontend/lib/everyday/everyday-policy';
 import { getXLN } from '../xln-loader';
 import type { WalletView } from '../views';
+import { countBatchOps } from '@xln/frontend/lib/components/Entity/payments/pending-batch-preview';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
 
-export { MOVE_ENDPOINT_LABEL, MOVE_ENDPOINTS, buildMoveRouteSteps, getMoveRouteKey, isMoveRouteSupported, type MoveEndpoint };
+export { MOVE_ENDPOINT_LABEL, MOVE_ENDPOINTS, buildMoveRouteSteps, getMoveRouteKey, isMoveRouteSupported, draftReserveDelta, type MoveEndpoint };
 
-const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 /** Same three places Home draws: the signer's on-chain wallet, the Depository reserve, bilateral accounts. */
 export type MoveIntent = {
@@ -51,35 +53,6 @@ export type MoveIntent = {
 };
 
 export type ExternalTokenRow = { tokenAddress: string; tokenId: number; balance: bigint; allowance: bigint | null };
-
-/** Reserve movement already queued in the draft batch, so "available" never double-spends. */
-export function draftReserveDelta(entityId: string, batch: JBatch | null | undefined, tokenId: number): bigint {
-	if (!batch) return 0n;
-	const self = normalizeId(entityId);
-	let delta = 0n;
-	for (const op of batch.externalTokenToReserve ?? []) {
-		if ((op.entity ? normalizeId(op.entity) : self) === self && op.internalTokenId === tokenId) delta += op.amount;
-	}
-	for (const op of batch.collateralToReserve ?? []) if (op.tokenId === tokenId) delta += op.amount;
-	for (const settlement of batch.settlements ?? []) {
-		for (const diff of settlement.diffs ?? []) {
-			if (diff.tokenId !== tokenId) continue;
-			if (normalizeId(settlement.leftEntity) === self) delta += diff.leftDiff;
-			else if (normalizeId(settlement.rightEntity) === self) delta += diff.rightDiff;
-		}
-	}
-	for (const op of batch.reserveToReserve ?? []) {
-		if (op.tokenId !== tokenId) continue;
-		delta -= op.amount;
-		if (normalizeId(op.receivingEntity) === self) delta += op.amount;
-	}
-	for (const op of batch.reserveToExternalToken ?? []) if (op.tokenId === tokenId) delta -= op.amount;
-	for (const op of batch.reserveToCollateral ?? []) {
-		if (op.tokenId !== tokenId) continue;
-		for (const pair of op.pairs ?? []) delta -= pair.amount;
-	}
-	return delta;
-}
 
 /** What can leave each place right now, for one token. */
 export function availableAt(place: MoveEndpoint, wallet: Pick<WalletView, 'entityId' | 'frame' | 'accounts'>, tokenId: number, sourceAccountId: string, external: ExternalTokenRow[]): bigint {
@@ -109,23 +82,6 @@ export function awaitingCounterparty(frame: RuntimeAdapterViewFrame | null): boo
 export function hasSentBatch(frame: RuntimeAdapterViewFrame | null): boolean {
 	const sent = frame?.activeEntity?.core?.jBatchState?.sentBatch?.batch;
 	return Boolean(sent && countBatchOps(sent) > 0);
-}
-
-export function countBatchOps(batch: JBatch | null | undefined): number {
-	if (!batch) return 0;
-	return (
-		(batch.reserveToCollateral?.length || 0) +
-		(batch.collateralToReserve?.length || 0) +
-		(batch.settlements?.length || 0) +
-		(batch.reserveToReserve?.length || 0) +
-		(batch.disputeStarts?.length || 0) +
-		(batch.counterDisputes?.length || 0) +
-		(batch.disputeFinalizations?.length || 0) +
-		(batch.externalTokenToReserve?.length || 0) +
-		(batch.reserveToExternalToken?.length || 0) +
-		(batch.revealSecrets?.length || 0) +
-		(batch.hashLadderRegistrations?.length || 0)
-	);
 }
 
 export type MoveMode = 'draft' | 'now';

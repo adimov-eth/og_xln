@@ -29,6 +29,7 @@
   import { isDisposableLocalTestnet, resolveDeployVersionAction } from '#lib/utils/deployVersionPolicy.ts';
   import { resetEverything, resetRetiredTestnetState } from '#lib/utils/control/resetEverything.ts';
   import { parseStorageSchemaMismatch } from '#lib/utils/recovery/storageSchemaRecovery.ts';
+  import { walletErrorLead } from '#lib/utils/ui/walletError.ts';
   import {
     adoptActiveTabLock,
     clearInactiveTabStandby,
@@ -83,12 +84,19 @@
   let releaseActiveTabLock: (() => void) | null = null;
   const pageSearch = $derived(browser ? page.url.search : '');
   const storageSchemaMismatch = $derived(parseStorageSchemaMismatch($error));
+  /** A non-disposable deployment changed under saved state; Retry cannot fix it, only a reset can. */
+  let deployVersionChange = $state<{ storedVersion: string; currentVersion: string } | null>(null);
   let deployIsEphemeralTestnet = false;
   const DEPLOY_VERSION_KEY = 'xln-deploy-version';
   type DeployVersionPayload = {
     version: string;
     ephemeralTestnet: boolean;
   };
+
+  /** The plain sentence above a fail-stop diagnostic; the diagnostic itself stays on screen. */
+  function startupFailureLead(message: string): string {
+    return walletErrorLead(message) ?? 'It stopped while opening. Retry first; the details below say what failed.';
+  }
 
   function logAppShellDiagnostic(message: string, details?: unknown): void {
     errorLog.log(message, 'App Shell', details);
@@ -383,6 +391,7 @@
       await resetRetiredTestnetState();
       return true;
     }
+    deployVersionChange = { storedVersion, currentVersion: current.version };
     error.set(`Deploy version changed from ${storedVersion} to ${current.version}. Review recovery coverage before resetting local data.`);
     isLoading.set(false);
     return true;
@@ -571,14 +580,14 @@
     </div>
   {:else}
     <div class="inactive-tab-screen" data-testid="inactive-tab-screen">
-      <h2>Inactive Tab</h2>
-      <p>This wallet tab lost the active lock to a newer tab.</p>
+      <h2>Open in another tab</h2>
+      <p>This wallet is now open in a newer tab. Only one tab runs it at a time, so your balance never splits.</p>
       <button
         data-testid="inactive-tab-acquire"
         disabled={claimingActiveTabLock}
         onclick={claimActiveTabLockInPlace}
       >
-        {claimingActiveTabLock ? 'Claiming active lock...' : 'Take active lock'}
+        {claimingActiveTabLock ? 'Switching…' : 'Use this tab'}
       </button>
     </div>
   {/if}
@@ -594,13 +603,13 @@
 {:else if $error}
   <div class="error-screen" data-testid="app-initialization-error">
     {#if storageSchemaMismatch}
-      <h2>Obsolete testnet data rejected</h2>
+      <h2>This wallet data is too old to open</h2>
       <p class="schema-recovery-copy">
-        This device has storage schema {storageSchemaMismatch.storedVersion}, while this build requires
-        schema {storageSchemaMismatch.currentVersion}. No incompatible data was applied or deleted.
+        It was saved by an older version of the wallet (storage format {storageSchemaMismatch.storedVersion}; this build
+        reads {storageSchemaMismatch.currentVersion}). Nothing was changed or deleted.
       </p>
       <p class="schema-recovery-copy">
-        This obsolete testnet format cannot be restored. Reset the XLN testnet data and generate current data.
+        Resetting deletes the wallets saved on this device; have your recovery phrase or backup file ready to get them back.
       </p>
       <div class="schema-recovery-actions">
         <button
@@ -608,20 +617,31 @@
           onclick={handleResetEverything}
           disabled={resettingEverything}
         >
-          {resettingEverything ? 'Resetting...' : 'Reset local data'}
+          {resettingEverything ? 'Resetting…' : 'Reset local data'}
         </button>
       </div>
-      <details class="schema-recovery-details">
-        <summary>Technical details</summary>
-        <code>{$error}</code>
-      </details>
-    {:else}
-      <h2>❌ Initialization Failed</h2>
-      <p class="error-msg">{$error}</p>
-      <button onclick={() => initializeXLN()}>Retry</button>
+      <code class="startup-diagnostic">{$error}</code>
+    {:else if deployVersionChange}
+      <h2>Network updated</h2>
+      <p class="schema-recovery-copy">
+        The data saved on this device belongs to an earlier version of the network and can't be opened here. Resetting
+        deletes the wallets saved on this device; have your recovery phrase or backup file ready to get them back.
+      </p>
       <button onclick={handleResetEverything} disabled={resettingEverything}>
-        {resettingEverything ? 'Resetting...' : 'Reset local data'}
+        {resettingEverything ? 'Resetting…' : 'Reset local data'}
       </button>
+      <code class="startup-diagnostic">{deployVersionChange.storedVersion} → {deployVersionChange.currentVersion}</code>
+    {:else}
+      <h2>The wallet couldn't open</h2>
+      <p class="schema-recovery-copy">{startupFailureLead($error)}</p>
+      <button class="startup-retry" onclick={() => initializeXLN()}>Retry</button>
+      <code class="startup-diagnostic">{$error}</code>
+      <div class="startup-reset">
+        <p>If Retry keeps failing, resetting deletes the wallets saved on this device. You will need your recovery phrase or backup file to get them back.</p>
+        <button onclick={handleResetEverything} disabled={resettingEverything}>
+          {resettingEverything ? 'Resetting…' : 'Reset local data'}
+        </button>
+      </div>
     {/if}
   </div>
 {:else if !activeTabLockReady || $isLoading || !$xlnFunctions.isReady}
@@ -630,7 +650,7 @@
       title="Starting XLN"
       description="Restoring local runtime state."
       status="Loading vaults, replicas, and runtime modules"
-      actionLabel={resettingEverything ? 'Resetting...' : 'Reset local data'}
+      actionLabel={resettingEverything ? 'Resetting…' : 'Reset local data'}
       actionDisabled={resettingEverything}
       onAction={handleResetEverything}
       testId="app-loading-card"
@@ -687,30 +707,32 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    box-sizing: border-box;
     min-height: 100dvh;
     background:
-      radial-gradient(circle at top, color-mix(in srgb, var(--theme-accent, #facc15) 12%, transparent), transparent 32%),
-      radial-gradient(circle at bottom, color-mix(in srgb, var(--theme-accent, #facc15) 7%, transparent), transparent 28%),
+      radial-gradient(circle at top, color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent), transparent 32%),
+      radial-gradient(circle at bottom, color-mix(in srgb, var(--theme-accent, #c5cfde) 7%, transparent), transparent 28%),
       var(--theme-bg-gradient, linear-gradient(180deg, #0d0d10 0%, #09090b 100%));
     color: var(--theme-text-primary, #e8e8e8);
   }
 
   .remote-login-screen {
-    padding: 28px;
+    padding: 28px var(--content-pad, 16px);
   }
 
   .remote-login-card {
+    box-sizing: border-box;
     width: min(520px, 100%);
-    padding: 28px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 24%, transparent);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--theme-card-bg, #141416) 92%, transparent);
+    padding: clamp(20px, 6vw, 28px);
+    border: 1px solid var(--theme-border, #262a31);
+    border-radius: var(--ui-radius-base, 12px);
+    background: var(--theme-surface, #121418);
     box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
   }
 
   .remote-kicker {
     margin-bottom: 10px;
-    color: var(--theme-accent, #facc15);
+    color: var(--theme-text-secondary, #9aa3b2);
     font-size: 12px;
     font-weight: 800;
     letter-spacing: 0.14em;
@@ -776,11 +798,12 @@
   .remote-token-input input {
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 22%, transparent);
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.28);
+    min-height: 48px;
+    border: 1px solid var(--theme-input-border, #5f656e);
+    border-radius: var(--ui-radius-base, 12px);
+    background: var(--theme-input-bg, #07080b);
     color: var(--theme-text-primary, #e8e8e8);
-    padding: 10px 12px;
+    padding: 0 14px;
     font: 12px 'SF Mono', monospace;
     text-transform: none;
     letter-spacing: 0;
@@ -788,7 +811,7 @@
 
   .remote-token-error {
     margin: -12px 0 18px;
-    color: rgba(255, 150, 150, 0.96);
+    color: color-mix(in srgb, var(--theme-debit, #f43f5e) 70%, var(--theme-text-primary, #e6ebf2));
     font-size: 12px;
   }
 
@@ -799,27 +822,30 @@
   }
 
   .remote-actions button {
-    min-height: 42px;
-    padding: 0 14px;
-    border-radius: 7px;
+    min-height: 48px;
+    padding: 0 18px;
+    border-radius: var(--ui-radius-base, 12px);
+    font: inherit;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-weight: 800;
+    font-weight: 600;
     text-decoration: none;
   }
 
+  /* The one primary: machined metal, obsidian ink. */
   .remote-actions .primary {
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 38%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #facc15) 22%, var(--theme-surface, #18181b));
-    color: var(--theme-text-primary, #fff);
+    flex: 1 1 auto;
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent);
+    background: var(--theme-primary-metal);
+    color: var(--theme-accent-contrast, #050608);
   }
 
   .remote-actions .secondary {
-    border: 1px solid color-mix(in srgb, var(--theme-border, #333) 88%, transparent);
-    background: color-mix(in srgb, var(--theme-surface, #18181b) 92%, transparent);
-    color: var(--theme-text-secondary, #b4b4ba);
+    border: 1px solid var(--theme-input-border, #5f656e);
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-primary, #e6ebf2);
   }
 
   .app-shell-ready {
@@ -853,7 +879,7 @@
     align-items: center;
     gap: 6px;
     padding: 5px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 28%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 28%, transparent);
     border-radius: 7px;
     background: color-mix(in srgb, var(--theme-card-bg, #141416) 94%, transparent);
     color: var(--theme-text-secondary, #d6d3d1);
@@ -888,8 +914,8 @@
     height: 26px;
     padding: 0;
     border-radius: 6px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 30%, transparent);
-    background: color-mix(in srgb, var(--theme-card-bg, #141416) 84%, var(--theme-accent, #facc15));
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 30%, transparent);
+    background: color-mix(in srgb, var(--theme-card-bg, #141416) 84%, var(--theme-accent, #c5cfde));
     color: var(--theme-text-primary, #f5f5f4);
     font: inherit;
     font-size: 18px;
@@ -928,17 +954,6 @@
 
 
 
-  .schema-recovery-details {
-    max-width: min(720px, calc(100vw - 48px));
-    color: var(--theme-text-muted, #a8a29e);
-    font-size: 12px;
-  }
-
-  .schema-recovery-details code {
-    display: block;
-    margin-top: 8px;
-    overflow-wrap: anywhere;
-  }
 
   .inactive-tab-screen {
     gap: 14px;
@@ -947,41 +962,96 @@
   }
 
   .inactive-tab-screen h2 {
-    font-size: 32px;
+    font-size: 28px;
+    text-wrap: balance;
     color: var(--theme-text-primary, #f2e7c8);
     margin: 0;
   }
 
   .inactive-tab-screen p {
+    max-width: 44ch;
     margin: 0;
     color: var(--theme-text-secondary, rgba(232, 232, 232, 0.72));
     font-size: 16px;
   }
 
+  /* Soft-touch black: an action that is not the one primary on the screen. */
   .inactive-tab-screen button,
   .error-screen button {
-    padding: 12px 18px;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #facc15) 24%, transparent);
-    background: linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--theme-accent, #facc15) 18%, var(--theme-surface, var(--theme-card-bg, #18181b))),
-      color-mix(in srgb, var(--theme-accent, #facc15) 10%, var(--theme-background, #09090b))
-    );
-    color: color-mix(in srgb, var(--theme-accent, #facc15) 58%, white);
-    font-weight: 700;
+    min-height: 48px;
+    padding: 0 20px;
+    border-radius: var(--ui-radius-base, 12px);
+    border: 1px solid var(--theme-input-border, #5f656e);
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-primary, #e6ebf2);
+    font: inherit;
+    font-weight: 600;
     cursor: pointer;
+    transition: background-color 120ms ease-out, border-color 120ms ease-out;
+  }
+
+  .inactive-tab-screen button:hover:not(:disabled),
+  .error-screen button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--theme-text-primary, #e6ebf2) 6%, var(--theme-surface, #121418));
+  }
+
+  .inactive-tab-screen button:active:not(:disabled),
+  .error-screen button:active:not(:disabled) {
+    box-shadow: inset 0 2px 6px color-mix(in srgb, black 45%, transparent);
   }
 
   .error-screen button:disabled {
     cursor: wait;
-    opacity: 0.55;
+    color: var(--theme-text-muted, #80889a);
   }
 
-  .error-msg {
-    max-width: 560px;
-    margin: 0;
-    color: color-mix(in srgb, var(--theme-danger, #ef4444) 78%, var(--theme-text-primary, white));
+  /* The one primary: machined metal, obsidian ink. */
+  .error-screen button.startup-retry {
+    min-width: 12em;
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent);
+    background: var(--theme-primary-metal);
+    color: var(--theme-accent-contrast, #050608);
+  }
+
+  .error-screen button.startup-retry:hover {
+    background: var(--theme-primary-metal);
+    filter: brightness(1.05);
+  }
+
+  /* Fail-stop evidence stays on screen, demoted and selectable. */
+  .startup-diagnostic {
+    max-width: min(560px, 100%);
+    color: var(--theme-text-muted, #80889a);
+    font-size: 12px;
+    line-height: 1.5;
     text-align: center;
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+
+  .startup-reset {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    max-width: 440px;
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--theme-border, #262a31);
+    text-align: center;
+  }
+
+  .startup-reset p {
+    margin: 0;
+    color: var(--theme-text-secondary, #a8b0bd);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  @media (max-width: 480px) {
+    .inactive-tab-screen,
+    .error-screen {
+      padding: 40px var(--content-pad, 16px);
+    }
   }
 </style>

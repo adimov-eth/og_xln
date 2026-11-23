@@ -2,6 +2,7 @@
  * Real cryptographic signatures for account consensus.
  * Canonical signerId is EOA address (lowercase). Keys are loaded via registerSignerKey.
  */
+import { bytesToHex } from '../support/bytes/hex-bytes';
 import { haltRuntimeFailure } from '../protocol/errors/failure-taxonomy';
 
 import { cryptoSignPoolEnabled, ECDSA_SIGNATURE_BYTES, signDigestsBatchOnPool } from '../protocol/crypto/crypto-pool';
@@ -95,10 +96,6 @@ installHmacSync();
 const signerKeyStores = new Map<string, SignerKeyStore>();
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
-const bytesToHex = (bytes: Uint8Array): string =>
-  Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
 // Ensure a full Buffer implementation exists before bip39 (Buffer.isBuffer is required).
 const ensureGlobalBuffer = () => {
   const globalBuffer = (globalThis as RuntimeGlobal).Buffer;
@@ -119,7 +116,7 @@ const seedFromScope = (scope: SignerKeyScope): Uint8Array | string | null => {
 const optionalScopeKeyUncached = (scope: SignerKeyScope): string | null => {
   const seed = seedFromScope(scope);
   if (seed === null || seed === undefined || toSeedBytes(seed).length === 0) return null;
-  return bytesToHex(sha256(toSeedBytes(seed)));
+  return bytesToHex(sha256(toSeedBytes(seed))).slice(2);
 };
 
 // Every signer lookup hashed the seed again. The memo is keyed by the scope
@@ -202,7 +199,7 @@ const resolveMnemonic = (seed: Uint8Array | string): string => {
   }
 
   const entropy = sha256(toSeedBytes(seedText));
-  const mnemonic = bip39.entropyToMnemonic(bytesToHex(entropy));
+  const mnemonic = bip39.entropyToMnemonic(bytesToHex(entropy).slice(2));
   store.mnemonic = mnemonic;
   return mnemonic;
 };

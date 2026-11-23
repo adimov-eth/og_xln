@@ -1,6 +1,6 @@
 import { buildTowerAppointmentOwnerMessage } from '../../../storage/recovery/bundle/crypto';
 import { serializeTaggedJson, safeStringify } from '../../../protocol/serialization';
-import { handleTowerRestore } from '../../../watchtower/http';
+import { handleTowerAppointment, handleTowerRestore } from '../../../watchtower/http';
 import { extractEncryptedRecoveryBundles } from '../../../storage/recovery/discovery/candidates';
 import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -57,6 +57,56 @@ test('tower refuses an excluded low-height appointment without replacing the sig
       height: 40,
       sequence: 3,
     });
+  } finally {
+    await store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a later-signed lower height cannot replace an acknowledged same-slot appointment', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'xln-tower-regression-'));
+  const store = createWatchtowerStore({ dbPath: join(root, 'db') });
+  try {
+    const acked = await store.upsertAppointment(await appointment(30, 0, 100));
+    // A second tab or device on the same seed, with an older tip, signs later.
+    await expect(store.upsertAppointment(await appointment(20, 0, 101))).rejects.toThrow(
+      'TOWER_APPOINTMENT_HEIGHT_REGRESSION:30:20',
+    );
+    expect(await store.getLatestReceipt(lookupKey)).toEqual(acked);
+    expect((await store.getLatest(lookupKey))!.bundles.map(bundle => bundle.height)).toEqual([30]);
+    // The same height re-uploaded later, and a higher height, still replace it.
+    await expect(store.upsertAppointment(await appointment(30, 0, 102))).resolves.toMatchObject({ height: 30 });
+    await expect(store.upsertAppointment(await appointment(31, 0, 103))).resolves.toMatchObject({ height: 31 });
+  } finally {
+    await store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an owner-signed replaceSlot lets a rebuild replace the slot at a lower height; an unsigned flag is refused', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'xln-tower-replace-'));
+  const store = createWatchtowerStore({ dbPath: join(root, 'db') });
+  const put = async (body: unknown) => (await handleTowerAppointment(
+    new Request('http://tower/api/tower/appointment', { method: 'PUT', body: serializeTaggedJson(body), headers: { 'content-type': 'application/json' } }),
+    store,
+  )).json() as Promise<{ ok: boolean; error?: string; receipt?: { height: number } }>;
+  const signedReplace = async (height: number, signedAt: number, signFlag: boolean): Promise<TowerAppointmentV1> => {
+    const base = await appointment(height, 0, signedAt);
+    const signature = await owner.signMessage(buildTowerAppointmentOwnerMessage(
+      base.ownerProof.runtimeId, 'blind_backup', lookupKey, 0, base.bundle, signedAt, undefined, signFlag,
+    ));
+    return { ...base, replaceSlot: true, ownerProof: { ...base.ownerProof, signature } };
+  };
+  try {
+    const now = Date.now();
+    expect((await put(await appointment(30, 0, now))).receipt?.height).toBe(30);
+    // The flag in the body without the owner's signature over it fails verification.
+    const forged = await put(await signedReplace(5, now + 1, false));
+    expect(forged.ok).toBe(false);
+    expect(forged.error).toContain('TOWER_APPOINTMENT_SIGNATURE_INVALID');
+    // Signed consent replaces the slot; restore then serves the rebuilt height.
+    expect((await put(await signedReplace(5, now + 2, true))).receipt?.height).toBe(5);
+    expect((await store.getLatest(lookupKey))!.bundles.map(bundle => bundle.height)).toEqual([5]);
   } finally {
     await store.close();
     rmSync(root, { recursive: true, force: true });

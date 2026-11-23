@@ -1,4 +1,5 @@
 import { asTokenDecimals, type TokenDecimals } from '@xln/core/account/tx/units';
+import { formatDecimal } from '../../../frontend/src/lib/utils/format';
 /** Token glyph for the round icon: currency sign where one exists, first letter otherwise. */
 export function tokenGlyph(symbol: string): string {
 	const upper = symbol.toUpperCase();
@@ -7,30 +8,11 @@ export function tokenGlyph(symbol: string): string {
 	return upper.slice(0, 1) || '?';
 }
 
+const minus = (text: string): string => (text.startsWith('-') ? `\u2212${text.slice(1)}` : text);
+
 /** "12,480.2" grouped integer part, trailing zeros trimmed, never exponent. */
 export function formatAmount(amount: bigint, decimals: TokenDecimals, maxFraction = 6): string {
-	const negative = amount < 0n;
-	const abs = negative ? -amount : amount;
-	const base = 10n ** BigInt(decimals);
-	const whole = abs / base;
-	const fraction = abs % base;
-
-	const wholeText = whole.toLocaleString('en-US');
-	let fractionText = fraction.toString().padStart(decimals, '0').slice(0, Math.min(decimals, maxFraction));
-	fractionText = fractionText.replace(/0+$/, '');
-
-	const sign = negative ? '−' : '';
-	return fractionText ? `${sign}${wholeText}.${fractionText}` : `${sign}${wholeText}`;
-}
-
-/** Rounds a raw amount to `fraction` decimals, half away from zero; never truncates. */
-function roundToFraction(abs: bigint, decimals: TokenDecimals, fraction: number): { whole: bigint; digits: string } {
-	const keep = Math.min(decimals, fraction);
-	const drop = decimals - keep;
-	const unit = 10n ** BigInt(drop);
-	const scaled = drop > 0 ? (abs + unit / 2n) / unit : abs;
-	const base = 10n ** BigInt(keep);
-	return { whole: scaled / base, digits: (scaled % base).toString().padStart(keep, '0').padEnd(fraction, '0') };
+	return minus(formatDecimal(amount, decimals, { max: maxFraction }));
 }
 
 /** Places for an amount below one whole token: cents would print 0.005 WETH as 0.01. */
@@ -39,16 +21,8 @@ function subUnitPlaces(abs: bigint, decimals: TokenDecimals, fraction: number): 
 }
 
 export function formatMoney(amount: bigint, decimals: TokenDecimals, fraction = 2): string {
-	const negative = amount < 0n;
-	const places = subUnitPlaces(negative ? -amount : amount, decimals, fraction);
-	if (places > fraction) {
-		const { whole, digits } = roundToFraction(negative ? -amount : amount, decimals, places);
-		const trimmed = digits.replace(new RegExp(`0{1,${places - fraction}}$`), '');
-		return `${negative ? '−' : ''}${whole.toLocaleString('en-US')}.${trimmed}`;
-	}
-	const { whole, digits } = roundToFraction(negative ? -amount : amount, decimals, fraction);
-	const sign = negative ? '−' : '';
-	return fraction > 0 && decimals > 0 ? `${sign}${whole.toLocaleString('en-US')}.${digits}` : `${sign}${whole.toLocaleString('en-US')}`;
+	const places = subUnitPlaces(amount < 0n ? -amount : amount, decimals, fraction);
+	return minus(formatDecimal(amount, decimals, decimals > 0 ? { min: fraction, max: places, rounding: 'halfExpand' } : { max: 0, rounding: 'halfExpand' }));
 }
 
 /**
@@ -57,21 +31,13 @@ export function formatMoney(amount: bigint, decimals: TokenDecimals, fraction = 
  */
 export function formatLimit(amount: bigint, decimals: TokenDecimals, fraction = 2): string {
 	const places = subUnitPlaces(amount, decimals, fraction);
-	const unit = 10n ** BigInt(Math.max(0, decimals - places));
-	return formatMoney(amount - (amount % unit), decimals, fraction);
+	return minus(formatDecimal(amount, decimals, decimals > 0 ? { min: fraction, max: places, sign: 'negative' } : { max: 0, sign: 'negative' }));
 }
 
 /** Signed money: "+230.00" / "−120.00" / "0.00". */
 export function formatSigned(amount: bigint, decimals: TokenDecimals, fraction = 2): string {
 	const body = formatMoney(amount < 0n ? -amount : amount, decimals, fraction);
 	return amount > 0n ? `+${body}` : amount < 0n ? `−${body}` : body;
-}
-
-/** Big-numeral split for the display font: ["12,480", ".20"]. */
-export function splitAmountForDisplay(amount: bigint, decimals: TokenDecimals): [string, string] {
-	const negative = amount < 0n;
-	const { whole, digits } = roundToFraction(negative ? -amount : amount, decimals, 2);
-	return [`${negative ? '−' : ''}${whole.toLocaleString('en-US')}`, decimals > 0 ? `.${digits}` : ''];
 }
 
 export function formatUsd(value: number): string {
@@ -109,31 +75,18 @@ export function shortId(value: string, head = 6, tail = 4): string {
 	return `${text.slice(0, head)}…${text.slice(-tail)}`;
 }
 
+const relativeTime = new Intl.RelativeTimeFormat('en', { style: 'short', numeric: 'auto' });
+
 export function timeAgo(timestamp: number): string {
-	const delta = Math.max(0, Date.now() - timestamp);
-	const minutes = Math.floor(delta / 60_000);
-	if (minutes < 1) return 'just now';
-	if (minutes < 60) return `${minutes} min ago`;
+	const minutes = Math.floor(Math.max(0, Date.now() - timestamp) / 60_000);
+	if (minutes < 1) return relativeTime.format(0, 'second');
+	if (minutes < 60) return relativeTime.format(-minutes, 'minute');
 	const hours = Math.floor(minutes / 60);
-	if (hours < 24) return `${hours} hr ago`;
-	const days = Math.floor(hours / 24);
-	return `${days} d ago`;
+	return hours < 24 ? relativeTime.format(-hours, 'hour') : relativeTime.format(-Math.floor(hours / 24), 'day');
 }
 
 export function formatClock(timestamp: number): string {
 	return new Date(timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-}
-
-export function dayLabel(timestamp: number): string {
-	const date = new Date(timestamp);
-	const today = new Date();
-	const yesterday = new Date(today);
-	yesterday.setDate(today.getDate() - 1);
-	const sameDay = (a: Date, b: Date): boolean =>
-		a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-	if (sameDay(date, today)) return 'Today';
-	if (sameDay(date, yesterday)) return 'Yesterday';
-	return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 /** Orderbook prices have four fixed decimal places. */

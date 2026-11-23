@@ -16,6 +16,7 @@ import { getAdapter } from '../adapter';
 import { useAdapterRead } from '../hooks';
 import { useApp } from '../store';
 import type { CrossBookMarket } from './cross-book';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
 
 export type BookLevel = {
   priceTicks: bigint;
@@ -46,10 +47,6 @@ export type BookView = {
   error: string | null;
 };
 
-const normalizeId = (value: unknown): string =>
-  String(value || '')
-    .trim()
-    .toLowerCase();
 
 export { quoteAtBestLevel, pickBookLevel, swapMinimumError, swapPriceBandError } from './orderbook-quote';
 

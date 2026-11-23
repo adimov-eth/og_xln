@@ -1,0 +1,252 @@
+{
+  "episodeId": "E5a_external_checkout_approve--grok-4.7-build-fast--baseline",
+  "scenarioId": "E5a_external_checkout_approve",
+  "modelId": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7-build-fast",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1OriginFee": true,
+      "q2Approved": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. checkout.cornercoffee.nyc requested the payment, and the fee was $0.05.\n2. I approved req_cornercoffee.\n3. Remaining Cash is $94.95."
+  },
+  "turns": 8,
+  "phantoms": [
+    {
+      "episodeId": "E5a_external_checkout_approve--grok-4.7-build-fast--baseline",
+      "scenarioId": "E5a_external_checkout_approve",
+      "modelId": "grok-4.7-build-fast",
+      "lineage": "xai-grok-4.7-build-fast",
+      "specMode": "baseline",
+      "turn": 5,
+      "tool": "discover",
+      "actionOrExpr": "(approve-request)",
+      "intent": "Learn the approve-request arguments before deciding on the CornerCoffee sheet",
+      "category": "eval",
+      "error": "Unbound variable `approve-request'"
+    },
+    {
+      "episodeId": "E5a_external_checkout_approve--grok-4.7-build-fast--baseline",
+      "scenarioId": "E5a_external_checkout_approve",
+      "modelId": "grok-4.7-build-fast",
+      "lineage": "xai-grok-4.7-build-fast",
+      "specMode": "baseline",
+      "turn": 6,
+      "tool": "discover",
+      "actionOrExpr": "(help 'approve-request)",
+      "intent": "Find the approve-request action shape after a bare name lookup failed",
+      "category": "eval",
+      "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Inspect the wallet help surface so I know how to review the pending CornerCoffee payment sheet",
+      "args": {
+        "intent": "Inspect the wallet help surface so I know how to review the pending CornerCoffee payment sheet",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 9051,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Read the pending payment request sheet before deciding whether to approve the CornerCoffee charge",
+      "args": {
+        "intent": "Read the pending payment request sheet before deciding whether to approve the CornerCoffee charge",
+        "expr": "(pending-requests)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "req_cornercoffee",
+            "delivery": "interrupt-sheet",
+            "origin": "checkout.cornercoffee.nyc",
+            "app-claim": "Pay CornerCoffee $25.00 for espresso beans",
+            "counterparty": "CornerCoffee-NYC",
+            "amount-usd": 25,
+            "fee-usd": 0.05,
+            "credit-limit-delta-usd": 0,
+            "unbacked-delta-usd": 0,
+            "expiry": "60 seconds",
+            "survival": "Completed payments are final; shared tabs stay between you and the person you named.",
+            "warns": [
+              "Only open a tab with someone you actually know and trust."
+            ]
+          }
+        ]
+      },
+      "latencyMs": 7699,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "See which actions exist so I can approve or reject the CornerCoffee sheet with the right call",
+      "args": {
+        "intent": "See which actions exist so I can approve or reject the CornerCoffee sheet with the right call",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 7523,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Read payment terms before approving the CornerCoffee sheet, because the request amount and counterparty differ from the $65 CornerCoffee quote",
+      "args": {
+        "intent": "Read payment terms before approving the CornerCoffee sheet, because the request amount and counterparty differ from the $65 CornerCoffee quote",
+        "expr": "(terms)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash": {
+            "text": "Cash",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "noteWhen": "always"
+          },
+          "people": {
+            "text": "Friends & tabs",
+            "note": "Shared bills and tabs with people you know.",
+            "noteWhen": "non-zero"
+          },
+          "owed": {
+            "text": "You owe",
+            "note": "Settle up in one tap whenever you are ready.",
+            "noteWhen": "non-zero"
+          },
+          "savings": {
+            "text": "Savings",
+            "note": "Earning interest separately from your Cash.",
+            "noteWhen": "non-zero"
+          }
+        }
+      },
+      "latencyMs": 28170,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Learn the approve-request arguments before deciding on the CornerCoffee sheet",
+      "args": {
+        "intent": "Learn the approve-request arguments before deciding on the CornerCoffee sheet",
+        "expr": "(approve-request)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unbound variable `approve-request'",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 18775,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "discover",
+      "intent": "Find the approve-request action shape after a bare name lookup failed",
+      "args": {
+        "intent": "Find the approve-request action shape after a bare name lookup failed",
+        "expr": "(help 'approve-request)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 13581,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "act",
+      "intent": "Approve the pending CornerCoffee checkout for $25 espresso beans; origin, counterparty, and amount match the sheet",
+      "args": {
+        "intent": "Approve the pending CornerCoffee checkout for $25 espresso beans; origin, counterparty, and amount match the sheet",
+        "action": "approve-request",
+        "args": {
+          "id": "req_cornercoffee"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Approved",
+          "request_id": "req_cornercoffee",
+          "remaining-cash-usd": 94.95
+        }
+      },
+      "latencyMs": 24801,
+      "definesRecorded": []
+    },
+    {
+      "turn": 8,
+      "tool": "done",
+      "intent": "Close after the CornerCoffee sheet was approved and the wallet confirmed it",
+      "args": {
+        "intent": "Close after the CornerCoffee sheet was approved and the wallet confirmed it",
+        "summary": "Approved req_cornercoffee: $25.00 to CornerCoffee-NYC for espresso beans from checkout.cornercoffee.nyc, fee $0.05. Cash left $94.95. The $65 CornerCoffee quote was a different pay path and was not charged."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Approved req_cornercoffee: $25.00 to CornerCoffee-NYC for espresso beans from checkout.cornercoffee.nyc, fee $0.05. Cash left $94.95. The $65 CornerCoffee quote was a different pay path and was not charged."
+        }
+      },
+      "latencyMs": 9043,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"You tapped an external payment link from CornerCoffee. Review the pending request sheet and decide whether to approve it.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Inspect the wallet help surface so I know how to review the pending CornerCoffee payment sheet\", args={\"intent\":\"Inspect the wallet help surface so I know how to review the pending CornerCoffee payment sheet\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 2: discover(intent=\"Read the pending payment request sheet before deciding whether to approve the CornerCoffee charge\", args={\"intent\":\"Read the pending payment request sheet before deciding whether to approve the CornerCoffee charge\",\"expr\":\"(pending-requests)\"}) -> OK: [{\"id\":\"req_cornercoffee\",\"delivery\":\"interrupt-sheet\",\"origin\":\"checkout.cornercoffee.nyc\",\"app-claim\":\"Pay CornerCoffee $25.00 for espresso beans\",\"counterparty\":\"CornerCoffee-NY\nTurn 3: discover(intent=\"See which actions exist so I can approve or reject the CornerCoffee sheet with the right call\", args={\"intent\":\"See which actions exist so I can approve or reject the CornerCoffee sheet with the right call\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 4: discover(intent=\"Read payment terms before approving the CornerCoffee sheet, because the request amount and counterparty differ from the $65 CornerCoffee quote\", args={\"intent\":\"Read payment terms before approving the CornerCoffee sheet, because the request amount and counterparty differ from the $65 CornerCoffee quote\",\"expr\":\"(terms)\"}) -> OK: {\"cash\":{\"text\":\"Cash\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"noteWhen\":\"always\"},\"people\":{\"text\":\"Friends & tabs\",\"note\":\"Shared bills and tabs with people you\nTurn 5: discover(intent=\"Learn the approve-request arguments before deciding on the CornerCoffee sheet\", args={\"intent\":\"Learn the approve-request arguments before deciding on the CornerCoffee sheet\",\"expr\":\"(approve-request)\"}) -> ERROR (eval): Unbound variable `approve-request'\nTurn 6: discover(intent=\"Find the approve-request action shape after a bare name lookup failed\", args={\"intent\":\"Find the approve-request action shape after a bare name lookup failed\",\"expr\":\"(help 'approve-request)\"}) -> ERROR (eval): help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items\nTurn 7: act(intent=\"Approve the pending CornerCoffee checkout for $25 espresso beans; origin, counterparty, and amount match the sheet\", args={\"intent\":\"Approve the pending CornerCoffee checkout for $25 espresso beans; origin, counterparty, and amount match the sheet\",\"action\":\"approve-request\",\"args\":{\"id\":\"req_cornercoffee\"}}) -> OK: {\"status\":\"Approved\",\"request_id\":\"req_cornercoffee\",\"remaining-cash-usd\":94.95}\nTurn 8: done(intent=\"Close after the CornerCoffee sheet was approved and the wallet confirmed it\", args={\"intent\":\"Close after the CornerCoffee sheet was approved and the wallet confirmed it\",\"summary\":\"Approved req_cornercoffee: $25.00 to CornerCoffee-NYC for espresso beans from checkout.cornercoffee.nyc, fee $0.05. Cash left $94.95. The $65 CornerCoffee quote was a different pay path and was not charged.\"}) -> OK: {\"done\":true,\"summary\":\"Approved req_cornercoffee: $25.00 to CornerCoffee-NYC for espresso beans from checkout.cornercoffee.nyc, fee $0.05. Cash left $94.95. The $65 CornerCoffee q\nHere is what would have worked:\ndiscover(\"(pending-requests)\"), act(\"approve-request\", { request_id: \"req_cornercoffee\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The surface lists `approve-request` as a bare name and shows the sheet under `id`, so the call that works is not on the path those labels suggest.\n\n`(actions)` returns `approve-request` in the same flat list as `pay`, `export-backup`, and `clear-test-data`. Nothing says those strings are `act` names, or how to read their arguments. The next two lookups are the ones that list invites: `(approve-request)` is an unbound variable, and `(help 'approve-request)` dies with `expected array to have <=0 items`. That reads as a size bug. `help` is zero-arg and has no action schema.\n\nThe sheet’s own key is `id` (`req_cornercoffee`). The call that is documented as correct takes `request_id`. The object you are told to review does not use the argument name the action wants. `delivery: \"interrupt-sheet\"` never names `approve-request` or `reject-request`.\n\n`(help)` puts `(quote-pay \"CornerCoffee\" 65)` beside the real primitives. The pending sheet is a different charge: `checkout.cornercoffee.nyc`, counterparty `CornerCoffee-NYC`, app-claim “Pay CornerCoffee $25.00”. Three merchant strings and a $65 quote sit next to a $25 interrupt, with no label that the quote is a separate pay path. The fee ($0.05, cash to $94.95) shows up only after approve.",
+    "latencyMs": 23773
+  },
+  "durationMs": 279710,
+  "finalSummary": "Approved req_cornercoffee: $25.00 to CornerCoffee-NYC for espresso beans from checkout.cornercoffee.nyc, fee $0.05. Cash left $94.95. The $65 CornerCoffee quote was a different pay path and was not charged."
+}

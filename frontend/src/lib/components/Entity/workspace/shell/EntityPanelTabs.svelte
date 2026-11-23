@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { sleep } from '../../../../utils/primitives';
 import { asTokenId } from '@xln/core/protocol/units';
 import WalletGuide from "#lib/tutorial/WalletGuide.svelte";
 import { replaceState } from "$app/navigation";
@@ -16,7 +17,7 @@ import { getXLN, xlnInstance, resolveConfiguredApiBase } from "../../../../store
 import { settings } from "../../../../stores/settingsStore";
 import { runtimes } from "../../../../stores/runtimeStore";
 import { activeRuntime } from "#lib/stores/vault/vaultStore.ts";
-import { submitEntityInputs, submitRuntimeInput, xlnFunctions } from "../../../../stores/xlnStore";
+import { runtimeHaltMessage, submitEntityInputs, submitRuntimeInput, xlnFunctions } from "../../../../stores/xlnStore";
 import { runtimeControllerHandle } from "../../../../stores/runtimeControllerStore";
 import { toasts } from "../../../../stores/ui/toastStore";
 import { errorLog } from "../../../../stores/errorLogStore";
@@ -36,6 +37,8 @@ import EntityPanelChrome from "../EntityPanelChrome.svelte";
 import EntityPanelHeroTabs from "../EntityPanelHeroTabs.svelte";
 import EntityPanelShell from "../EntityPanelShell.svelte";
 import RuntimeCommandGateBanner from "../../payments/RuntimeCommandGateBanner.svelte";
+import SignSheets from "../../governance/SignSheets.svelte";
+import { signSheetSourceFromAccounts } from "../../core/sign-sheet";
 import EntitySelectionEmptyState from "./EntitySelectionEmptyState.svelte";
 import EntitySettingsProjectionPanel from "./EntitySettingsProjectionPanel.svelte";
 import OwnershipWorkspacePanel from "../../ownership/OwnershipWorkspacePanel.svelte";
@@ -164,7 +167,6 @@ function resolveApiBase(): string {
   if (typeof window === "undefined") return "https://xln.finance";
   return resolveConfiguredApiBase(window.location.origin);
 }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function buildHashRouteFromState(): string {
   return buildEntityPanelHashRouteFromState({
     activeTab,
@@ -701,6 +703,21 @@ $: openAccountPermissionError = getHubOpenAccountPermissionError({
   adapterMode: $runtimeControllerHandle.mode,
   authLevel: $runtimeControllerHandle.authLevel,
 });
+function signSheetToken(tokenId: number): { symbol: string; decimals: number } | null {
+  try {
+    const info = getTokenInfo(tokenId);
+    return { symbol: info.symbol, decimals: info.decimals };
+  } catch {
+    return null;
+  }
+}
+$: signSheetSource = replica && tab.entityId && activeXlnFunctions?.deriveDelta
+  ? signSheetSourceFromAccounts(tab.entityId, replica.state.accounts, { token: signSheetToken, deriveDelta: activeXlnFunctions.deriveDelta })
+  : null;
+async function submitSignSheetTxs(entityTxs: EntityTx[]): Promise<unknown> {
+  if (!tab.entityId || !tab.signerId) throw new Error("SIGN_SHEET_SIGNER_MISSING");
+  return submitPanelRuntimeInput({ runtimeTxs: [], entityInputs: [{ entityId: tab.entityId, signerId: tab.signerId, entityTxs }], jInputs: [] });
+}
 async function submitPanelRuntimeInput(input: RuntimeInput): Promise<RuntimeReplica | null> {
   if (!getRuntimeEnv(actionRuntimeEnv) && $runtimeControllerHandle.mode !== "remote") {
     requireRuntimeEnv(actionRuntimeEnv, "runtime-input-submit");
@@ -2767,9 +2784,12 @@ $: if (typeof window !== "undefined") {
     {/if}
     {#if activeIsLive}
       <RuntimeCommandGateBanner
-        ready={activeCommandsReady} reason={$runtimeControllerHandle.commandReadyReason} runtimeId={$runtimeControllerHandle.runtimeId}
+        ready={activeCommandsReady} reason={$runtimeHaltMessage ?? $runtimeControllerHandle.commandReadyReason} runtimeId={$runtimeControllerHandle.runtimeId}
         apiBase={resolveApiBase()}
       />
+    {/if}
+    {#if replica && tab.signerId && signSheetSource}
+      <SignSheets entityId={tab.entityId ?? ""} source={signSheetSource} commandsReady={activeCommandsReady} submit={submitSignSheetTxs} />
     {/if}
     {#if !tab.entityId || !tab.signerId}
       <EntitySelectionEmptyState

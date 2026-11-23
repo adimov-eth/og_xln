@@ -1,5 +1,5 @@
-import { toEntityId } from '../../../protocol/identity';
-import { detectEntityType, extractNumberFromEntityId } from '../../../entity/factory';
+import { detectEntityType, toEntityId } from '../../../protocol/identity';
+import { extractNumberFromEntityId } from '../../../entity/factory';
 
 import type { JurisdictionConfig } from '../../../entity/types';
 import { connectJurisdictionAdapter, connectJurisdictionContracts } from './jurisdiction';
@@ -26,7 +26,7 @@ export const getEntityInfoFromChain = async (
     const entityInfo = await entityProvider.entities(entityId);
     if (entityInfo.registrationBlock === 0n) return { exists: false };
 
-    const entityType = detectEntityType(entityId);
+    const entityType = detectEntityType(toEntityId(entityId));
     let entityNumber: number | undefined;
     if (entityType === 'numbered') {
       const extractedNumber = extractNumberFromEntityId(entityId);

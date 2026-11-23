@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { enterStack } from './stack';
+import { enterStack, gotoProWallet } from './stack';
 import { readUsdcAccount } from './payment-evidence';
 import type { RuntimeReplica } from '../../core/runtime/types';
 import { deriveDelta } from '../../core/account/utils';
@@ -7,7 +7,7 @@ import { deriveDelta } from '../../core/account/utils';
 const svelte = process.env['XLN_LOCAL_PROD_SMOKE_WALLET_UI'] === 'svelte';
 async function createWallet(page: Page) {
   if (!svelte) return (await enterStack(page)).entityId;
-  await page.goto('/app');
+  await gotoProWallet(page, '/app');
   await page.locator('#name').fill(`notice-${crypto.randomUUID()}`);
   await page.getByLabel('Secret passphrase', { exact: true }).fill('Disposable notification E2E 2026!');
   await page.getByRole('button', { name: 'Derive wallet', exact: true }).click();

@@ -112,12 +112,12 @@
     grid-template-columns: 100px 1fr 90px 200px;
     gap: 8px;
     padding: 8px 12px;
-    background: #1c1917;
+    background: var(--theme-surface, #121418);
     border-radius: 6px 6px 0 0;
-    border-bottom: 1px solid #292524;
+    border-bottom: 1px solid var(--theme-border, #262a31);
     font-size: 11px;
     font-weight: 600;
-    color: #57534e;
+    color: var(--theme-text-muted, #57534e);
     text-transform: none;
     letter-spacing: 0.01em;
   }
@@ -125,7 +125,7 @@
   .token-table {
     display: flex;
     flex-direction: column;
-    background: #1c1917;
+    background: var(--theme-surface, #121418);
     border-radius: 0 0 6px 6px;
   }
 
@@ -134,7 +134,7 @@
     grid-template-columns: 100px 1fr 90px 200px;
     gap: 8px;
     padding: 10px 12px;
-    border-bottom: 1px solid #292524;
+    border-bottom: 1px solid var(--theme-border, #262a31);
     align-items: center;
     transition: background 0.1s;
   }
@@ -145,7 +145,7 @@
   }
 
   .token-table-row:hover {
-    background: #292524;
+    background: var(--theme-surface-hover, #1b1e24);
   }
 
   .token-table-row.has-balance {
@@ -153,7 +153,7 @@
   }
 
   .token-table-row.has-balance:hover {
-    background: linear-gradient(90deg, rgba(22, 163, 74, 0.15) 0%, #292524 100%);
+    background: linear-gradient(90deg, rgba(22, 163, 74, 0.15) 0%, var(--theme-surface-hover, #1b1e24) 100%);
   }
 
   .col-token {
@@ -178,11 +178,11 @@
   }
 
   .asset-ledger-total {
-    background: rgba(245, 158, 11, 0.05);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 5%, transparent);
   }
 
   .asset-ledger-total .token-name {
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
   }
 
   .asset-name-block {
@@ -194,7 +194,7 @@
 
   .asset-kind {
     font-size: 10px;
-    color: #57534e;
+    color: var(--theme-text-muted, #57534e);
     text-transform: none;
     letter-spacing: 0.01em;
   }
@@ -207,7 +207,7 @@
   }
 
   .subtle {
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
   }
 
   .token-icon-small {
@@ -219,8 +219,8 @@
     border-radius: 50%;
     font-weight: 600;
     font-size: 11px;
-    color: white;
-    background: #44403c;
+    background: var(--theme-surface-hover, #262a31);
+    color: var(--theme-text-primary, #e6ebf2);
     flex-shrink: 0;
   }
 
@@ -239,21 +239,21 @@
   .token-name {
     font-weight: 600;
     font-size: 13px;
-    color: #fafaf9;
+    color: var(--theme-text-primary, #fafaf9);
   }
 
   .balance-text {
     font-size: 13px;
-    color: #e7e5e4;
+    color: var(--theme-text-primary, #e7e5e4);
   }
 
   .balance-text.zero {
-    color: #57534e;
+    color: var(--theme-text-muted, #57534e);
   }
 
   .value-text {
     font-size: 11px;
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
   }
 
   @media (max-width: 900px) {

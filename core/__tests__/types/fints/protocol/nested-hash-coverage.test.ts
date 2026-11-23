@@ -200,8 +200,7 @@ describe('nested hash coverage gate registration', () => {
     const sourceGateNames = (packageJson.scripts['check:src'] ?? '').trim().split(/\s+/).slice(2);
     expect(sourceGateNames.filter(name => name === 'soundcheck:fast')).toEqual(['soundcheck:fast']);
     expect(sourceGateNames).not.toContain('check:nested-hash-coverage');
-    const soundcheck = readFileSync(join(repoRoot, 'tools/soundcheck.ts'), 'utf8');
-    expect(soundcheck.match(/check:nested-hash-coverage/g)).toEqual(['check:nested-hash-coverage']);
+    expect(packageJson.scripts['soundcheck:fast']?.split(/\s+/)).toContain('check:nested-hash-coverage');
     expect(NESTED_HASH_COVERAGE.length).toBeGreaterThan(20);
   });
 });

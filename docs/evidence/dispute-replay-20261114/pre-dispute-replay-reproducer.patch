@@ -1,0 +1,120 @@
+diff --git a/jurisdictions/test/dispute/Depository-part-2.ts b/jurisdictions/test/dispute/Depository-part-2.ts
+index aaca7f26f..7b6175dd7 100644
+--- a/jurisdictions/test/dispute/Depository-part-2.ts
++++ b/jurisdictions/test/dispute/Depository-part-2.ts
+@@ -1076,2 +1076,115 @@ describe('Depository', () => {
+
++  // Audit 2026-11-14 (docs/evidence/dispute-replay-20261114): finalization zeroes collateral and
++  // ondelta but only advances the stored nonce. A proof Right signed before the dispute with a
++  // higher nonce must not open a second dispute that settles its whole offdelta against the
++  // emptied account. Right agreed to owe at most 150; a replay that takes 250 is a double payment.
++  // The replay may be rejected (a contract revert) or settled correctly; any other error fails.
++  it('a pre-dispute proof with a higher nonce cannot be settled a second time after finalization', async function () {
++    const { depository } = await loadFixture(deployFixture);
++    const [left, right] = orderedActors(lazyActor(user0, 0), lazyActor(user1, 1));
++    const tokenId = 1n;
++    await mintListedReserve(depository, left.entityId, tokenId, 300n);
++    await mintListedReserve(depository, right.entityId, tokenId, 1_000n);
++    const fundBatch = emptyBatch({
++      reserveToCollateral: [{ tokenId, receivingEntity: left.entityId, pairs: [{ entity: right.entityId, amount: 300n }] }],
++    });
++    const fund = await signDepositoryBatch(depository, left.entityId, left.privateKey, fundBatch);
++    await depository.connect(left.signer).processBatch(fund.encodedBatch, fund.hankoData, fund.nonce);
++    const acctKey = await accountKeyFor(depository, left.entityId, right.entityId);
++
++    const runDispute = async (nonce: bigint, offdelta: bigint): Promise<void> => {
++      const body = proofBody([offdelta], [tokenId]);
++      const bodyHash = proofBodyHash(body);
++      const sig = signEntityHash(right.entityId, await disputeProofHash(depository, acctKey, nonce, bodyHash), right.privateKey);
++      const startBatch = emptyBatch({
++        disputeStarts: [{
++          counterentity: right.entityId, nonce, proofbodyHash: bodyHash, initialProofbody: body, watchSeed: TEST_WATCH_SEED, sig,
++          starterInitialArguments: '0x', starterCounterArguments: '0x', starterCounterProofCommitment: ethers.ZeroHash,
++        }],
++      });
++      const start = await signDepositoryBatch(depository, left.entityId, left.privateKey, startBatch);
++      await depository.connect(left.signer).processBatch(start.encodedBatch, start.hankoData, start.nonce);
++      await advancePastDisputeTimeout(depository, left.entityId, right.entityId);
++      const finalizeBatch = emptyBatch({
++        disputeFinalizations: [{
++          counterentity: right.entityId, initialNonce: nonce, finalNonce: nonce, initialProofbodyHash: bodyHash, finalProofbody: body,
++          starterArguments: '0x', otherArguments: '0x', sig: '0x', startedByLeft: true, cooperative: false,
++        }],
++      });
++      const finalize = await signDepositoryBatch(depository, left.entityId, left.privateKey, finalizeBatch);
++      await depository.connect(left.signer).processBatch(finalize.encodedBatch, finalize.hankoData, finalize.nonce);
++    };
++
++    // While the account was live Right signed two states: owes Left 100 at nonce 1, 150 at nonce 3.
++    await runDispute(1n, 100n);
++    expect(await depository._reserves(left.entityId, tokenId)).to.equal(400n);
++    expect(await depository._reserves(right.entityId, tokenId)).to.equal(900n);
++
++    let replayError: unknown;
++    await runDispute(3n, 150n).catch((error: unknown) => { replayError = error; });
++    if (replayError !== undefined) expect(String(replayError)).to.match(/revert/i);
++    expect(await depository._reserves(right.entityId, tokenId)).to.be.gte(850n);
++    expect(await depository._reserves(left.entityId, tokenId)).to.be.lte(450n);
++  });
++
++  // Same audit: the runtime retires every settlement authorized against the pre-dispute epoch
++  // (core/entity/tx/j-events.ts, applyResolvedDisputeFinality), "even when its numeric nonce is
++  // higher". The contract checks only signedNonce > storedNonce, so a settlement Right signed
++  // before the dispute and never submitted is still spendable after finalization.
++  it('a pre-dispute cooperative settlement with a higher nonce cannot be applied after finalization', async function () {
++    const { depository } = await loadFixture(deployFixture);
++    const [left, right] = orderedActors(lazyActor(user0, 0), lazyActor(user1, 1));
++    const tokenId = 1n;
++    await mintListedReserve(depository, left.entityId, tokenId, 300n);
++    await mintListedReserve(depository, right.entityId, tokenId, 1_000n);
++    const fundBatch = emptyBatch({
++      reserveToCollateral: [{ tokenId, receivingEntity: left.entityId, pairs: [{ entity: right.entityId, amount: 300n }] }],
++    });
++    const fund = await signDepositoryBatch(depository, left.entityId, left.privateKey, fundBatch);
++    await depository.connect(left.signer).processBatch(fund.encodedBatch, fund.hankoData, fund.nonce);
++    const acctKey = await accountKeyFor(depository, left.entityId, right.entityId);
++
++    // Before the dispute Right signed a settlement at nonce 3 paying Left 100 from its reserve.
++    const settlementNonce = 3n;
++    const settlementDiffs = [{ tokenId, leftDiff: 100n, rightDiff: -100n, collateralDiff: 0n, ondeltaDiff: 0n }];
++    const settlementSig = signEntityHash(
++      right.entityId,
++      await cooperativeUpdateHash(depository, acctKey, settlementNonce, settlementDiffs),
++      right.privateKey,
++    );
++
++    // The account is then closed by a unilateral dispute on Right's nonce-1 proof (owes 100).
++    const body = proofBody([100n], [tokenId]);
++    const bodyHash = proofBodyHash(body);
++    const proofSig = signEntityHash(right.entityId, await disputeProofHash(depository, acctKey, 1n, bodyHash), right.privateKey);
++    const start = await signDepositoryBatch(depository, left.entityId, left.privateKey, emptyBatch({
++      disputeStarts: [{
++        counterentity: right.entityId, nonce: 1n, proofbodyHash: bodyHash, initialProofbody: body, watchSeed: TEST_WATCH_SEED, sig: proofSig,
++        starterInitialArguments: '0x', starterCounterArguments: '0x', starterCounterProofCommitment: ethers.ZeroHash,
++      }],
++    }));
++    await depository.connect(left.signer).processBatch(start.encodedBatch, start.hankoData, start.nonce);
++    await advancePastDisputeTimeout(depository, left.entityId, right.entityId);
++    const finalize = await signDepositoryBatch(depository, left.entityId, left.privateKey, emptyBatch({
++      disputeFinalizations: [{
++        counterentity: right.entityId, initialNonce: 1n, finalNonce: 1n, initialProofbodyHash: bodyHash, finalProofbody: body,
++        starterArguments: '0x', otherArguments: '0x', sig: '0x', startedByLeft: true, cooperative: false,
++      }],
++    }));
++    await depository.connect(left.signer).processBatch(finalize.encodedBatch, finalize.hankoData, finalize.nonce);
++    expect(await depository._reserves(right.entityId, tokenId)).to.equal(900n);
++
++    const replay = await signDepositoryBatch(depository, left.entityId, left.privateKey, emptyBatch({
++      settlements: [{
++        leftEntity: left.entityId, rightEntity: right.entityId, diffs: settlementDiffs,
++        forgiveDebtsInTokenIds: [], sig: settlementSig, nonce: settlementNonce,
++      }],
++    }));
++    let replayError: unknown;
++    await depository.connect(left.signer).processBatch(replay.encodedBatch, replay.hankoData, replay.nonce)
++      .catch((error: unknown) => { replayError = error; });
++    if (replayError !== undefined) expect(String(replayError)).to.match(/revert/i);
++    expect(await depository._reserves(right.entityId, tokenId)).to.equal(900n);
++  });
++
+   it('rejects historical cooperative signatures as a dispute bypass', async function () {

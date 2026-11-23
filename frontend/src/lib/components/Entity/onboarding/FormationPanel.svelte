@@ -12,6 +12,7 @@
   import { tabOperations } from '../../../stores/ui/tabStore';
   import { generateLazyEntityIdPreview } from '../../../utils/identity/lazyEntityId';
   import { Plus, X, Shield, Hash, UserRound, UsersRound, Zap } from 'lucide-svelte';
+  import { splitBoardRefusal } from '../../../governance/formation-guard';
   import {
     emptyFormationRuntimeProjection,
     hasProjectedEntityId,
@@ -157,6 +158,9 @@
         weight: Number(validator.weight),
       }));
       const thresholdBigInt = BigInt(threshold);
+      const localSigners = new Set((vault?.signers ?? []).map(signer => String(signer.address || '').toLowerCase()));
+      const splitRefusal = splitBoardRefusal(boardMembers, address => localSigners.has(address));
+      if (splitRefusal) throw new Error(splitRefusal);
       if (boardMembers.some((member) => !Number.isInteger(member.weight) || member.weight <= 0 || member.weight > 0xffff)) {
         throw new Error('Every board weight must be an integer from 1 to 65535');
       }
@@ -464,7 +468,7 @@
 
   .eyebrow, .header-copy { margin: 0; }
   .eyebrow {
-    color: var(--theme-accent, #fbbf24);
+    color: var(--theme-accent, #c5cfde);
     font-size: 9px;
     font-weight: 700;
     letter-spacing: .12em;
@@ -494,7 +498,7 @@
   .field input[type="text"] {
     padding: 10px 12px;
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 88%, transparent);
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #27272a) 82%, transparent);
+    border: 1px solid var(--theme-input-border, #27272a);
     border-radius: 6px;
     color: var(--theme-text-primary, #e4e4e7);
     font-size: 13px;
@@ -502,7 +506,7 @@
 
   .field input:focus {
     outline: none;
-    border-color: var(--theme-input-focus, #fbbf24);
+    border-color: var(--theme-input-focus, #c5cfde);
   }
 
   .field-hint {
@@ -542,13 +546,13 @@
   }
 
   .type-option.active {
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 68%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 12%, transparent);
-    color: var(--theme-accent, #fbbf24);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 68%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent);
+    color: var(--theme-accent, #c5cfde);
   }
 
   .type-option.active small {
-    color: color-mix(in srgb, var(--theme-accent, #fbbf24) 78%, #7c2d12);
+    color: color-mix(in srgb, var(--theme-accent, #c5cfde) 78%, #7c2d12);
   }
 
   .personal-signer {
@@ -598,9 +602,9 @@
   }
 
   .jurisdiction-option.active {
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 68%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 12%, transparent);
-    color: var(--theme-accent, #fbbf24);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 68%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent);
+    color: var(--theme-accent, #c5cfde);
   }
 
   .j-name {
@@ -649,7 +653,7 @@
     flex: 1;
     padding: 6px 8px;
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 88%, transparent);
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #27272a) 82%, transparent);
+    border: 1px solid var(--theme-input-border, #27272a);
     border-radius: 4px;
     color: var(--theme-text-primary, #e4e4e7);
     font-size: 12px;
@@ -659,7 +663,7 @@
     width: 60px;
     padding: 6px 8px;
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 88%, transparent);
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #27272a) 82%, transparent);
+    border: 1px solid var(--theme-input-border, #27272a);
     border-radius: 4px;
     color: var(--theme-text-primary, #e4e4e7);
     font-size: 12px;
@@ -703,8 +707,8 @@
   }
 
   .btn-add-validator:hover {
-    border-color: var(--theme-accent, #fbbf24);
-    color: var(--theme-accent, #fbbf24);
+    border-color: var(--theme-accent, #c5cfde);
+    color: var(--theme-accent, #c5cfde);
   }
 
   .advanced {
@@ -749,7 +753,7 @@
     font-family: 'JetBrains Mono', monospace;
     font-size: 14px;
     font-weight: 600;
-    color: var(--theme-accent, #fbbf24);
+    color: var(--theme-accent, #c5cfde);
     min-width: 60px;
     text-align: right;
   }

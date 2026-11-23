@@ -6,7 +6,7 @@ import type { JInput } from '../../jurisdiction/machine/input.ts';
 import { resolveEntityOutputSignerId } from '../delivery/entity-output-signer.ts';
 import { decodeEntityOutput } from '../delivery/topology/routing-validation.ts';
 import { DEBUG } from '../../support/debug-flags.ts';
-import { logError, shortId } from '../../support/logger.ts';
+import { createStructuredLogger, shortId } from '../../support/logger.ts';
 import { getPerfMs } from '../../support/time';
 import {
   entityInputLog,
@@ -21,6 +21,8 @@ import {
   type AccountAuthorityEntityStageOptions,
   type AccountAuthorityEntityOccurrence,
 } from '../../entity/consensus/account/execution-stage.ts';
+
+const entityInputReplicaLog = createStructuredLogger('runtime.admit');
 
 export type AppliedEntityReplicaInput = {
   outcome: EntityInputOutcome;
@@ -125,8 +127,7 @@ const routeEntityOutputs = async (
       );
       return { ...decoded, signerId };
     } catch (error) {
-      logError(
-        'RUNTIME_TICK',
+      entityInputReplicaLog.error(
         `🚨 CRITICAL FINANCIAL ERROR: Invalid EntityOutput[${index}] from ${replicaKey}!`,
         { error: error instanceof Error ? error.message : String(error), output },
       );

@@ -313,8 +313,8 @@ function inspectAdapter(): RuntimeAdapterInspection | null {
 }
 /** Dev-only: lets the browser console and E2E debugging inspect committed data. */
 declare const __XLN_UI_DIAGNOSTICS__: boolean;
-if (import.meta.env.DEV || __XLN_UI_DIAGNOSTICS__) {
-  (window as typeof window & { __xln?: Record<string, unknown> }).__xln = {
+if (import.meta.env.DEV || (typeof __XLN_UI_DIAGNOSTICS__ !== 'undefined' && __XLN_UI_DIAGNOSTICS__)) {
+  const diagnostics: Record<string, unknown> = {
     adapter: inspectAdapter,
     env: () => currentEnv,
     xln: () => getXLN(),
@@ -350,6 +350,18 @@ if (import.meta.env.DEV || __XLN_UI_DIAGNOSTICS__) {
         }
       : {}),
   };
+  const win = window as typeof window & { __xln?: Record<string, unknown> };
+  const existing = win.__xln;
+  if (existing && typeof existing === 'object') {
+    Object.defineProperties(existing, Object.getOwnPropertyDescriptors(diagnostics));
+  } else {
+    Object.defineProperty(win, '__xln', {
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: diagnostics,
+    });
+  }
 }
 
 export function requireAdapter(): RuntimeAdapter {

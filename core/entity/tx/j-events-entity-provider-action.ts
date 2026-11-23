@@ -1,3 +1,4 @@
+import { UINT256_MAX } from '../../protocol/boundary/integer-ranges';
 import type { EntityState } from '../types';
 import type {
   EntityProviderActionCancelledData,
@@ -8,7 +9,6 @@ import type {
 import { addMessage } from '../frame-events';
 import { entityProviderActionKindCode } from '../entity-provider-action';
 
-const MAX_UINT256 = (1n << 256n) - 1n;
 
 const bytes32 = (value: unknown, code: string): string => {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -25,7 +25,7 @@ const currentActionState = (state: EntityState): EntityProviderActionState => {
   if (
     current.version !== 1 ||
     current.confirmedNonce < 0n ||
-    current.confirmedNonce >= MAX_UINT256 ||
+    current.confirmedNonce >= UINT256_MAX ||
     !Number.isSafeInteger(current.generation) ||
     current.generation < 0
   ) throw new Error('ENTITY_PROVIDER_ACTION_STATE_CORRUPT');
@@ -34,7 +34,7 @@ const currentActionState = (state: EntityState): EntityProviderActionState => {
 
 const parseActionNonce = (value: string | bigint): bigint => {
   const nonce = typeof value === 'bigint' ? value : BigInt(String(value));
-  if (nonce < 1n || nonce > MAX_UINT256) {
+  if (nonce < 1n || nonce > UINT256_MAX) {
     throw new Error(`ENTITY_PROVIDER_ACTION_EVENT_NONCE_INVALID:${nonce.toString()}`);
   }
   return nonce;

@@ -303,7 +303,7 @@ export function getJAdapterMode(): JAdapterMode {
   // browservm and failing before the scenario can build deterministic history.
   if (IS_BROWSER_RUNTIME) return 'rpc';
   const mode = process.env['JADAPTER_MODE']?.toLowerCase();
-  if (mode === 'rpc' || mode === 'anvil') return mode as JAdapterMode;
+  if (mode === 'rpc' || mode === 'anvil') return 'rpc';
   if (mode === 'browservm') return 'browservm';
   return 'rpc';
 }

@@ -32,7 +32,9 @@ export type {
   SwapCommandPreparedOrder,
 } from '../../runtime/swap-cmd/swap-command-plan';
 export { enqueueRuntimeInput } from '../../runtime/mempool/input-queue';
-export { resolveRuntimeAdapterRead, EmbeddedRuntimeAdapter, RemoteRuntimeAdapter } from '../runtime-adapter';
+export { resolveRuntimeAdapterRead } from '../runtime-adapter/resolve';
+export { EmbeddedRuntimeAdapter } from '../runtime-adapter/embedded';
+export { RemoteRuntimeAdapter } from '../runtime-adapter/remote';
 export { readRuntimeFrameReceipts } from '../runtime-adapter/frame-receipts';
 export { findPaymentRoutes } from '../runtime-adapter/read/payment-routes';
 export type {
@@ -43,7 +45,7 @@ export type {
   RuntimeAdapterStatus,
   NumberedRegistrationCommand,
   NumberedRegistrationCommandResult,
-} from '../runtime-adapter';
+} from '../runtime-adapter/types';
 export type {
   EntityId,
   SignerId,
@@ -101,6 +103,8 @@ export type {
 export { buildRuntimeRecording, validateRuntimeRecording } from '../../storage/recovery/bundle/recording';
 export {
   buildTowerAppointmentOwnerMessage,
+  buildTowerReceiptMessage,
+  verifyTowerReceipt,
   computeWatchtowerCounterDisputeAuthorizationHash,
   decryptRuntimeRecoveryBundle,
   decryptTowerPayloadWithWatchSeed,

@@ -1,0 +1,15 @@
+{
+  "cellId": "H4b-p3-stalled-trap",
+  "hypothesis": "H4",
+  "perspective": "p3-commercial",
+  "sheetId": "desk-sign",
+  "expectedDecision": "REJECT",
+  "runner": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7",
+  "matchesExpected": true,
+  "decision": "REJECT",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: 1000",
+  "q3Fee": "FEE: 15",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: The 500 USDC is no longer enforceable locked collateral, and the new unbacked IOU and undrawn credit ceiling die with them, so that money is lost.",
+  "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: 1000\n3. FEE: 15\n4. IF_COUNTERPARTY_VANISHES: The 500 USDC is no longer enforceable locked collateral, and the new unbacked IOU and undrawn credit ceiling die with them, so that money is lost."
+}

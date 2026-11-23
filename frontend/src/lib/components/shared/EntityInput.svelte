@@ -464,7 +464,7 @@
 
 <style>
   .entity-input {
-    --entity-accent: var(--theme-accent, #fbbf24);
+    --entity-accent: var(--theme-accent, #c5cfde);
     --entity-border: color-mix(in srgb, var(--theme-input-border, var(--theme-border, #27272a)) 84%, transparent);
     --entity-border-hover: color-mix(in srgb, var(--entity-accent) 42%, var(--entity-border));
     --entity-border-active: color-mix(in srgb, var(--entity-accent) 82%, transparent);
@@ -527,7 +527,7 @@
       color-mix(in srgb, var(--entity-surface) 94%, transparent),
       color-mix(in srgb, var(--entity-input-bg) 100%, transparent)
     ) !important;
-    border: 1px solid color-mix(in srgb, var(--entity-border) 92%, transparent) !important;
+    border: 1px solid var(--theme-input-border, #5f656e) !important;
     border-radius: var(--entity-radius) !important;
     color: var(--entity-text) !important;
     font-size: 14px;
@@ -562,7 +562,7 @@
   }
 
   .selected-badge.unresolved {
-    color: color-mix(in srgb, var(--theme-debit, #f97316) 78%, white 22%);
+    color: color-mix(in srgb, var(--theme-debit, #f97316) 78%, var(--theme-text-primary, white) 22%);
     background: color-mix(in srgb, var(--theme-debit, #f97316) 12%, transparent);
     border: 1px dashed color-mix(in srgb, var(--theme-debit, #f97316) 38%, transparent);
   }
@@ -580,7 +580,7 @@
       color-mix(in srgb, var(--entity-surface) 96%, transparent),
       color-mix(in srgb, var(--entity-input-bg) 100%, transparent)
     ) !important;
-    border: 1px solid color-mix(in srgb, var(--entity-border) 92%, transparent) !important;
+    border: 1px solid var(--theme-input-border, #5f656e) !important;
     border-radius: var(--entity-radius) !important;
     color: var(--entity-text) !important;
     cursor: pointer;
@@ -649,6 +649,7 @@
     max-height: 280px;
     overflow-y: auto;
     backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
   }
 
   .dropdown::-webkit-scrollbar {
@@ -760,7 +761,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--theme-credit, #22c55e) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--theme-credit, #22c55e) 18%, transparent);
-    color: color-mix(in srgb, var(--theme-credit, #22c55e) 70%, white 30%);
+    color: color-mix(in srgb, var(--theme-credit, #22c55e) 70%, var(--theme-text-primary, white) 30%);
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.06em;

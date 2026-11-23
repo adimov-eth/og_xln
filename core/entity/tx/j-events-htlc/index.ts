@@ -33,6 +33,7 @@ import { compareStableText } from '../../../protocol/serialization';
 import type { ProofBodyStruct } from '../../../../jurisdictions/typechain-types/Depository.sol/Depository';
 import { findExactSignedProofBodyPull } from '../../../account/pull-registry-settlement';
 import { hasInboundPayment } from '../../../paybook/views';
+import { queueInboundSecretResolution } from '../../../paybook/lifecycle';
 import { toUnixMs, unixMsToUnixSFloor } from '../../../protocol/units';
 import { getEntityCollectionValueForWrite } from '../../state/persistent-collection-map';
 import { buildCurrentDisputeArgumentPlan } from '../../../protocol/dispute/arguments';
@@ -874,17 +875,7 @@ export function applyKnownHtlcSecret(
   }
 
   if (hasInboundPayment(writableRoute)) {
-    accountTxs.push({
-      accountId: writableRoute.inboundEntity,
-      tx: {
-        type: 'htlc_resolve',
-        data: {
-          lockId: hashlock,
-          outcome: 'secret' as const,
-          secret,
-        },
-      },
-    });
+    queueInboundSecretResolution(newState, writableRoute, accountTxs, hashlock);
   } else if (writableRoute.crossJurisdictionRelay) {
     const relay = writableRoute.crossJurisdictionRelay;
     pushCrossJurisdictionEntityOutput(outputs, relay.targetEntityId, [{

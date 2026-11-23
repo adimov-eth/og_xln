@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { normalizeId } from '../../utils/primitives';
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { getXLN } from '#lib/stores/bootstrap/xlnRuntimeLoader.ts';
@@ -121,9 +122,6 @@
   $: progressText = frames.length > 0 ? `${currentFrame + 1}/${frames.length}` : '0/0';
   $: builderInspectText = formatBuilderText(activeFrame, visual, selectedScenario, currentFrame, frames.length);
 
-  function normalizeId(value: unknown): string {
-    return String(value || '').trim().toLowerCase();
-  }
 
   function formatErrorMessage(error: unknown): string {
     if (error instanceof Error) return error.message;

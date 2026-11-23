@@ -56,7 +56,7 @@ test(
     await expect(page.getByTestId('token-net-USDC')).toContainText('100');
     await page.screenshot({ path: 'tests/test-results/guide-next-payment.png', fullPage: true });
     await page.getByTestId('home-show-zero').click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/(?:\?[^#]*)?$/);
     await expect(page.getByTestId('token-row-WETH')).toBeVisible();
     await page.getByTestId('home-show-zero').click();
     await page.getByTestId('home-pay').click();
@@ -103,7 +103,7 @@ test(
     await expect(guide).toHaveAttribute('data-target', 'nav-activity');
     await page.getByTestId('nav-activity').locator('visible=true').first().click();
     await expect(guide).toHaveAttribute('data-step', 'history');
-    await expect(page).toHaveURL(/\/activity$/);
+    await expect(page).toHaveURL(/\/activity(?:\?[^#]*)?$/);
     await expect(guide).toHaveAttribute('data-target', 'activity-row');
     await expect(page.getByTestId('activity-row').filter({ hasText: '25' }).first()).toBeVisible();
     await page.getByTestId('tour-advance').click();
@@ -152,10 +152,10 @@ async function verifySettingsReplay(page: Page, width: number) {
   await page.setViewportSize({ width, height: 844 });
   await enterStack(page);
   await page.getByTestId('nav-settings').locator('visible=true').first().click();
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page).toHaveURL(/\/settings(?:\?[^#]*)?$/);
   await page.getByTestId('tour-replay').click();
   await expect(page.getByTestId('home-faucet')).toBeEnabled({ timeout: 40_000 });
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/(?:\?[^#]*)?$/);
   const guide = page.getByTestId('tour');
   await expect(guide).toHaveAttribute('data-target', 'home-faucet');
   await expectGuideInViewport(page);

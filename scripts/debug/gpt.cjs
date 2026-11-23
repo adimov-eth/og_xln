@@ -56,7 +56,6 @@ const CORE_CRITICAL_RUNTIME_FILES = [
   'runtime/mempool/input-queue.ts',
   'storage/index.ts',
   'storage/commit/commit.ts',
-  'storage/wal/index.ts',
   'storage/hashes.ts',
   'storage/wal/snapshot.ts',
   'storage/recovery/load.ts',
@@ -138,7 +137,10 @@ const CORE_FILES = {
     'runtime/composition.ts', // Runtime composition root and dependency wiring
     'runtime/frame/process.ts', // take -> apply -> WAL -> install -> dispatch pipeline
     'runtime/mempool/input-queue.ts', // The single Runtime mempool
-    'runtime/delivery/topology/output-routing.ts', // Post-commit output routing
+    'runtime/delivery/pending.ts',
+    'runtime/delivery/plan.ts',
+    'runtime/delivery/dispatch.ts',
+    'runtime/delivery/identity.ts',
     'runtime/recovery/live-restore.ts', // Durable Runtime restore boundary
     'entity/consensus/index.ts',   // Entity input -> candidate -> Hanko certificate -> commit
     'account/consensus/index.ts',  // Bilateral account consensus between entities
@@ -198,7 +200,6 @@ const CORE_FILES = {
     'network/relay/market/subscriptions.ts',       // Orderbook streaming subscriptions
     'network/relay/market/subscription-limiter.ts', // Stream rate limiting
     'orchestrator/mm-node.ts',               // Market maker bootstrap, quote loop, cross books
-    'api/server/health/market-maker.ts',     // Health/self-test contract for MM books
     'orchestrator/mesh/mesh-common.ts',           // Bootstrap defaults for hubs/MM/accounts
     'protocol/dispute/arguments.ts',                  // Dispute argument builder/evidence inclusion
     'watchtower/action.ts',                  // Watchtower action decisions
@@ -313,7 +314,6 @@ const CROSS_FILES = {
     'ERC721Mock.sol',
     'ERC1155Mock.sol',
     'mocks/HashLadderHarness.sol',
-    'mocks/MockEntityProvider.sol',
     'mocks/NoReturnERC20Mock.sol',
   ],
   runtime: [
@@ -338,7 +338,10 @@ const CROSS_FILES = {
     'runtime/recovery/live-restore.ts',
     'runtime/j-submit/api.ts',
     'runtime/swap-cmd/swap-pairs.ts',
-    'runtime/delivery/topology/output-routing.ts',
+    'runtime/delivery/pending.ts',
+    'runtime/delivery/plan.ts',
+    'runtime/delivery/dispatch.ts',
+    'runtime/delivery/identity.ts',
     'runtime/j-submit/j-submit.ts',
     'account/input.ts',
     'account/settlement/j-finality.ts',
@@ -402,7 +405,6 @@ const CROSS_FILES = {
     'orchestrator/mesh/mesh-common.ts',
     'orchestrator/mesh/mesh-jurisdictions.ts',
     'orchestrator/j-select/jurisdictions.ts',
-    'api/server/health/market-maker.ts',
     'api/server/catalog/jurisdictions.ts',
     'protocol/dispute/arguments.ts',
     'watchtower/action.ts',
@@ -431,7 +433,6 @@ const CROSS_FILES = {
     'src/lib/components/Entity/move-routes.ts',
     'src/lib/components/Trading/OrderbookPanel.svelte',
     'src/lib/components/Trading/orderbook-relay-url.ts',
-    'src/lib/stores/network/routePreviewStore.ts',
     'src/lib/utils/identity/jurisdictionBadge.ts',
   ],
   tests: [
@@ -475,7 +476,10 @@ const RUNTIME_FILES = {
     'runtime/mempool/input-queue.ts',
     'runtime/recovery/live-restore.ts',
     'runtime/tx/tx-handlers.ts',
-    'runtime/delivery/topology/output-routing.ts',
+    'runtime/delivery/pending.ts',
+    'runtime/delivery/plan.ts',
+    'runtime/delivery/dispatch.ts',
+    'runtime/delivery/identity.ts',
     'runtime/j-submit/j-submit.ts',
     'entity/consensus/index.ts',
     'entity/consensus/frame.ts',
@@ -593,7 +597,8 @@ const PERFORMANCE_FILES = {
     'runtime/mempool/input-queue.ts',
     'runtime/delivery/dispatch.ts',
     'runtime/delivery/topology/entity-routing.ts',
-    'runtime/delivery/topology/output-routing.ts',
+    'runtime/delivery/pending.ts',
+    'runtime/delivery/plan.ts',
     'network/p2p/direct-runtime-bun.ts',
     'network/p2p/p2p.ts',
     'network/p2p/ws-client.ts',
@@ -731,7 +736,6 @@ const ORDERBOOK_FILES = {
     'network/relay/market/subscriptions.ts',
     'orchestrator/mm-node.ts',
     'orchestrator/market-maker/node/mm-transport.ts',
-    'api/server/health/market-maker.ts',
   ],
   docs: [
     'status.md',
@@ -795,7 +799,6 @@ const SWAP_FILES = {
     'swapbook/types.ts',
     'swapbook/core.ts',
     'network/relay/market/snapshot.ts',
-    'api/server/health/market-maker.ts',
   ]),
   docs: [
     'status.md',
@@ -1307,7 +1310,6 @@ The test market maker must prepublish same-chain books and ETH/TRON cross-chain
 books before user swaps run. Empty books are a setup failure, not a user-flow
 failure. Health/self-test lives in:
 - \`core/orchestrator/mm-node.ts\`
-- \`core/api/server/health/market-maker.ts\`
 - \`core/network/relay/market/subscriptions.ts\`
 - \`tests/e2e-cross-j-swap.spec.ts\` ("market maker prepublishes...")
 
@@ -1387,7 +1389,6 @@ xln/
       account/tx/handlers/swap-*.ts - Account-level offer/resolve/cancel
       relay/market-subscriptions.ts ${fileSizes['core/network/relay/market/subscriptions.ts'] || '?'} lines - Book streaming
       orchestrator/mm-node.ts     ${fileSizes['core/orchestrator/mm-node.ts'] || '?'} lines - Market-maker bootstrap/quotes
-      server/health/market-maker.ts ${fileSizes['core/api/server/health/market-maker.ts'] || '?'} lines - MM readiness health
       lending.ts                  ${fileSizes['core/extensions/lending.ts'] || '?'} lines - Lending math and ids
       types/finance/lending.ts    ${fileSizes['core/types/finance/lending.ts'] || '?'} lines - Lending state types
       entity/tx/handlers/payments/lending.ts ${fileSizes['core/entity/tx/handlers/payments/lending.ts'] || '?'} lines - Lending tx handlers

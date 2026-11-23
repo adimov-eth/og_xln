@@ -8,7 +8,7 @@ All line counts below are physical source lines from the 2.2.0 candidate. They
 include comments and blank lines and are guarded by package tests. A smaller
 number is easier to navigate; it is not proof of safety.
 
-## 1. Root identity — 294 lines
+## 1. Root identity — 286 lines
 
 Read in this order:
 
@@ -18,12 +18,12 @@ Read in this order:
 4. `../src/core/canonical.ts` for factor math, indexed validation, and ordered BLAKE3;
 5. `../tests/data/vectors-v1.json` for independent expected bytes and roots.
 
-The executable files in items 2–4 total 294 physical lines. Required skills:
+The executable files in items 2–4 total 286 physical lines. Required skills:
 TypeScript, byte encodings, Unicode normalization, Argon2id, and BLAKE3 domain
 separation. They import no CLI, filesystem, network, clock, scheduler, wallet, or
 native accelerator code.
 
-## 2. Wallet projection — 603 total lines
+## 2. Wallet projection — 565 total lines
 
 Add:
 
@@ -33,7 +33,7 @@ Add:
 
 Required skills: BIP-39 with an empty optional passphrase, BIP-32, secp256k1,
 Ethereum address derivation, and the `ethers` API. The root and wallet layer
-together total 603 physical lines.
+together total 565 physical lines.
 
 ## 3. Execution paths
 
@@ -44,13 +44,13 @@ foreign results before the canonical fold.
 
 | Path | Review | Physical lines | Skills |
 | --- | --- | ---: | --- |
-| WASM compatibility | `../src/native/workers/wasm.ts`, collector, native orchestrator | included in 1,010 native lines | Web Workers, hash-wasm, transfer buffers |
-| Portable native | `../src/native/workers/native.ts`, collector, native orchestrator | included in 1,010 native lines | Bun workers, @node-rs/argon2 |
+| WASM compatibility | `../src/native/workers/wasm.ts`, collector, native orchestrator | included in 921 native lines | Web Workers, hash-wasm, transfer buffers |
+| Portable native | `../src/native/workers/native.ts`, collector, native orchestrator | included in 921 native lines | Bun workers, @node-rs/argon2 |
 | Apple C/NEON | native boundary + `../src/native/source/c/brainvault_argon2.c` | 192 first-party C | C11, stdin/stdout framing, memory erasure |
 | M3 Ultra Metal hybrid | `hybrid.ts`, collector, children, binary integrity, Metal host/kernel, C bridge | 1,358 Metal + 192 C bridge | Objective-C, Metal, GPU buffers, subprocess isolation |
 
 The complete first-party native orchestration layer outside `source/` and
-`prebuilds/` is 1,010 physical TypeScript lines. The Metal host and kernel are
+`prebuilds/` is 921 physical TypeScript lines. The Metal host and kernel are
 1,358 lines. The C build additionally compiles 13,274 lines of pinned upstream
 Argon2/SSE2NEON code. Review vendor hashes/provenance and diff those directories
 against upstream; do not treat them as authored BrainVault semantics.
@@ -84,7 +84,7 @@ For terminal secrecy, read `../src/cli/policy.ts` before the larger
 `../src/cli/index.ts`. Verify pseudo-TTY tests in `../tests/core.test.ts` for
 hidden input, confirmation, alternate-screen cleanup, signals, `TERM=dumb`,
 non-TTY rejection, `NO_COLOR`, and error sanitization. The CLI directory is
-2,296 physical lines; it owns interaction, not derivation semantics.
+1,970 physical lines; it owns interaction, not derivation semantics.
 
 For supply chain, read:
 
@@ -109,12 +109,6 @@ bun run check
 bun run test:matrix
 bun run verify:source
 bun ./brainvault --smoke --workers 32
-```
-
-The source-only historical gate is:
-
-```bash
-bun test tests/historical.test.ts
 ```
 
 Never regenerate `manifest.sha256` while authenticating a downloaded release;

@@ -6,18 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ethers } from 'ethers';
 
-import {
-  assertCanonicalReceiptsRoot,
-  bloomMayContain,
-  computeCanonicalReceiptsRoot,
-  createCanonicalReceiptProofs,
-  encodeCanonicalRpcReceipt,
-  readAuthenticatedReceiptRange,
-  readAuthenticatedLogsForRange,
-  ReceiptAvailabilityError,
-  verifyCanonicalReceiptProof,
-  type CanonicalRpcReceipt,
-} from '../../../jurisdiction/adapter/receipt-root';
+import { assertCanonicalReceiptsRoot, bloomMayContain, computeCanonicalReceiptsRoot, createCanonicalReceiptProofs, encodeCanonicalRpcReceipt, verifyCanonicalReceiptProof, type CanonicalRpcReceipt } from '../../../jurisdiction/machine/receipt-codec';
+import { readAuthenticatedReceiptRange, readAuthenticatedLogsForRange, ReceiptAvailabilityError } from '../../../jurisdiction/adapter/receipt/reader';
 import { isTransientRpcUnavailableError } from '../../../jurisdiction/adapter/rpc-public';
 import { createLogBloomMatcher, normalizeReceiptHash, parseReceiptHex } from '../../../jurisdiction/machine/receipt-codec';
 import { ERC20Mock__factory } from '../../../../jurisdictions/typechain-types';

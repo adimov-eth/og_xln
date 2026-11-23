@@ -1,0 +1,15 @@
+{
+  "cellId": "H1-p2-reward",
+  "hypothesis": "H1",
+  "perspective": "p2-sovereign",
+  "sheetId": "sheet-exposure",
+  "expectedDecision": "REJECT",
+  "runner": "grok-4.6",
+  "lineage": "xai-grok-4.6",
+  "matchesExpected": true,
+  "decision": "REJECT",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: 10000.00",
+  "q3Fee": "FEE: 0.00",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: Only collateral secures recovery, and nothing is locked, so you recover nothing.",
+  "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: 10000.00\n3. FEE: 0.00\n4. IF_COUNTERPARTY_VANISHES: Only collateral secures recovery, and nothing is locked, so you recover nothing."
+}

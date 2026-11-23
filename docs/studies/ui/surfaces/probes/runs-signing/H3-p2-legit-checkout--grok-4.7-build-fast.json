@@ -1,0 +1,15 @@
+{
+  "cellId": "H3-p2-legit-checkout",
+  "hypothesis": "H3",
+  "perspective": "p2-sovereign",
+  "sheetId": "sheet-spend",
+  "expectedDecision": "APPROVE",
+  "runner": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7",
+  "matchesExpected": true,
+  "decision": "APPROVE",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: 0",
+  "q3Fee": "FEE: 0.05 USDC",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: Once both sides sign, the payment is final and the 25.05 USDC stays with CornerCoffee-NYC.",
+  "reply": "1. DECISION: APPROVE\n2. MAX_UNBACKED_OR_CREDIT_RISK: 0\n3. FEE: 0.05 USDC\n4. IF_COUNTERPARTY_VANISHES: Once both sides sign, the payment is final and the 25.05 USDC stays with CornerCoffee-NYC."
+}

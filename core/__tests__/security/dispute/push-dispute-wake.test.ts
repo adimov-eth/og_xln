@@ -46,7 +46,9 @@ test('webhook push transport aborts a hung delivery', async () => {
   const sender = new WebhookPushSender(
     'https://push.invalid/send',
     undefined,
-    (() => new Promise<Response>(() => {})) as typeof fetch,
+    ((_url: unknown, init?: RequestInit) => new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    })) as typeof fetch,
     5,
   );
   const result = await sender.send({

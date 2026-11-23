@@ -5,25 +5,6 @@ Use **public benchmark inputs only**: this harness is not the production native
 validation/isolation boundary. Existing V1 constants, salts and root fold remain
 unchanged. Every measured run here used exactly 10,000 shards, multiplier one.
 
-## Build and run
-
-From the repository root, check `bun run stand:status` before each heavy command.
-Always rebuild with `-B`: selecting a different make variable alone does not
-invalidate an existing output file. Build outputs are ignored under `build/`.
-
-```sh
-bun run stand:run --reason brainvault-build -- make -B -C brainvault/src/native/source/experimental VARIANT=lookahead DISTANCE=1
-bun run stand:run --reason brainvault-10k -- bun brainvault/src/native/source/experimental/benchmark.ts --mode=hybrid --shards=10000 --cpu-workers=32 --metal-workers=40 --metal-processes=8 --gpu-shards=8320
-```
-
-`VARIANT=paired` tests explicit two-word integer arithmetic with one-step
-lookahead. `VARIANT=table` builds a modified host generating a public 512-KiB
-address table once per helper. `VARIANT=lookahead DISTANCE=2` tests two-step
-lookahead, forwarding the current computed block when a reference points to it.
-Only lookahead/paired reuse the exact shipped host executable and its cleanup.
-The table variant retains the host cleanup but has additional setup failure paths
-that have not been reviewed to production depth.
-
 ## Why this preserves the dependency chain
 
 The first two Argon2id segments use data-independent references. A reference for

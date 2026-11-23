@@ -12,20 +12,17 @@ import { createRuntimeStorageApi } from '../storage/runtime-storage';
 import { rehydrateRestoredRuntimeInfra } from './recovery/j-adapter-restore';
 import { createRuntimeLoopApi } from './loop/loop.ts';
 import { createRuntimeRecoveryApi } from '../storage/recovery/restore';
-import { createRuntimeStateApi } from './replica/state-create';
+import { createEmptyEnv, prewarmRuntimeSignerCache } from './replica/state-create';
 import { loadGossipProfilesFromInfraDb } from './envelope/gossip-store';
 import { ensureRuntimeInfrastructure } from './envelope/replica-envelope';
 import { withStorageConsistentRead } from '../storage/runtime-dbs';
-import { createRuntimeCommandApi } from './command/api';
-import { runtimeInputHasQueuedWork } from './frame/transaction';
 import { admitAtomicCrossJAccountInputs } from './frame/cross-j/atomic-admission';
-import { createRuntimeInputReducer } from './frame/intake/reducer';
+import { applyRuntimeInput } from './frame/intake/reducer';
 import { createRuntimeProcessor } from './frame/process';
 import { clearRuntimeDatabases } from './envelope/storage-admin';
 import { restoreRuntimeFromRecording, type RecoveryArchiveImportOptions } from '../storage/recovery/bundle/import';
 import { loadLiveRuntimeFromDB, type RuntimeLoadOptions } from './recovery/live-restore';
 import { bootstrapRuntime, type RuntimeCreationOptions, type RuntimeLocalSigner } from './replica/bootstrap';
-import { notifyRuntimeStateChanged } from './frame/notifications';
 
 export { admitAtomicCrossJAccountInputs };
 export { quoteHtlcPaymentRoute } from '../pathfinding/htlc-quote';
@@ -41,19 +38,14 @@ export const processRuntime = async (env: RuntimeReplica, inputs?: EntityInput[]
 // frame transition; runtime.ts is intentionally only the public entrypoint.
 
 const runtimeLoopApi = createRuntimeLoopApi({
-  notifyEnvChange: env => notifyRuntimeStateChanged(env),
   processRuntime: (env, inputs) => processRuntime(env, inputs),
   waitForRuntimeProcessingIdle: (env, timeoutMs) => waitForRuntimeProcessingIdle(env, timeoutMs),
-  runtimeInputHasQueuedWork: input => runtimeInputHasQueuedWork(input),
 });
 
 const {
   registerRuntimePublishedCallback,
   registerRuntimeFrameCommitCallback,
   registerRecoveryBackupBarrier,
-  ENV_APPLY_ALLOWED_KEY,
-  ENV_REPLAY_MODE_KEY,
-  readRuntimeMetadata,
   ensureRuntimeConfig,
   getRuntimeStorageDb,
   getStorageDb,
@@ -64,10 +56,8 @@ const {
   tryOpenRuntimeWalDb,
   closeRuntimeDb,
   closeInfraDb,
-  enqueueRuntimeInputs,
   enqueueRuntimeContinuation,
   infraGossipDbAccess,
-  trackInfraDbWrite,
   hasRuntimeWork,
   prioritizeJEventFrame,
   startRuntimeLoop,
@@ -84,9 +74,7 @@ const {
   registerEntityRuntimeHint,
   handleInboundP2PEntityInput,
   handleInboundP2PEntityInputs,
-  normalizeRuntimeEntityInput,
   validateRuntimeInputAdmission,
-  getRuntimeEntityRoutingDeps,
   getRuntimeOutputRoutingDeps,
   sendEntityInput,
   startP2P,
@@ -98,13 +86,6 @@ const {
   ensureGossipProfiles,
   clearGossip,
 } = runtimeLoopApi;
-
-const failfastAssert: (
-  condition: unknown,
-  code: string,
-  message: string,
-  details?: Record<string, unknown>,
-) => asserts condition = runtimeLoopApi.failfastAssert;
 
 export type RuntimeLoopConfig = NonNullable<Parameters<typeof startRuntimeLoop>[1]>;
 
@@ -152,20 +133,6 @@ export {
   ensureGossipProfiles,
   clearGossip,
 };
-const applyRuntimeInput = createRuntimeInputReducer({
-  assertApplyAllowed: env => {
-    failfastAssert(
-      env.scenarioMode === true || readRuntimeMetadata(env, ENV_APPLY_ALLOWED_KEY) === true,
-      'RUNTIME_APPLY_DIRECT_CALL',
-      'applyRuntimeInput must be invoked via process()/WAL replay (non-scenario)',
-      { runtimeId: env.runtimeId, height: env.state.height },
-    );
-  },
-  isReplay: env => readRuntimeMetadata(env, ENV_REPLAY_MODE_KEY) === true,
-  normalizeEntityInput: normalizeRuntimeEntityInput,
-  getRoutingDeps: getRuntimeEntityRoutingDeps,
-});
-
 export type { RuntimeCreationOptions, RuntimeLocalSigner };
 
 const main = (runtimeSeedOverride?: string | null, options?: RuntimeCreationOptions): Promise<RuntimeReplica> =>
@@ -181,19 +148,11 @@ const main = (runtimeSeedOverride?: string | null, options?: RuntimeCreationOpti
   );
 
 // Clear database for a specific runtime and return a fresh env
-export { applyRuntimeInput, main, assertBrowserVMJurisdiction };
+export { applyRuntimeInput, createEmptyEnv, prewarmRuntimeSignerCache, main, assertBrowserVMJurisdiction };
 
 // Runtime is a pure library - no auto-execution side effects.
 // Browser and server entrypoints call xln.main() explicitly.
 
-const runtimeStateApi = createRuntimeStateApi({
-  ensureRuntimeConfig,
-  infraGossipDbAccess,
-  trackInfraDbWrite,
-});
-
-export const prewarmRuntimeSignerCache = runtimeStateApi.prewarmRuntimeSignerCache;
-export const createEmptyEnv = runtimeStateApi.createEmptyEnv;
 export { canonicalEntitySeed, importEntity } from './registration/entity-creation';
 
 const runtimeRecoveryApi = createRuntimeRecoveryApi({
@@ -349,11 +308,8 @@ export const clearDB = async (env?: RuntimeReplica): Promise<void> => {
   await clearRuntimeDatabases(targetEnv, runtimeLoopApi);
 };
 
-const runtimeCommandApi = createRuntimeCommandApi({
-  enqueueRuntimeInputs,
-  getRuntimeOutputRoutingDeps,
-});
-
-export const submitCrossJurisdictionIntent = runtimeCommandApi.submitCrossJurisdictionIntent;
-export const submitCrossJurisdictionIntents = runtimeCommandApi.submitCrossJurisdictionIntents;
-export const submitCrossJurisdictionSwap = runtimeCommandApi.submitCrossJurisdictionSwap;
+export {
+  submitCrossJurisdictionIntent,
+  submitCrossJurisdictionIntents,
+  submitCrossJurisdictionSwap,
+} from './command/api';

@@ -1,9 +1,5 @@
 import { expect, test } from 'bun:test';
 
-import {
-  createMarketMakerServerState,
-  getMarketMakerHealth as getServerMarketMakerHealth,
-} from '../../../api/server/health/market-maker';
 import { buildDefaultEntitySwapPairs, getTokenInfo } from '../../../account/utils';
 import { deriveSwapNetAuthorization } from '../../../account/swap/swap-net-authorization';
 import { handleSwapOffer } from '../../../account/tx/handlers/swap/offer/index';
@@ -84,116 +80,6 @@ test('default market maker depth fits every quote leg and aggregate hold inside 
       expect(aggregateGive).toBeLessThanOrEqual(getBootstrapCreditAmount(tokenId));
     }
   }
-});
-
-test('market maker server health treats absent cross topology as neutral', () => {
-  const state = createMarketMakerServerState();
-  state.entityId = 'mm';
-  state.targetHubIds = ['hub'];
-  state.tokenIds = [1, 2, 3];
-
-  const health = getServerMarketMakerHealth({} as RuntimeReplica, state, () => null);
-
-  expect(health.cross.applicable).toBe(false);
-  expect(health.cross.ok).toBe(true);
-  expect(health.cross.expectedRoutes).toBe(0);
-  expect(health.cross.routes).toEqual([]);
-});
-
-test('market maker server health is ready with one committed offer per pair before full depth', () => {
-  const state = createMarketMakerServerState();
-  state.entityId = 'mm';
-  state.targetHubIds = ['0x0000000000000000000000000000000000abcdef'];
-  state.tokenIds = [1, 2, 3];
-
-  const account = {
-    state: { swapOffers: new Map([
-      ['mm-abcdef-2-1-ask-1', {}],
-      ['mm-abcdef-1-3-ask-1', {}],
-      ['mm-abcdef-2-3-ask-1', {}],
-    ]) },
-    currentHeight: 1,
-    mempool: [],
-    pendingFrame: null,
-  };
-  const health = getServerMarketMakerHealth({} as RuntimeReplica, state, () => account as any);
-
-  expect(health.ok).toBe(true);
-  expect(health.hubs[0]?.ready).toBe(true);
-  expect(health.hubs[0]?.depthReady).toBe(false);
-  expect(health.hubs[0]?.pairs.map(pair => ({
-    pairId: pair.pairId,
-    offers: pair.offers,
-    ready: pair.ready,
-    depthReady: pair.depthReady,
-  }))).toEqual([
-    { pairId: '1/2', offers: 1, ready: true, depthReady: false },
-    { pairId: '1/3', offers: 1, ready: true, depthReady: false },
-    { pairId: '2/3', offers: 1, ready: true, depthReady: false },
-  ]);
-});
-
-test('market maker server health reports depthReady at full configured depth', () => {
-  const state = createMarketMakerServerState();
-  state.entityId = 'mm';
-  state.targetHubIds = ['0x0000000000000000000000000000000000abcdef'];
-  state.tokenIds = [1, 2, 3];
-
-  const offers = new Map<string, unknown>();
-  for (const pair of buildDefaultEntitySwapPairs(state.tokenIds)) {
-    const pairKey = `${pair.baseTokenId}-${pair.quoteTokenId}`;
-    for (const side of ['ask', 'bid']) {
-      for (let level = 1; level <= 10; level += 1) {
-        offers.set(`mm-abcdef-${pairKey}-${side}-${level}`, {});
-      }
-    }
-  }
-  const health = getServerMarketMakerHealth({} as RuntimeReplica, state, () => ({
-    state: { swapOffers: PersistentAccountStateMap.fromEntries('swapOffers', offers) },
-    currentHeight: 1,
-    mempool: [],
-    pendingFrame: null,
-  } as any));
-
-  expect(health.ok).toBe(true);
-  expect(health.expectedOffersPerPair).toBe(20);
-  expect(health.expectedOffersPerHub).toBe(60);
-  expect(health.hubs[0]?.depthReady).toBe(true);
-});
-
-test('market maker server health does not count pending offers as bootstrap-ready', () => {
-  const state = createMarketMakerServerState();
-  state.entityId = 'mm';
-  state.targetHubIds = ['0x0000000000000000000000000000000000abcdef'];
-  state.tokenIds = [1, 2, 3];
-
-  const pendingOffers = [];
-  for (const pair of buildDefaultEntitySwapPairs(state.tokenIds)) {
-    const pairKey = `${pair.baseTokenId}-${pair.quoteTokenId}`;
-    for (const side of ['ask', 'bid']) {
-      for (let level = 1; level <= 10; level += 1) {
-        pendingOffers.push({
-          type: 'swap_offer',
-          data: { offerId: `mm-abcdef-${pairKey}-${side}-${level}` },
-        });
-      }
-    }
-  }
-
-  const health = getServerMarketMakerHealth({} as RuntimeReplica, state, () => ({
-    state: { swapOffers: new Map() },
-    currentHeight: 1,
-    mempool: [],
-    pendingFrame: {
-      height: 2,
-      accountTxs: pendingOffers,
-    },
-  } as any));
-
-  expect(health.ok).toBe(false);
-  expect(health.hubs[0]?.offers).toBe(0);
-  expect(health.hubs[0]?.depthReady).toBe(false);
-  expect(health.hubs[0]?.blockers).toEqual([]);
 });
 
 test('market snapshots expose order counts for aggregated price levels', () => {

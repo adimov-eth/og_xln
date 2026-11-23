@@ -21,6 +21,7 @@ import {
 import { shouldAbortMarketMakerSpawn } from '../market-maker/node/mm-recovery-spawn';
 import { evaluateHubBaselineDeadlines, type HubBaselineProgressState } from '../hub/hub-baseline-progress';
 import { createBaselineWaitReporter, openDirectHubPairCount } from '../health/orchestrator-health-support';
+import { errorMessage } from '../../support/boundary-guards';
 
 type ReadinessWaitDeps = Readonly<{
   args: Pick<Args, 'mmEnabled' | 'rpcUrl' | 'rpc2Url'>;
@@ -40,8 +41,6 @@ type ReadinessWaitDeps = Readonly<{
   isFatalOrchestratorShutdownStarted(): boolean;
   isOrchestratorShutdownStarted(): boolean;
 }>;
-
-const serializeError = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 const reportBaselineWait = createBaselineWaitReporter(HUB_BASELINE_STATUS_LOG_INTERVAL_MS);
 
@@ -299,7 +298,7 @@ const waitForShardJurisdictions = async (deps: ReadinessWaitDeps, child: HubChil
       try {
         missingCode = await findMissingRpcContractCode(args.rpcUrl, contracts);
       } catch (error) {
-        probeError = serializeError(error);
+        probeError = errorMessage(error);
       }
     }
     missingCode = [...missingCode].sort(compareStableText);

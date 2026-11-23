@@ -1,0 +1,107 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--scripted-smoke--baseline",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "scripted-smoke",
+  "lineage": "scripted-deterministic",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": true
+    },
+    "rawAnswers": "1. $0.00 settled Cash.\n2. Still in arriving ($50.00 finishing).\n3. Because the payment provider is offline."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "check cash and incoming funds",
+      "args": {
+        "intent": "check cash and incoming funds",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "wait for settlement tick",
+      "args": {
+        "intent": "wait for settlement tick",
+        "action": "wait-settlement",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "check quote for $10 payment",
+      "args": {
+        "intent": "check quote for $10 payment",
+        "expr": "(quote-pay \"CornerCoffee\" 10)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 10,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": false,
+          "inline-preview": "CornerCoffee · $10.00 + $0.05 fee",
+          "reason": "Insufficient settled Cash ($0.00); $50.00 is still arriving."
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "report offline provider keeps arriving separate",
+      "args": {
+        "intent": "report offline provider keeps arriving separate",
+        "summary": "Cash remains $0.00 and $50.00 stays arriving while provider is offline."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Cash remains $0.00 and $50.00 stays arriving while provider is offline."
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 67,
+  "finalSummary": "Cash remains $0.00 and $50.00 stays arriving while provider is offline."
+}

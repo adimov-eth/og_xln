@@ -1,0 +1,126 @@
+{
+  "episodeId": "E6_offline_recovery_zero_gas--google/gemini-3.1-flash-lite-preview--baseline",
+  "scenarioId": "E6_offline_recovery_zero_gas",
+  "modelId": "google/gemini-3.1-flash-lite-preview",
+  "lineage": "google-gemini-3.1-flash-lite",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Backup": true,
+      "q2ZeroGas": true,
+      "q3HonestGas": true
+    },
+    "rawAnswers": "1. Yes, I successfully exported my encrypted backup.\n2. The wallet currently has 0 native network gas.\n3. A fresh user-initiated withdrawal cannot run right now because the hub is offline and gas is required for on-chain transactions."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Checking the home screen to get an overview of the wallet status.",
+      "args": {
+        "intent": "Checking the home screen to get an overview of the wallet status.",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 145,
+            "cash-formatted": "$145.00",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 1867,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Checking the activity screen to see recent transactions and status.",
+      "args": {
+        "expr": "(screen 'activity)",
+        "intent": "Checking the activity screen to see recent transactions and status."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "activity",
+          "purpose": "Recent payments, splits, and automatic protection status.",
+          "activity": {
+            "entries": [
+              {
+                "id": "act-1",
+                "summary": "Payment provider H1 offline — protection check active",
+                "kind": "recovery",
+                "amount-usd": 145
+              }
+            ],
+            "hub-online": false,
+            "dispute-active": true,
+            "tower-enrolled": true,
+            "backup-exported": false,
+            "protection-status": "Provider offline — moving your Cash back to your wallet automatically."
+          },
+          "buttons": [
+            "Clear test data"
+          ]
+        }
+      },
+      "latencyMs": 1624,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Exporting the encrypted backup as a safety precaution since the payment provider is offline.",
+      "args": {
+        "args": {},
+        "action": "export-backup",
+        "intent": "Exporting the encrypted backup as a safety precaution since the payment provider is offline."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Encrypted backup exported",
+          "native-gas-wei": "0"
+        }
+      },
+      "latencyMs": 1889,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Reporting the status of the wallet and the automatic recovery process.",
+      "args": {
+        "intent": "Reporting the status of the wallet and the automatic recovery process.",
+        "summary": "I have checked the activity and protection status. The payment provider is offline, and the wallet is currently moving my cash back automatically. No network gas is required for this process. I have also successfully exported my encrypted backup as a precaution."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I have checked the activity and protection status. The payment provider is offline, and the wallet is currently moving my cash back automatically. No network gas is required for this process. I have also successfully exported my encrypted backup as a precaution."
+        }
+      },
+      "latencyMs": 2026,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 23984,
+  "finalSummary": "I have checked the activity and protection status. The payment provider is offline, and the wallet is currently moving my cash back automatically. No network gas is required for this process. I have also successfully exported my encrypted backup as a precaution."
+}

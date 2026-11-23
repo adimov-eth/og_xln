@@ -3,7 +3,6 @@ import type { Profile } from '../../../entity/profile';
 import { createRelayStore, storeVerifiedGossipProfile } from '../../../network/relay/store';
 import { createEmptyEnv } from '../../../runtime';
 import { handleRuntimeHealth, type RuntimeHealthCacheEntry, type RuntimeHealthDeps } from '../../../api/server/health/api';
-import { createMarketMakerServerState } from '../../../api/server/health/market-maker';
 import { acquireRuntimeFrameWriter } from '../../../runtime/frame/lifecycle/writer-lock';
 import {
   buildCryptographicProfileFixture,
@@ -58,10 +57,6 @@ const createHealthDeps = () => {
       error: 'operator-only boot error',
     },
     activeHubEntityIds: [],
-    marketMakerState: createMarketMakerServerState(),
-    getAccountReplica(): never {
-      throw new Error('getAccountReplica must not be called without env');
-    },
     ensureTokenCatalog(): never {
       throw new Error('ensureTokenCatalog must not be called without env');
     },

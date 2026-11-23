@@ -12,6 +12,7 @@ import {
 } from '../api/public/external-wallet/http';
 import type { HubChild } from './orchestrator-types';
 import { fetchRpcProxyText, readRpcProxyRequest, RpcProxyError } from '../api/server/rpc/proxy-safety';
+import { errorMessage } from '../support/boundary-guards';
 
 type ProxyHubEndpoint =
   | '/api/faucet/offchain';
@@ -51,10 +52,8 @@ const CHAIN_FAUCET_ENDPOINTS = new Set([
   '/api/faucet/erc20', '/api/faucet/gas', '/api/faucet/reserve',
 ]);
 
-const serializeError = (error: unknown): string => error instanceof Error ? error.message : String(error);
-
 const publicRpcProxyError = (error: unknown): string => {
-  const message = serializeError(error);
+  const message = errorMessage(error);
   const timeout = message.match(/PROXY_UPSTREAM_TIMEOUT:\d+/)?.[0];
   if (timeout) return timeout;
   if (error instanceof RpcProxyError) return error.code;
@@ -98,19 +97,15 @@ const fetchTextWithTimeout = async (
   init: RequestInit,
   timeoutMs: number,
 ): Promise<{ response: Response; text: string }> => {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
     const text = await response.text();
     return { response, text };
   } catch (error) {
-    if ((error as Error)?.name === 'AbortError') {
+    if ((error as Error)?.name === 'TimeoutError') {
       throw new Error(`PROXY_UPSTREAM_TIMEOUT:${timeoutMs}`);
     }
     throw error;
-  } finally {
-    clearTimeout(timeoutHandle);
   }
 };
 
@@ -210,7 +205,7 @@ const proxyHubApi = async (
       const bodyError = error instanceof RequestBodyError ? error : null;
       return new Response(safeStringify({
         success: false,
-        error: bodyError?.message ?? `Invalid JSON: ${serializeError(error)}`,
+        error: bodyError?.message ?? `Invalid JSON: ${errorMessage(error)}`,
         ...(bodyError ? { code: bodyError.code } : {}),
       }), {
         status: bodyError?.status ?? 400,
@@ -252,7 +247,7 @@ const proxyHubApi = async (
       return new Response(safeStringify(proxyFailureBody({
         success: false,
         code: 'FAUCET_PROXY_FAILED',
-        error: serializeError(error),
+        error: errorMessage(error),
       })), {
         status: 502,
         headers: proxyHeaders(),
@@ -297,7 +292,7 @@ const proxyEntityHubApi = async (
       const requestBodyError = error instanceof RequestBodyError ? error : null;
       return new Response(safeStringify({
         success: false,
-        error: requestBodyError?.message ?? `Invalid JSON: ${serializeError(error)}`,
+        error: requestBodyError?.message ?? `Invalid JSON: ${errorMessage(error)}`,
         ...(requestBodyError ? { code: requestBodyError.code } : {}),
       }), {
         status: requestBodyError?.status ?? 400,
@@ -352,7 +347,7 @@ const proxyEntityHubApi = async (
       return new Response(safeStringify(proxyFailureBody({
         success: false,
         code: 'ENTITY_HUB_PROXY_FAILED',
-        error: serializeError(error),
+        error: errorMessage(error),
       })), {
         status: 502,
         headers: proxyHeaders(),
@@ -372,7 +367,7 @@ const proxyAnyHubGet = async (
     } catch (error) {
       return new Response(safeStringify(proxyFailureBody({
         code: 'HUB_PROXY_ENDPOINT_INVALID',
-        error: serializeError(error),
+        error: errorMessage(error),
       })), { status: 400, headers: CORS_JSON_HEADERS });
     }
     const requestedHubId = String(parsedEndpoint.searchParams.get('hubEntityId') || '').trim().toLowerCase();
@@ -411,7 +406,7 @@ const proxyAnyHubGet = async (
     } catch (error) {
       return new Response(safeStringify(proxyFailureBody({
         code: 'HUB_API_PROXY_FAILED',
-        error: serializeError(error),
+        error: errorMessage(error),
         extra: requestedHubId ? { hubEntityId: requestedHubId, apiPort: child.apiPort } : {},
       })), {
         status: 502,
@@ -479,7 +474,7 @@ const proxyAnyHubRequest = async (
     } catch (error) {
       return new Response(safeStringify(proxyFailureBody({
         code: 'HUB_API_PROXY_FAILED',
-        error: serializeError(error),
+        error: errorMessage(error),
       })), {
         status: 502,
         headers: CORS_JSON_HEADERS,

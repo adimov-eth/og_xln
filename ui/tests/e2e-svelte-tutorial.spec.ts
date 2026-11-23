@@ -1,13 +1,14 @@
 import { expect, test } from '@playwright/test';
 import { WALLET_LESSONS } from '../../frontend/src/lib/tutorial/curriculum';
+import { gotoProWallet } from './wallet-ui';
 
 test(
   'Svelte tutorial walks all feature workspaces and resumes the same chapter',
   { tag: '@functional' },
   async ({ page }) => {
     test.setTimeout(60_000);
-    await page.goto('/app');
-    await expect(page).toHaveURL(/\/app$/);
+    await gotoProWallet(page, '/app');
+    await expect(page).toHaveURL(/\/app(?:\?[^#]*)?$/);
     await page.getByRole('button', { name: 'Create or restore a personal wallet', exact: true }).click();
     await page.locator('#name').fill(`tutorial-${crypto.randomUUID()}`);
     await page.getByLabel('Secret passphrase', { exact: true }).fill('Disposable tutorial test wallet 2026!');

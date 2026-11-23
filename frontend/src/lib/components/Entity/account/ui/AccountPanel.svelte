@@ -648,7 +648,7 @@ import type { AccountReadView, EntityReadView } from '#lib/components/Entity/cor
     --account-panel-text: var(--theme-text-primary, #e4e4e7);
     --account-panel-text-secondary: var(--theme-text-secondary, #a1a1aa);
     --account-panel-text-muted: var(--theme-text-muted, #71717a);
-    --account-panel-accent: var(--theme-accent, #fbbf24);
+    --account-panel-accent: var(--theme-accent, #c5cfde);
     --account-panel-credit: var(--theme-credit, #4ade80);
     --account-panel-debit: var(--theme-debit, #f43f5e);
     display: flex;

@@ -118,7 +118,7 @@
     <section class="invoice-builder">
       <div class="field">
         <div class="field-label">Amount</div>
-        <input type="text" bind:value={amount} data-testid="receive-invoice-amount" aria-label="Invoice amount" />
+        <input class="money-input" type="text" inputmode="decimal" placeholder="0" bind:value={amount} data-testid="receive-invoice-amount" aria-label="Invoice amount" />
       </div>
       <div class="field">
         <div class="field-label">Asset</div>
@@ -191,20 +191,20 @@
   .receive-intro h3 {
     margin: 0 0 6px;
     font-size: 18px;
-    color: #f5efe6;
+    color: var(--theme-text-primary, #f5efe6);
   }
 
   .receive-intro p {
     margin: 0;
-    color: #9a948b;
+    color: var(--theme-text-secondary, #9a948b);
     font-size: 14px;
   }
 
   .entity-id-card,
   .invoice-builder,
   .invoice-preview {
-    background: #171513;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--theme-surface, #121418);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
     border-radius: 16px;
   }
 
@@ -217,7 +217,7 @@
 
   .entity-id-label,
   .field-label {
-    color: #8d857d;
+    color: var(--theme-text-secondary, #8d857d);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     font-size: 11px;
@@ -227,7 +227,7 @@
   .entity-id-card code,
   .invoice-string code {
     font-family: 'JetBrains Mono', monospace;
-    color: #f5efe6;
+    color: var(--theme-text-primary, #f5efe6);
     word-break: break-all;
   }
 
@@ -257,15 +257,15 @@
     min-height: var(--receive-field-h);
     padding: 0 14px;
     border-radius: var(--receive-field-radius);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: #211d1a;
-    color: #f5efe6;
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
+    background: var(--theme-surface-hover, #1b1e24);
+    color: var(--theme-text-primary, #f5efe6);
     font-size: 14px;
   }
 
   .field input:focus {
     outline: none;
-    border-color: #fbbf24;
+    border-color: var(--theme-input-focus, #c5cfde);
   }
 
   .token-field :global(.token-select) {
@@ -275,7 +275,7 @@
   .token-field :global(.select-trigger) {
     min-height: var(--receive-field-h);
     border-radius: var(--receive-field-radius);
-    background: #211d1a;
+    background: var(--theme-surface-hover, #1b1e24);
   }
 
   .invoice-actions {
@@ -294,18 +294,18 @@
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
   }
 
   .primary-inline {
-    background: linear-gradient(180deg, #8d5421, #a16207);
-    color: #fff7ed;
-    border-color: #ca8a04;
+    background: var(--theme-primary-metal);
+    color: var(--theme-accent-contrast, #050608);
+    border-color: var(--theme-accent, #c5cfde);
   }
 
   .secondary-inline {
-    background: rgba(255, 255, 255, 0.04);
-    color: #f5efe6;
+    background: color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
+    color: var(--theme-text-primary, #f5efe6);
   }
 
   .secondary-inline:disabled {
@@ -317,7 +317,7 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    color: #f5efe6;
+    color: var(--theme-text-primary, #f5efe6);
     font-weight: 700;
   }
 
@@ -327,8 +327,8 @@
     aspect-ratio: 1;
     border-radius: 16px;
     align-self: center;
-    background: #0e0c0b;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--theme-background, #07080b);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
     object-fit: contain;
     display: block;
   }
@@ -336,7 +336,7 @@
   .qr-placeholder {
     display: grid;
     place-items: center;
-    color: #8d857d;
+    color: var(--theme-text-secondary, #8d857d);
     font-size: 14px;
   }
 
@@ -352,8 +352,8 @@
     overflow: auto;
     padding: 12px 14px;
     border-radius: 12px;
-    background: #211d1a;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--theme-surface-hover, #1b1e24);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
   }
 
   .invoice-error {

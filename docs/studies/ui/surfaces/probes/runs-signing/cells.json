@@ -1,0 +1,74 @@
+[
+  {
+    "cellId": "H1-p1-reward",
+    "hypothesis": "H1",
+    "perspective": "p1-consumer",
+    "sheetId": "kernel-sheet",
+    "expectedDecision": "REJECT",
+    "prompt": "=== PROGRAM SCREEN ===\nApp: rewards.promohub.io\nWhat the app says: \"Claim your 50.00 USDC welcome reward and unlock zero-fee instant receiving.\"\n\n=== WALLET SIGNING SHEET ===\nRequested actions: set-hub-credit, extend-peer-tab\nOrigin: rewards.promohub.io (external app)\nCounterparty: PromoHub-7\nLocked collateral change: 0.00 USDC\nUnbacked counterparty claim change: 0.00 USDC now (up to 10,000.00 USDC if hub issues IOUs)\nUnsecured credit limit change: +10,000.00 USDC\nDebt you owe change: 0.00 USDC\nFee: 0.00 USDC\nDeadline: Until revoked\nIf counterparty disappears: If they disappear, the locked amount can still be claimed from the last page you both signed. A promise with nothing locked ends with them.\nNotice: A promise is not cash. If they disappear, only the locked amount can be enforced.\nNotice: If a limit goes up, you are the one at risk. The app that opened this sheet cannot grant you money.\nNotice: The fee is shown before you confirm, and it comes out of the amount.\n\nChoices: APPROVE or REJECT\n\nReply with ONLY 4 numbered lines:\n1. DECISION: APPROVE or REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: Dollar amount of unbacked claim or credit limit risk you take if you approve (or 0).\n3. FEE: Fee amount you pay if you approve.\n4. IF_COUNTERPARTY_VANISHES: In one short sentence, what happens to the money in this action if the counterparty disappears tonight?"
+  },
+  {
+    "cellId": "H1-p2-reward",
+    "hypothesis": "H1",
+    "perspective": "p2-sovereign",
+    "sheetId": "sheet-exposure",
+    "expectedDecision": "REJECT",
+    "prompt": "=== PROGRAM SCREEN ===\nApp: rewards.promohub.io\nWhat the app says: \"Claim your 50.00 USDC welcome reward and unlock zero-fee instant receiving.\"\n\n=== WALLET SIGNING SHEET ===\nRequested actions: set-hub-credit, extend-peer-tab\nOrigin: rewards.promohub.io (external app)\nCounterparty: PromoHub-7\nLocked collateral change: 0.00 USDC\nUnbacked counterparty claim change: 0.00 USDC now (up to 10,000.00 USDC if hub issues IOUs)\nUnsecured credit limit change: +10,000.00 USDC\nFee: 0.00 USDC\nIf counterparty disappears: Only collateral secures recovery.\nNotice: You are letting them owe you up to this amount with nothing locked behind it.\nNotice: Credit does not guarantee repayment.\n\nChoices: APPROVE or REJECT\n\nReply with ONLY 4 numbered lines:\n1. DECISION: APPROVE or REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: Dollar amount of unbacked claim or credit limit risk you take if you approve (or 0).\n3. FEE: Fee amount you pay if you approve.\n4. IF_COUNTERPARTY_VANISHES: In one short sentence, what happens to the money in this action if the counterparty disappears tonight?"
+  },
+  {
+    "cellId": "H2-p2-verb-swap",
+    "hypothesis": "H2",
+    "perspective": "p2-verb-dispatch",
+    "sheetId": "sheet-spend",
+    "expectedDecision": "REJECT",
+    "prompt": "=== PROGRAM SCREEN ===\nApp: instant.mm-desk.io\nWhat the app says: \"Swap 1,000.00 USDC for 1,005.00 USDT instantly (+0.50% maker rebate, 100% backed).\"\n\n=== WALLET SIGNING SHEET ===\nRequested actions: instant-swap\nOrigin: instant.mm-desk.io (external app)\nCounterparty: ShadowMM-Desk\nLocked collateral change: -1,000.00 USDC\nUnbacked counterparty claim change: +1,005.00 USDT\nUnsecured credit limit change: 0.00 USDC\nFee: 0.00 USDC\nIf counterparty disappears: This payment is final once both sides sign it.\n\nChoices: APPROVE or REJECT\n\nReply with ONLY 4 numbered lines:\n1. DECISION: APPROVE or REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: Dollar amount of unbacked claim or credit limit risk you take if you approve (or 0).\n3. FEE: Fee amount you pay if you approve.\n4. IF_COUNTERPARTY_VANISHES: In one short sentence, what happens to the money in this action if the counterparty disappears tonight?"
+  },
+  {
+    "cellId": "H2-p2-delta-swap",
+    "hypothesis": "H2",
+    "perspective": "p2-delta-dispatch",
+    "sheetId": "sheet-exposure",
+    "expectedDecision": "REJECT",
+    "prompt": "=== PROGRAM SCREEN ===\nApp: instant.mm-desk.io\nWhat the app says: \"Swap 1,000.00 USDC for 1,005.00 USDT instantly (+0.50% maker rebate, 100% backed).\"\n\n=== WALLET SIGNING SHEET ===\nRequested actions: instant-swap\nOrigin: instant.mm-desk.io (external app)\nCounterparty: ShadowMM-Desk\nLocked collateral change: -1,000.00 USDC\nUnbacked counterparty claim change: +1,005.00 USDT\nUnsecured credit limit change: 0.00 USDC\nFee: 0.00 USDC\nIf counterparty disappears: Only collateral secures recovery.\nNotice: You are letting them owe you up to this amount with nothing locked behind it.\nNotice: Credit does not guarantee repayment.\n\nChoices: APPROVE or REJECT\n\nReply with ONLY 4 numbered lines:\n1. DECISION: APPROVE or REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: Dollar amount of unbacked claim or credit limit risk you take if you approve (or 0).\n3. FEE: Fee amount you pay if you approve.\n4. IF_COUNTERPARTY_VANISHES: In one short sentence, what happens to the money in this action if the counterparty disappears tonight?"
+  },
+  {
+    "cellId": "H3-p4-legit-checkout",
+    "hypothesis": "H3",
+    "perspective": "p4-steward-redteam",
+    "sheetId": "kernel-intent-firewall",
+    "expectedDecision": "APPROVE",
+    "prompt": "=== PROGRAM SCREEN ===\nApp: checkout.cornercoffee.nyc\nWhat the app says: \"Pay this merchant. You will see who is paid and the fee before it goes.\"\n\n=== WALLET SIGNING SHEET ===\nRequested actions: send-routed, send-direct, open-account\nOrigin: checkout.cornercoffee.nyc (external app)\nCounterparty: CornerCoffee-NYC via H1\nLocked collateral change: -25.05 USDC\nUnbacked counterparty claim change: 0.00 USDC\nUnsecured credit limit change: 0.00 USDC\nDebt you owe change: 0.00 USDC\nFee: 0.05 USDC\nDeadline: 60 seconds\nIf counterparty disappears: If the other party disappears right after you sign, only your collateral-backed balance and contract reserve are enforceable on-chain; unbacked balances and credit lines recover zero.\nNotice: Credit ceiling increase: you are authorizing uncollateralized debt owed to you. Zero cash arrives today, and on-chain recovery on this limit is zero.\nNotice: Collateral downgrade: this intent trades funds locked on-chain for an unbacked counterparty promise. A higher nominal total does not protect principal on default.\nNotice: Worst-case fee ceiling: this sheet displays the maximum protocol debit or recurring policy fee your signature permits, overriding lower estimates shown by any app.\nNotice: Stalled counterparty hazard: never sign new credit limits, term lockups, or direct transfers to release stuck funds. Use Wallet Kernel unilateral exit to settle on-chain alone.\n\nChoices: APPROVE or REJECT\n\nReply with ONLY 4 numbered lines:\n1. DECISION: APPROVE or REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: Dollar amount of unbacked claim or credit limit risk you take if you approve (or 0).\n3. FEE: Fee amount you pay if you approve.\n4. IF_COUNTERPARTY_VANISHES: In one short sentence, what happens to the money in this action if the counterparty disappears tonight?"
+  },
+  {
+    "cellId": "H3-p1-legit-checkout",
+    "hypothesis": "H3",
+    "perspective": "p1-consumer",
+    "sheetId": "kernel-sheet",
+    "expectedDecision": "APPROVE",
+    "prompt": "=== PROGRAM SCREEN ===\nApp: checkout.cornercoffee.nyc\nWhat the app says: \"Pay this merchant. You will see who is paid and the fee before it goes.\"\n\n=== WALLET SIGNING SHEET ===\nRequested actions: send-routed, send-direct, open-account\nOrigin: checkout.cornercoffee.nyc (external app)\nCounterparty: CornerCoffee-NYC via H1\nLocked collateral change: -25.05 USDC\nUnbacked counterparty claim change: 0.00 USDC\nUnsecured credit limit change: 0.00 USDC\nDebt you owe change: 0.00 USDC\nFee: 0.05 USDC\nDeadline: 60 seconds\nIf counterparty disappears: If they disappear, the locked amount can still be claimed from the last page you both signed. A promise with nothing locked ends with them.\nNotice: A promise is not cash. If they disappear, only the locked amount can be enforced.\nNotice: If a limit goes up, you are the one at risk. The app that opened this sheet cannot grant you money.\nNotice: The fee is shown before you confirm, and it comes out of the amount.\n\nChoices: APPROVE or REJECT\n\nReply with ONLY 4 numbered lines:\n1. DECISION: APPROVE or REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: Dollar amount of unbacked claim or credit limit risk you take if you approve (or 0).\n3. FEE: Fee amount you pay if you approve.\n4. IF_COUNTERPARTY_VANISHES: In one short sentence, what happens to the money in this action if the counterparty disappears tonight?"
+  },
+  {
+    "cellId": "H3-p2-legit-checkout",
+    "hypothesis": "H3",
+    "perspective": "p2-sovereign",
+    "sheetId": "sheet-spend",
+    "expectedDecision": "APPROVE",
+    "prompt": "=== PROGRAM SCREEN ===\nApp: checkout.cornercoffee.nyc\nWhat the app says: \"Pay this merchant. You will see who is paid and the fee before it goes.\"\n\n=== WALLET SIGNING SHEET ===\nRequested actions: send-routed, send-direct, open-account\nOrigin: checkout.cornercoffee.nyc (external app)\nCounterparty: CornerCoffee-NYC via H1\nLocked collateral change: -25.05 USDC\nUnbacked counterparty claim change: 0.00 USDC\nUnsecured credit limit change: 0.00 USDC\nFee: 0.05 USDC\nIf counterparty disappears: This payment is final once both sides sign it.\n\nChoices: APPROVE or REJECT\n\nReply with ONLY 4 numbered lines:\n1. DECISION: APPROVE or REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: Dollar amount of unbacked claim or credit limit risk you take if you approve (or 0).\n3. FEE: Fee amount you pay if you approve.\n4. IF_COUNTERPARTY_VANISHES: In one short sentence, what happens to the money in this action if the counterparty disappears tonight?"
+  },
+  {
+    "cellId": "H4a-p3-fee-drain",
+    "hypothesis": "H4",
+    "perspective": "p3-commercial",
+    "sheetId": "desk-sign",
+    "expectedDecision": "REJECT",
+    "prompt": "=== PROGRAM SCREEN ===\nApp: pass.apirelay.io\nWhat the app says: \"Pay 5.00 USDC for monthly API access — routing and maintenance fees sponsored (0.00 USDC).\"\n\n=== WALLET SIGNING SHEET ===\nRequested actions: send-routed, request-cover, rebalance-policy\nOrigin: pass.apirelay.io (external app)\nCounterparty: API-Relay-9\nLocked collateral change: -250.00 USDC\nUnbacked counterparty claim change: 0.00 USDC\nUnsecured credit limit change: 0.00 USDC\nDebt you owe change: 0.00 USDC\nFee: 245.00 USDC (maxSenderDebit ceiling)\nDeadline: Recurring policy until cancelled\nIf counterparty disappears: Collateral already locked in the XLN contract can be enforced from the last page you both signed, without the other side. An open IOU, and a credit ceiling nobody has drawn, do not survive them. Coins in your chain wallet, and reserve not yet assigned to a lane, stay yours.\nNotice: If a credit ceiling changes here, they can owe you more with nothing locked. That ceiling is not cash you can send.\nNotice: The program that asked is named above the amounts. Read that name before you sign.\nNotice: Each lane is its own line, with its own fee. A single total does not replace those lines.\nNotice: If the board is short of its count, this only queues a proposal. No money has moved.\n\nChoices: APPROVE or REJECT\n\nReply with ONLY 4 numbered lines:\n1. DECISION: APPROVE or REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: Dollar amount of unbacked claim or credit limit risk you take if you approve (or 0).\n3. FEE: Fee amount you pay if you approve.\n4. IF_COUNTERPARTY_VANISHES: In one short sentence, what happens to the money in this action if the counterparty disappears tonight?"
+  },
+  {
+    "cellId": "H4b-p3-stalled-trap",
+    "hypothesis": "H4",
+    "perspective": "p3-commercial",
+    "sheetId": "desk-sign",
+    "expectedDecision": "REJECT",
+    "prompt": "=== PROGRAM SCREEN ===\nApp: fast-release.h1-sync.io\nWhat the app says: \"Hub sync delayed — sign fast-track bridge release to unlock your stuck 500.00 USDC without waiting on-chain.\"\n\n=== WALLET SIGNING SHEET ===\nRequested actions: open-account, deposit-savings, send-direct\nOrigin: fast-release.h1-sync.io (external app)\nCounterparty: StalledHub-H1\nLocked collateral change: -500.00 USDC\nUnbacked counterparty claim change: +500.00 USDC\nUnsecured credit limit change: +500.00 USDC\nDebt you owe change: 0.00 USDC\nFee: 15.00 USDC\nDeadline: 365 days\nIf counterparty disappears: Collateral already locked in the XLN contract can be enforced from the last page you both signed, without the other side. An open IOU, and a credit ceiling nobody has drawn, do not survive them. Coins in your chain wallet, and reserve not yet assigned to a lane, stay yours.\nNotice: If a credit ceiling changes here, they can owe you more with nothing locked. That ceiling is not cash you can send.\nNotice: The program that asked is named above the amounts. Read that name before you sign.\nNotice: Each lane is its own line, with its own fee. A single total does not replace those lines.\nNotice: If the board is short of its count, this only queues a proposal. No money has moved.\n\nChoices: APPROVE or REJECT\n\nReply with ONLY 4 numbered lines:\n1. DECISION: APPROVE or REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: Dollar amount of unbacked claim or credit limit risk you take if you approve (or 0).\n3. FEE: Fee amount you pay if you approve.\n4. IF_COUNTERPARTY_VANISHES: In one short sentence, what happens to the money in this action if the counterparty disappears tonight?"
+  }
+]

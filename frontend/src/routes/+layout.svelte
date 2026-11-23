@@ -6,9 +6,9 @@
 	import Toast from '#lib/components/Toast.svelte';
 	import XlnMascot from '#lib/components/XlnMascot/XlnMascot.svelte';
 	import { initializeNativeShell } from '#lib/native/capacitor.ts';
-	import { installRangeSliderProgress } from '#lib/utils/rangeSliderProgress.ts';
 	import { optionalString, readJsonUnknown, rejectExtraKeys, requireUnknownRecord } from '#lib/utils/boundary/index.ts';
 	import '#lib/styles/apple-glass.css';
+	import '#lib/styles/themes.css';
 	import '#lib/styles/checkbox-controls.css';
 	import '#lib/styles/form-controls.css';
 	import '#lib/styles/range-sliders.css';
@@ -16,14 +16,10 @@
 
 	onMount(() => {
 		if (!browser) return;
-		const disposeRangeSliderProgress = installRangeSliderProgress();
 		void initializeNativeShell();
 		if (!skipDeployLabel && chromeMode === 'site') {
 			void loadDeployLabel();
 		}
-		return () => {
-			disposeRangeSliderProgress();
-		};
 	});
 
 	// Check for embed mode from URL
@@ -168,6 +164,22 @@
 		min-height: calc(var(--ui-control-height, 44px) - 6px) !important;
 	}
 
+	/* On touch screens these compact controls are real 48px targets. */
+	@media (pointer: coarse) {
+		:global(body.xln-user-mode .account-workspace-tab),
+		:global(body.xln-user-mode .configure-tab),
+		:global(body.xln-user-mode .settings-tab),
+		:global(body.xln-user-mode .appearance-pill),
+		:global(body.xln-user-mode .scope-btn),
+		:global(body.xln-user-mode .side-tab),
+		:global(body.xln-user-mode .type-tab-text),
+		:global(body.xln-user-mode .compact-btn),
+		:global(body.xln-user-mode .expand-btn),
+		:global(body.xln-user-mode .refresh-btn) {
+			min-height: max(48px, calc(var(--ui-control-height, 44px) - 6px)) !important;
+		}
+	}
+
 	:global(body.xln-user-mode .section-card),
 	:global(body.xln-user-mode .account-preview),
 	:global(body.xln-user-mode .configure-panel),
@@ -186,11 +198,39 @@
 	:global(body.xln-user-mode .move-amount-shell),
 	:global(body.xln-user-mode .closed-trigger),
 	:global(body.xln-user-mode .entity-input-field),
-	:global(body.xln-user-mode input:not([type='range']):not([type='checkbox'])),
+	:global(body.xln-user-mode input:not([type='range']):not([type='checkbox']):not(.money-input)),
 	:global(body.xln-user-mode select),
 	:global(body.xln-user-mode textarea) {
 		border-radius: var(--ui-radius-base, 12px) !important;
 		font-size: calc(13px * var(--ui-font-scale, 1)) !important;
+	}
+
+	/* Amount entry. One size for every field that takes money, matching Everyday and React. */
+	:global(html input.money-input) {
+		box-sizing: border-box;
+		min-height: 60px;
+		padding: 0 14px !important;
+		border: 1px solid var(--theme-input-border, #5f656e) !important;
+		border-radius: var(--ui-radius-base, 12px) !important;
+		background: color-mix(in srgb, var(--theme-input-bg, #07080b) 88%, transparent) !important;
+		color: var(--theme-text-primary, #e6ebf2) !important;
+		font-family: inherit !important;
+		font-size: var(--money-lg, 30px) !important;
+		font-weight: 600 !important;
+		letter-spacing: -0.02em !important;
+		line-height: 1.1 !important;
+		font-variant-numeric: tabular-nums;
+		caret-color: var(--theme-text-primary, #e6ebf2);
+	}
+
+	:global(html input.money-input::placeholder) {
+		color: var(--theme-text-muted, #80889a) !important;
+	}
+
+	:global(html input.money-input:focus) {
+		outline: none !important;
+		border-color: var(--theme-input-focus, var(--theme-text-primary, #e6ebf2)) !important;
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-input-focus, #e6ebf2) 22%, transparent) !important;
 	}
 
 	:global(body.xln-user-mode select) {
@@ -257,7 +297,7 @@
 	:global(html[data-ui-tabs='minimal'] body.xln-user-mode .appearance-pill.active),
 	:global(html[data-ui-tabs='minimal'] body.xln-user-mode .side-tab.active),
 	:global(html[data-ui-tabs='minimal'] body.xln-user-mode .type-tab-text.active) {
-		color: var(--theme-accent, #fbbf24) !important;
+		color: var(--theme-accent, #c5cfde) !important;
 		box-shadow: none !important;
 	}
 
@@ -267,7 +307,7 @@
 	:global(html[data-ui-tabs='underline'] body.xln-user-mode .appearance-pill.active),
 	:global(html[data-ui-tabs='underline'] body.xln-user-mode .side-tab.active),
 	:global(html[data-ui-tabs='underline'] body.xln-user-mode .type-tab-text.active) {
-		box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--theme-accent, #fbbf24) 88%, transparent) !important;
+		box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--theme-accent, #c5cfde) 88%, transparent) !important;
 	}
 
 	:global(html[data-ui-tabs='rail'] body.xln-user-mode .account-workspace-tabs),
@@ -301,9 +341,9 @@
 	:global(html[data-ui-tabs='rail'] body.xln-user-mode .appearance-pill.active),
 	:global(html[data-ui-tabs='rail'] body.xln-user-mode .side-tab.active),
 	:global(html[data-ui-tabs='rail'] body.xln-user-mode .type-tab-text.active) {
-		border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 12%, transparent) !important;
+		border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent) !important;
 		background: color-mix(in srgb, var(--theme-surface-hover, #1c1c20) 96%, transparent) !important;
-		box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--theme-accent, #fbbf24) 86%, transparent) !important;
+		box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--theme-accent, #c5cfde) 86%, transparent) !important;
 	}
 
 	:global(html[data-ui-tabs='pill'] body.xln-user-mode .account-workspace-tabs),
@@ -337,8 +377,8 @@
 	:global(html[data-ui-tabs='pill'] body.xln-user-mode .appearance-pill.active),
 	:global(html[data-ui-tabs='pill'] body.xln-user-mode .side-tab.active),
 	:global(html[data-ui-tabs='pill'] body.xln-user-mode .type-tab-text.active) {
-		border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) var(--ui-accent-border-mix, 22%), transparent) !important;
-		background: color-mix(in srgb, var(--theme-accent, #fbbf24) var(--ui-accent-soft-mix, 10%), transparent) !important;
+		border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) var(--ui-accent-border-mix, 22%), transparent) !important;
+		background: color-mix(in srgb, var(--theme-accent, #c5cfde) var(--ui-accent-soft-mix, 10%), transparent) !important;
 	}
 
 	:global(html[data-ui-tabs='segmented'] body.xln-user-mode .account-workspace-tabs),
@@ -373,9 +413,9 @@
 	:global(html[data-ui-tabs='segmented'] body.xln-user-mode .appearance-pill.active),
 	:global(html[data-ui-tabs='segmented'] body.xln-user-mode .side-tab.active),
 	:global(html[data-ui-tabs='segmented'] body.xln-user-mode .type-tab-text.active) {
-		border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) var(--ui-accent-border-mix, 22%), transparent) !important;
+		border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) var(--ui-accent-border-mix, 22%), transparent) !important;
 		background: color-mix(in srgb, var(--theme-surface-hover, #1c1c20) 92%, transparent) !important;
-		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--theme-accent, #fbbf24) 18%, transparent) !important;
+		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--theme-accent, #c5cfde) 18%, transparent) !important;
 	}
 
 	:global(html[data-ui-tabs='floating'] body.xln-user-mode .account-workspace-tabs),
@@ -409,10 +449,10 @@
 	:global(html[data-ui-tabs='floating'] body.xln-user-mode .appearance-pill.active),
 	:global(html[data-ui-tabs='floating'] body.xln-user-mode .side-tab.active),
 	:global(html[data-ui-tabs='floating'] body.xln-user-mode .type-tab-text.active) {
-		border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) var(--ui-accent-border-mix, 20%), transparent) !important;
+		border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) var(--ui-accent-border-mix, 20%), transparent) !important;
 		background: color-mix(in srgb, var(--theme-surface-hover, #1c1c20) 92%, transparent) !important;
 		box-shadow:
-			inset 0 -1px 0 color-mix(in srgb, var(--theme-accent, #fbbf24) 82%, transparent),
+			inset 0 -1px 0 color-mix(in srgb, var(--theme-accent, #c5cfde) 82%, transparent),
 			0 14px 30px color-mix(in srgb, var(--theme-background, #09090b) 10%, transparent) !important;
 	}
 
@@ -429,8 +469,8 @@
 	:global(html[data-ui-buttons='solid'] body.xln-user-mode .move-primary-cta),
 	:global(html[data-ui-buttons='solid'] body.xln-user-mode .primary-btn),
 	:global(html[data-ui-buttons='solid'] body.xln-user-mode .hub-primary) {
-		background: color-mix(in srgb, var(--theme-accent, #fbbf24) 78%, transparent) !important;
-		border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 86%, transparent) !important;
+		background: color-mix(in srgb, var(--theme-accent, #c5cfde) 78%, transparent) !important;
+		border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 86%, transparent) !important;
 		color: color-mix(in srgb, var(--theme-background, #09090b) 18%, white 82%) !important;
 	}
 
@@ -456,7 +496,7 @@
 	:global(html[data-ui-cards='striped'] body.xln-user-mode .trade-grid > .section),
 	:global(html[data-ui-cards='striped'] body.xln-user-mode .hub-card) {
 		background:
-			linear-gradient(180deg, color-mix(in srgb, var(--theme-accent, #fbbf24) 4%, transparent), transparent 24%),
+			linear-gradient(180deg, color-mix(in srgb, var(--theme-accent, #c5cfde) 4%, transparent), transparent 24%),
 			color-mix(in srgb, var(--theme-surface, #18181b) var(--ui-card-fill-mix, 94%), transparent) !important;
 	}
 

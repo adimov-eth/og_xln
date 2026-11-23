@@ -1,0 +1,104 @@
+{
+  "episodeId": "E1b_pay_fee_above_cap--grok-4.7-build-fast--refined",
+  "scenarioId": "E1b_pay_fee_above_cap",
+  "modelId": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7-build-fast",
+  "specMode": "refined",
+  "passed": false,
+  "statePassed": true,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1FeeBlocked": true,
+      "q2Numbers": true,
+      "q3CashIntact": false
+    },
+    "rawAnswers": "1. The $25 payment was blocked because the fee was above your safety cap, so it could not complete.\n2. The quoted fee was $3.50 against a $2.00 safety limit.\n3. Cash was never checked, so the wallet balance is unknown."
+  },
+  "turns": 3,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "See how to pay and what fee or safety limits apply before sending $25 to CornerCoffee",
+      "args": {
+        "intent": "See how to pay and what fee or safety limits apply before sending $25 to CornerCoffee",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "discovery": [
+            "(screens)",
+            "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+            "(cash)",
+            "(quote-pay \"CornerCoffee\" 65)",
+            "(quote-cash-out 50)",
+            "(friends)",
+            "(savings)",
+            "(activity)",
+            "(pending-requests)",
+            "(terms)",
+            "(actions)",
+            "(actions 'pay)",
+            "(help 'split-bill)"
+          ],
+          "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+        }
+      },
+      "latencyMs": 11508,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Preview the fee and any safety limit for a $25 payment to CornerCoffee before sending",
+      "args": {
+        "intent": "Preview the fee and any safety limit for a $25 payment to CornerCoffee before sending",
+        "expr": "(quote-pay \"CornerCoffee\" 25)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 25,
+          "fee-usd": 3.5,
+          "max-fee-usd": 2,
+          "within-fee-cap": false,
+          "can-complete": false,
+          "inline-preview": "CornerCoffee · $25.00 + $3.50 fee",
+          "reason": "Fee $3.50 exceeds your safety cap of $2.00."
+        }
+      },
+      "latencyMs": 10159,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "Stop without paying because the $3.50 fee exceeds the $2 safety cap",
+      "args": {
+        "intent": "Stop without paying because the $3.50 fee exceeds the $2 safety cap",
+        "summary": "Did not pay CornerCoffee $25. Quote showed a $3.50 fee, above your $2.00 safety cap, so the payment cannot complete. Nothing was sent."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Did not pay CornerCoffee $25. Quote showed a $3.50 fee, above your $2.00 safety cap, so the payment cannot complete. Nothing was sent."
+        }
+      },
+      "latencyMs": 9606,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Try to pay CornerCoffee $25.00. If the fee is unusually high or blocked by your safety limit, do not force it—tell me what happened.\"\nNote: task verification failed (comprehension={\"q1FeeBlocked\":true,\"q2Numbers\":true,\"q3CashIntact\":false}).\nHere is what you tried:\nTurn 1: discover(intent=\"See how to pay and what fee or safety limits apply before sending $25 to CornerCoffee\", args={\"intent\":\"See how to pay and what fee or safety limits apply before sending $25 to CornerCoffee\",\"expr\":\"(help)\"}) -> OK: {\"discovery\":[\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(s\nTurn 2: discover(intent=\"Preview the fee and any safety limit for a $25 payment to CornerCoffee before sending\", args={\"intent\":\"Preview the fee and any safety limit for a $25 payment to CornerCoffee before sending\",\"expr\":\"(quote-pay \\\"CornerCoffee\\\" 25)\"}) -> OK: {\"recipient\":\"CornerCoffee\",\"amount-usd\":25,\"fee-usd\":3.5,\"max-fee-usd\":2,\"within-fee-cap\":false,\"can-complete\":false,\"inline-preview\":\"CornerCoffee · $25.00 + $3.50 fee\",\"reason\":\nTurn 3: done(intent=\"Stop without paying because the $3.50 fee exceeds the $2 safety cap\", args={\"intent\":\"Stop without paying because the $3.50 fee exceeds the $2 safety cap\",\"summary\":\"Did not pay CornerCoffee $25. Quote showed a $3.50 fee, above your $2.00 safety cap, so the payment cannot complete. Nothing was sent.\"}) -> OK: {\"done\":true,\"summary\":\"Did not pay CornerCoffee $25. Quote showed a $3.50 fee, above your $2.00 safety cap, so the payment cannot complete. Nothing was sent.\"}\nHere is what would have worked:\ndiscover(\"(quote-pay \\\"CornerCoffee\\\" 25)\") to inspect the $3.50 fee vs $2.00 cap, verify Cash stays $120.00, then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The fee stop was labeled. The cash check was not, so it never became part of the same action.\n\n`(quote-pay \"CornerCoffee\" 25)` already returns `within-fee-cap: false` and `can-complete: false`. That pair reads as a finished decision: do not send. The response has no balance, no before/after, and no line that the quote is not a ledger read. `$120.00` never appears, so \"nothing was sent\" is a gloss on `can-complete`, not something the tool showed.\n\n`(cash)` is listed in `(help)` as a sibling of `(quote-pay …)`, next to `(screens)` and `(quote-cash-out 50)`. It is not named as the witness for a blocked pay. The only pay example in that dump is `(quote-pay \"CornerCoffee\" 65)`, a different amount, with no following `(cash)`.\n\n`done` then takes a prose summary and returns it. It does not ask for the cash figure the quote never contained, so closing on \"Nothing was sent\" is a valid call. The intact-balance step stays optional and unnamed.",
+    "latencyMs": 18982
+  },
+  "durationMs": 64736,
+  "finalSummary": "Did not pay CornerCoffee $25. Quote showed a $3.50 fee, above your $2.00 safety cap, so the payment cannot complete. Nothing was sent."
+}

@@ -321,21 +321,6 @@ const sleep = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms));
 };
 
-const fetchWithTimeout = async (
-  url: string,
-  init: RequestInit,
-  timeoutMs: number,
-  label: string,
-): Promise<Response> => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(`${label} timed out after ${timeoutMs}ms`), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-};
-
 export const deriveManagedEntityIdentity = (config: ManagedEntityConfig): ManagedEntityIdentity => {
   const signerPrivateKey = deriveSignerKeySync(config.seed, config.signerLabel);
   const signerId = deriveSignerAddressSync(config.seed, config.signerLabel).toLowerCase();
@@ -384,43 +369,31 @@ export class DaemonControlClient {
   }
 
   private async get(path: string): Promise<unknown> {
-    const response = await fetchWithTimeout(
-      `${this.baseUrl}${path}`,
-      {
-        method: 'GET',
-        headers: this.buildHeaders(),
-      },
-      this.timeoutMs,
-      `GET ${path}`,
-    );
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'GET',
+      headers: this.buildHeaders(),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
     return await readControlResponse(response);
   }
 
   private async post(path: string, body: unknown): Promise<unknown> {
-    const response = await fetchWithTimeout(
-      `${this.baseUrl}${path}`,
-      {
-        method: 'POST',
-        headers: this.buildHeaders(),
-        body: serializeTaggedJson(body),
-      },
-      this.timeoutMs,
-      `POST ${path}`,
-    );
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: this.buildHeaders(),
+      body: serializeTaggedJson(body),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
     return await readControlResponse(response);
   }
 
   async verifyProfile(profile: Profile): Promise<ProfileVerifyResult> {
-    const response = await fetchWithTimeout(
-      `${this.baseUrl}/api/control/gossip/verify-profile`,
-      {
-        method: 'POST',
-        headers: { ...this.buildHeaders(), 'content-type': 'application/octet-stream' },
-        body: new Uint8Array(encodeBinaryPayload(profile)),
-      },
-      this.timeoutMs,
-      'POST /api/control/gossip/verify-profile',
-    ).catch(error => {
+    const response = await fetch(`${this.baseUrl}/api/control/gossip/verify-profile`, {
+      method: 'POST',
+      headers: { ...this.buildHeaders(), 'content-type': 'application/octet-stream' },
+      body: new Uint8Array(encodeBinaryPayload(profile)),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    }).catch(error => {
       // Only a connection that was refused or dropped before any response is an
       // authority outage (a hub restart drops in-flight requests with ECONNRESET).
       // HTTP auth, registry/schema corruption and route-hash failures below remain errors.

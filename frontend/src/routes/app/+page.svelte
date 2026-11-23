@@ -10,8 +10,6 @@
 </script>
 
 <View
-  layout="default"
-  networkMode="simnet"
   {embedMode}
   userMode={!embedMode && page.url.searchParams.get('observer') !== '1'}
   requestedPanelId={$appState.requestedDockPanel}

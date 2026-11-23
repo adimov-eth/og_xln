@@ -60,11 +60,12 @@
 	<body data-sveltekit-preload-data="hover">
 		<div style="display: contents">%sveltekit.body%</div>
 		<style>
-			:root {
-				--theme-background: #09090b;
-				--theme-bg-gradient: linear-gradient(135deg, #09090b 0%, #18181b 50%, #0c0c0e 100%);
-				--theme-text-primary: #e4e4e7;
-				--theme-text-secondary: #a1a1aa;
+			/* Pre-paint defaults only: zero specificity, so any [data-theme] block in themes.css wins. */
+			:where(:root) {
+				--theme-background: #07080b;
+				--theme-bg-gradient: linear-gradient(180deg, #14181f 0%, #080a0e 46%, #030406 100%);
+				--theme-text-primary: #e6ebf2;
+				--theme-text-secondary: #9aa3b2;
 				--ui-density-scale: 1;
 				--ui-control-height: 44px;
 				--ui-radius-base: 6px;
@@ -94,25 +95,25 @@
 				overflow-x: hidden;
 				overflow-y: auto;
 				overscroll-behavior-y: auto;
-				background-color: var(--theme-background, #0a0a0c);
-				background-image: var(--theme-bg-gradient, linear-gradient(135deg, #09090b 0%, #18181b 50%, #0c0c0e 100%));
-				color: var(--theme-text-primary, #e4e4e7);
+				background-color: var(--theme-background, #07080b);
+				background-image: var(--theme-bg-gradient, linear-gradient(180deg, #14181f 0%, #080a0e 46%, #030406 100%));
+				color: var(--theme-text-primary, #e6ebf2);
 				transition: background 140ms ease, color 140ms ease;
 			}
 			html.xln-user-mode,
 			html[data-xln-route-mode='app'] {
 				height: auto;
 				min-height: 100dvh;
-				background-color: var(--theme-background, #0a0a0c);
-				background-image: var(--theme-bg-gradient, linear-gradient(135deg, #09090b 0%, #18181b 50%, #0c0c0e 100%));
+				background-color: var(--theme-background, #07080b);
+				background-image: var(--theme-bg-gradient, linear-gradient(180deg, #14181f 0%, #080a0e 46%, #030406 100%));
 			}
 			body.xln-user-mode,
 			html[data-xln-route-mode='app'] body {
 				min-height: 100dvh;
 				position: static;
 				width: auto;
-				background-color: var(--theme-background, #0a0a0c);
-				background-image: var(--theme-bg-gradient, linear-gradient(135deg, #09090b 0%, #18181b 50%, #0c0c0e 100%));
+				background-color: var(--theme-background, #07080b);
+				background-image: var(--theme-bg-gradient, linear-gradient(180deg, #14181f 0%, #080a0e 46%, #030406 100%));
 			}
 		</style>
 	</body>

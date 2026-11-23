@@ -5,7 +5,7 @@ import type { AccountTx } from '../../../../types/account';
 import type { EntityCandidateEffect, EntityInput, EntityState } from '../../../types';
 import type { EntityRuntimeContext } from '../../../runtime-context';
 import type { EntityTx } from '../../../../types/entity-tx';
-import { createStructuredLogger, logError, shortId } from '../../../../support/logger';
+import { createStructuredLogger, shortId } from '../../../../support/logger';
 import { prepareEntityTxState } from '../../../state-clone';
 import { addMessage } from '../../../frame-events';
 import type { AccountTxTarget } from '../account';
@@ -46,9 +46,7 @@ const validateEntityPayment = (
     throw directPaymentInvariant('DELIVERY_MODE_INVALID', String(deliveryMode));
   }
   if (amount < FINANCIAL.MIN_PAYMENT_AMOUNT || amount > UINT256_MAX) {
-    logError(
-      'ENTITY_TX',
-      `❌ Payment amount out of bounds: ${amount.toString()} (min ${FINANCIAL.MIN_PAYMENT_AMOUNT.toString()}, max ${UINT256_MAX.toString()})`,
+    directPaymentLog.error(`❌ Payment amount out of bounds: ${amount.toString()} (min ${FINANCIAL.MIN_PAYMENT_AMOUNT.toString()}, max ${UINT256_MAX.toString()})`,
     );
     addMessage(state, '❌ Payment failed: amount out of bounds');
     return { newState: state, outputs };

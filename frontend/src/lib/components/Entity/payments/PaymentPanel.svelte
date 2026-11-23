@@ -1259,8 +1259,9 @@
     <div class="amount-shell">
       <input
         id="payment-amount-input"
-        class="amount-input"
+        class="amount-input money-input"
         type="text"
+        inputmode="decimal"
         bind:value={amount}
         data-testid="payment-amount-input"
         aria-label="Payment amount"
@@ -1502,7 +1503,7 @@
     padding: 14px 0;
   }
   .pay-section + .pay-section {
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    border-top: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
   }
 
   .delivery-mode {
@@ -1516,18 +1517,19 @@
     min-width: 0;
     min-height: 52px;
     padding: 7px 9px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.025);
-    color: rgba(255, 255, 255, 0.55);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 10%, transparent);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 3%, transparent);
+    color: var(--theme-text-secondary, rgba(255, 255, 255, 0.55));
     font: inherit;
     text-align: left;
     cursor: pointer;
   }
 
   .delivery-mode button.active {
-    border-color: rgba(255, 255, 255, 0.28);
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.96);
+    border-color: var(--theme-input-border, #5f656e);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
+    box-shadow: inset 0 1px 3px color-mix(in srgb, #000 28%, transparent);
+    color: var(--theme-text-primary, rgba(255, 255, 255, 0.96));
   }
 
   .delivery-mode-name {
@@ -1547,12 +1549,12 @@
   }
 
   .delivery-mode button.active .delivery-mode-radio {
-    border: 3px solid rgba(255, 255, 255, 0.96);
+    border: 3px solid currentColor;
   }
 
   .delivery-mode-default {
     margin-left: auto;
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--theme-text-secondary, rgba(255, 255, 255, 0.5));
     font-size: 9px;
     font-weight: 600;
     text-transform: uppercase;
@@ -1563,7 +1565,7 @@
     display: block;
     margin-top: 4px;
     padding-left: 16px;
-    color: rgba(255, 255, 255, 0.42);
+    color: var(--theme-text-muted, rgba(255, 255, 255, 0.42));
     font-size: 10px;
     line-height: 1.2;
   }
@@ -1576,7 +1578,7 @@
   .pay-field-label {
     font-size: 13px;
     font-weight: 500;
-    color: #5a5550;
+    color: var(--theme-text-muted, #5a5550);
     padding-left: 2px;
   }
 
@@ -1593,15 +1595,15 @@
     min-height: 46px !important;
     border-radius: 12px !important;
     font-size: 14px !important;
-    background: rgba(255, 255, 255, 0.03) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    background: color-mix(in srgb, var(--theme-input-bg, #07080b) 88%, transparent) !important;
+    border: 1px solid var(--theme-input-border, #5f656e) !important;
     box-shadow: none !important;
   }
   :global(html body.xln-user-mode [data-pp] .entity-input-field:focus) {
-    border-color: rgba(212, 175, 55, 0.35) !important;
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 35%, transparent) !important;
     box-shadow: none !important;
   }
-  :global([data-pp] .item-id) { color: #5a5550; }
+  :global([data-pp] .item-id) { color: var(--theme-text-muted, #5a5550); }
 
   /* ══ QR button ══ */
   :global([data-pp] button.qr-btn) {
@@ -1614,17 +1616,17 @@
     height: 46px !important;
     flex-shrink: 0 !important;
     border-radius: 12px !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    background: rgba(255, 255, 255, 0.03) !important;
-    color: #5a5550 !important;
+    border: 1px solid var(--theme-input-border, #5f656e) !important;
+    background: color-mix(in srgb, var(--theme-input-bg, #07080b) 88%, transparent) !important;
+    color: var(--theme-text-muted, #5a5550) !important;
     cursor: pointer !important;
     transition: all 0.2s !important;
   }
   :global([data-pp] button.qr-btn:hover) {
-    color: #a09889 !important;
-    background: rgba(255, 255, 255, 0.06) !important;
+    color: var(--theme-text-primary, #e6ebf2) !important;
+    background: color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent) !important;
   }
-  :global([data-pp] button.qr-btn.clear-btn) { color: #c48b7a !important; }
+  :global([data-pp] button.qr-btn.clear-btn) { color: var(--theme-text-secondary, #9aa3b2) !important; }
 
   /* ══ Error ══ */
   .form-error {
@@ -1639,7 +1641,7 @@
   .form-pending {
     border: 1px solid rgba(180, 125, 20, 0.5);
     background: rgba(70, 45, 8, 0.55);
-    color: #fde68a;
+    color: var(--theme-accent, #c5cfde);
     border-radius: 10px;
     padding: 8px 14px;
     font-size: 12px;
@@ -1652,33 +1654,10 @@
     align-items: center;
   }
 
-  :global(html body.xln-user-mode [data-pp] input.amount-input) {
-    all: unset !important;
-    box-sizing: border-box !important;
-    display: block !important;
-    flex: 1 !important;
-    min-width: 0 !important;
-    width: 100% !important;
-    height: 72px !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border: none !important;
-    border-radius: 0 !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    outline: none !important;
-    color: #f5efe6 !important;
-    font-size: 52px !important;
-    font-weight: 200 !important;
-    font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
-    font-variant-numeric: tabular-nums !important;
-    line-height: 72px !important;
-    text-align: right !important;
-    letter-spacing: -0.03em !important;
-    caret-color: #d4af37 !important;
-  }
-  :global(html body.xln-user-mode [data-pp] input.amount-input::placeholder) {
-    color: #3a3632 !important;
+  .amount-shell :global(input.amount-input) {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
   }
 
   .amount-token {
@@ -1689,8 +1668,8 @@
     min-height: 40px !important;
     padding: 8px 12px !important;
     border-radius: 10px !important;
-    background: rgba(255, 255, 255, 0.04) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    background: color-mix(in srgb, var(--theme-input-bg, #07080b) 88%, transparent) !important;
+    border: 1px solid var(--theme-input-border, #5f656e) !important;
     box-shadow: none !important;
   }
 
@@ -1704,20 +1683,20 @@
     all: unset !important;
     box-sizing: border-box !important;
     display: inline !important;
-    color: #5a5550 !important;
+    color: var(--theme-text-muted, #5a5550) !important;
     font-size: 12px !important;
     font-weight: 500 !important;
     font-variant-numeric: tabular-nums !important;
     cursor: pointer !important;
     transition: color 0.2s !important;
   }
-  :global([data-pp] button.amount-available:hover) { color: #d4af37 !important; }
+  :global([data-pp] button.amount-available:hover) { color: var(--theme-accent, #c5cfde) !important; }
 
   /* ══ Note (liquid glass) ══ */
   .note-glass {
     border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.005));
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 4%, transparent);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--theme-text-primary, white) 2%, transparent), color-mix(in srgb, var(--theme-text-primary, white) 0.5%, transparent));
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     padding: 2px;
@@ -1735,7 +1714,7 @@
     background: transparent !important;
     box-shadow: none !important;
     outline: none !important;
-    color: #ccc5bb !important;
+    color: var(--theme-text-secondary, #ccc5bb) !important;
     font-size: 14px !important;
     font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
   }
@@ -1754,7 +1733,7 @@
     transition: color 0.2s !important;
     padding: 6px 0 !important;
   }
-  :global([data-pp] button.add-note-link:hover) { color: #5a5550 !important; }
+  :global([data-pp] button.add-note-link:hover) { color: var(--theme-text-muted, #5a5550) !important; }
 
   .self-pay-hint {
     padding: 10px 14px;
@@ -1769,7 +1748,7 @@
   .routes-header { margin-bottom: 8px; }
   .routes-count {
     font-size: 11px; font-weight: 600;
-    color: #5a5550;
+    color: var(--theme-text-muted, #5a5550);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -1782,7 +1761,7 @@
   .routes-scroll::-webkit-scrollbar { width: 8px; }
   .routes-scroll::-webkit-scrollbar-track { background: transparent; }
   .routes-scroll::-webkit-scrollbar-thumb {
-    background: #27272a; border-radius: 999px;
+    background: var(--theme-surface-hover, #1b1e24); border-radius: 999px;
     border: 2px solid transparent; background-clip: padding-box;
   }
 
@@ -1791,17 +1770,18 @@
     align-items: center;
     gap: 8px;
     padding: 8px 10px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 2%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 5%, transparent);
     border-radius: 10px;
     cursor: pointer;
     transition: all 0.15s;
     margin-bottom: 4px;
   }
-  .route-option:hover { border-color: rgba(255, 255, 255, 0.1); }
+  .route-option:hover { border-color: color-mix(in srgb, var(--theme-text-primary, white) 10%, transparent); }
   .route-option.selected {
-    border-color: rgba(212, 175, 55, 0.45);
-    background: rgba(66, 32, 6, 0.35);
+    border-color: var(--theme-input-border, #5f656e);
+    background: color-mix(in srgb, var(--theme-text-primary, #e6ebf2) 8%, transparent);
+    box-shadow: inset 0 1px 3px color-mix(in srgb, #000 28%, transparent);
   }
   :global([data-pp] .route-option input[type="radio"]) {
     position: absolute !important; opacity: 0 !important;
@@ -1812,12 +1792,12 @@
   .route-marker {
     width: 12px; height: 12px;
     border-radius: 999px;
-    border: 2px solid rgba(255, 255, 255, 0.4);
+    border: 2px solid var(--theme-text-secondary, #9aa3b2);
     flex: 0 0 auto;
   }
   .route-option.selected .route-marker {
-    border-color: #d4af37;
-    background: radial-gradient(circle at center, #d4af37 0 35%, transparent 42%);
+    border-color: var(--theme-accent, #c5cfde);
+    background: radial-gradient(circle at center, var(--theme-accent, #c5cfde) 0 35%, transparent 42%);
   }
 
   .route-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -1826,12 +1806,12 @@
   :global([data-pp] .route-cards .name) { font-size: 10px; letter-spacing: 0.03em; text-transform: uppercase; }
   .hop-card {
     padding: 3px 7px; border-radius: 7px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 6%, transparent);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 2%, transparent);
   }
-  .hop-arrow { color: #5a5550; font-size: 11px; }
+  .hop-arrow { color: var(--theme-text-muted, #5a5550); font-size: 11px; }
   .route-meta {
-    font-size: 9px; color: #5a5550;
+    font-size: 9px; color: var(--theme-text-muted, #5a5550);
     text-transform: uppercase; letter-spacing: 0.06em;
     font-variant-numeric: tabular-nums;
   }
@@ -1855,22 +1835,24 @@
     width: 100% !important;
     height: 56px !important;
     border-radius: 16px !important;
-    border: 1px solid rgba(212, 175, 55, 0.3) !important;
-    background: linear-gradient(135deg, #7a4212, #b8720f 50%, #e8b84a) !important;
-    color: #fff7ed !important;
+    /* Machined metal in the theme's accent: the one primary on the screen, never gold. */
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent) !important;
+    background: var(--theme-primary-metal) !important;
+    color: var(--theme-accent-contrast, #050608) !important;
     font-size: 16px !important;
     font-weight: 600 !important;
     font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
     letter-spacing: 0.02em !important;
     cursor: pointer !important;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 8px 24px rgba(140,77,20,0.22) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 8px 24px rgba(0,0,0,0.28) !important;
     transition: all 0.25s cubic-bezier(0.4,0,0.2,1) !important;
   }
   :global([data-pp] button.btn-pay:hover:not([disabled]):not(.success)) {
     transform: translateY(-1px) !important;
-    border-color: rgba(212, 175, 55, 0.5) !important;
-    background: linear-gradient(135deg, #8c4d14, #cc8415 50%, #f0c556) !important;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 14px 36px rgba(140,77,20,0.32) !important;
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 60%, transparent) !important;
+    background: var(--theme-primary-metal) !important;
+    filter: brightness(1.05);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.65), 0 14px 36px rgba(0,0,0,0.32) !important;
   }
   :global([data-pp] button.btn-pay:active:not([disabled]):not(.success)) {
     transform: translateY(0) !important;
@@ -1878,9 +1860,9 @@
   :global([data-pp] button.btn-pay[disabled]:not(.success)) {
     cursor: not-allowed !important;
     opacity: 1 !important;
-    background: linear-gradient(135deg, #2a1f10, #3d2c14 50%, #4a3518) !important;
-    border-color: rgba(255, 255, 255, 0.04) !important;
-    color: rgba(255, 247, 237, 0.35) !important;
+    background: color-mix(in oklab, var(--theme-text-primary, #e6ebf2) 8%, transparent) !important;
+    border-color: transparent !important;
+    color: var(--theme-text-muted, #80889a) !important;
     box-shadow: none !important;
   }
 
@@ -1910,8 +1892,8 @@
 
   .pay-spinner {
     width: 16px; height: 16px;
-    border: 2px solid rgba(255,255,255,0.2);
-    border-top-color: #fff7ed;
+    border: 2px solid color-mix(in srgb, var(--theme-accent-contrast, #050608) 22%, transparent);
+    border-top-color: var(--theme-accent-contrast, #050608);
     border-radius: 999px;
     animation: spin 0.7s linear infinite;
   }
@@ -1928,13 +1910,14 @@
     padding: 4px 0 !important;
     transition: color 0.2s !important;
   }
-  :global([data-pp] button.find-routes-link:hover) { color: #5a5550 !important; }
+  :global([data-pp] button.find-routes-link:hover) { color: var(--theme-text-muted, #5a5550) !important; }
 
   /* ══ Scanner ══ */
   .scanner-overlay {
     position: fixed; inset: 0;
     background: rgba(0,0,0,0.8);
     backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: grid; place-items: center;
     z-index: 3000; padding: 20px;
   }
@@ -1942,8 +1925,10 @@
     width: min(100%, 480px);
     display: flex; flex-direction: column; gap: 14px;
     padding: 20px; border-radius: 20px;
-    background: rgba(20,17,15,0.95);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: color-mix(in srgb, var(--theme-surface, #121418) 94%, transparent);
+    backdrop-filter: blur(18px) saturate(1.1);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
     box-shadow: 0 32px 80px rgba(0,0,0,0.6);
   }
   .scanner-card-header {
@@ -1951,25 +1936,20 @@
     align-items: center; gap: 12px;
   }
   .scanner-card-header h4 {
-    margin: 0; color: #f5efe6;
+    margin: 0; color: var(--theme-text-primary, #f5efe6);
     font-size: 16px; font-weight: 600;
   }
   .scanner-video {
     width: 100%; aspect-ratio: 1;
-    object-fit: cover; border-radius: 14px; background: #0c0a09;
+    object-fit: cover; border-radius: 14px; background: var(--theme-background, #07080b);
   }
-  .scanner-status { color: #5a5550; font-size: 12px; }
+  .scanner-status { color: var(--theme-text-muted, #5a5550); font-size: 12px; }
   .scanner-actions { display: flex; gap: 10px; }
   .scanner-file-input { display: none; }
 
   /* ══ Responsive ══ */
   @media (max-width: 900px) {
     .payment-panel { max-width: 100%; }
-    :global(html body.xln-user-mode [data-pp] input.amount-input) {
-      font-size: 36px !important;
-      height: 56px !important;
-      line-height: 56px !important;
-    }
     .amount-shell { flex-wrap: wrap; }
     .amount-token { width: 100%; margin-left: 0; margin-top: 8px; }
     :global([data-pp] button.btn-pay) { height: 50px !important; }

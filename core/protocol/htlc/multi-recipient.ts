@@ -1,3 +1,4 @@
+import { bytesToHex } from '../../support/bytes/hex-bytes';
 import { aead } from '../crypto/fast/fast-aead';
 import { x25519PublicKey, x25519SharedSecret } from '../crypto/fast/fast-x25519';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -30,9 +31,6 @@ const keyBytes = (value: string, code: string): Uint8Array => {
   return bytes;
 };
 
-const keyHex = (value: Uint8Array): string =>
-  `0x${Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')}`;
-
 export class HtlcCiphertextAuthenticationError extends Error {
   constructor(cause?: unknown) {
     super('HTLC_CIPHERTEXT_AUTHENTICATION_FAILED', { cause });
@@ -54,7 +52,7 @@ const derivePublicKeyHex = (entityPrivateKey: string): string => {
   const memoized = derivedPublicKeyHexByPrivateKey.get(entityPrivateKey);
   if (memoized !== undefined) return memoized;
   const privateKey = keyBytes(entityPrivateKey, 'HTLC_ENTITY_ENCRYPTION_PRIVATE_KEY_INVALID');
-  const derived = keyHex(x25519PublicKey(privateKey));
+  const derived = bytesToHex(x25519PublicKey(privateKey));
   if (derivedPublicKeyHexByPrivateKey.size >= DERIVED_PUBLIC_KEY_MEMO_MAX) derivedPublicKeyHexByPrivateKey.clear();
   derivedPublicKeyHexByPrivateKey.set(entityPrivateKey, derived);
   return derived;
@@ -68,7 +66,7 @@ export const assertEntityEncryptionKeypair = (
 ): void => {
   if (verifiedKeypair?.publicKey === entityPublicKey && verifiedKeypair.privateKey === entityPrivateKey) return;
   const publicKey = keyBytes(entityPublicKey, 'HTLC_ENTITY_ENCRYPTION_PUBLIC_KEY_INVALID');
-  if (derivePublicKeyHex(entityPrivateKey) !== keyHex(publicKey)) {
+  if (derivePublicKeyHex(entityPrivateKey) !== bytesToHex(publicKey)) {
     throw new Error('HTLC_ENTITY_ENCRYPTION_KEYPAIR_MISMATCH');
   }
   verifiedKeypair = { publicKey: entityPublicKey, privateKey: entityPrivateKey };

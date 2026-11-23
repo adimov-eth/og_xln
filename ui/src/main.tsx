@@ -10,6 +10,7 @@ import './styles/base.css';
 import './styles/app.css';
 import './styles/wallet.css';
 import './styles/home.css';
+import './styles/everyday.css';
 
 installBrowserErrorTelemetry(() => {
   const adapter = getAdapter();

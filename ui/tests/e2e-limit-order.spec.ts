@@ -65,6 +65,9 @@ test(
     const hubId = await fundAndReadHub(page);
     const capacity = page.getByTestId('home-send-capacity');
     const pendingHold = page.locator('.wallet-pending');
+    // Home opens on "All assets · USD estimate"; the hold and capacity lines below are USDC amounts.
+    const showUsdc = () => page.getByTestId('home-balance-asset').selectOption('1');
+    await showUsdc();
     await expect(capacity).toHaveText('Payment capacity: 100 USDC · includes available credit');
     await expect(pendingHold).toHaveCount(0);
 
@@ -88,13 +91,9 @@ test(
     await page.getByTestId('swap-give').fill(REST.give);
     await page.getByTestId('swap-want').fill(REST.want);
     await expect(limitPrice(page)).toHaveText(`${REST.priceText} USDC per WETH`);
-    const spectrum = page.getByTestId('receive-spectrum');
     const submit = page.getByTestId('swap-submit');
-    await expect(spectrum).toBeVisible();
-    await spectrum.getByRole('button', { name: 'Accept it as credit instead', exact: true }).click();
-    await expect(page.getByTestId('receive-spectrum-confirm')).toHaveText('Extend credit limit');
-    await page.getByTestId('receive-spectrum-confirm').click();
-    await expect(spectrum).toHaveCount(0, { timeout: 15_000 });
+    // Swap has no manual receive panel: placing the order prepares the incoming WETH capacity itself.
+    await expect(page.getByText(/Placing this order also prepares incoming capacity/)).toBeVisible();
     await expect.poll(() => settled(page, hubId), { timeout: 15_000 }).toEqual({ pending: false, mempool: 0 });
     const prepared = await readAccount(page, hubId);
     expect(prepared.offers).toBe(0);
@@ -106,7 +105,7 @@ test(
     const cancel = page.getByTestId('swap-offer-cancel');
     const openRow = page.locator('div.row', { has: cancel });
     await expect(openRow).toHaveCount(1, { timeout: 15_000 });
-    await expect(openRow.locator('.t')).toHaveText('10.0000 USDC for 0.0050 WETH');
+    await expect(openRow.locator('.t')).toHaveText('10 USDC for 0.005 WETH');
     await expect(openRow.locator('.state')).toHaveText('open');
     await expect.poll(() => settled(page, hubId), { timeout: 15_000 }).toEqual({ pending: false, mempool: 0 });
     const resting = await readAccount(page, hubId);
@@ -130,6 +129,7 @@ test(
     await expect(own.locator('.bk-price')).toHaveText(REST.priceText);
 
     await page.getByTestId('nav-home').locator('visible=true').first().click();
+    await showUsdc();
     await expect(pendingHold).toHaveText('10 USDC pending · View activity');
     await expect(capacity).toHaveText('Payment capacity: 90 USDC · includes available credit');
 
@@ -167,6 +167,7 @@ test(
     );
 
     await page.getByTestId('nav-home').locator('visible=true').first().click();
+    await showUsdc();
     await expect(pendingHold).toHaveCount(0);
     await expect(capacity).toHaveText('Payment capacity: 100 USDC · includes available credit');
     expect(pageErrors).toEqual([]);

@@ -8,6 +8,7 @@ import type { AssetLedgerRow, AssetLedgerTotals } from './../asset-ledger';
 import { getExternalTokenIdentityKey, type ExternalToken } from './entity-asset-catalog';
 import { requireTokenDecimals } from './../token-metadata';
 import { parseTokenAmountInput as parseStrictTokenAmountInput } from './token-amount-input';
+import { formatDecimal } from '#lib/utils/format.ts';
 import { isMapLike } from '#lib/utils/runtime/liveRuntimeEnv.ts';
 
 export type AssetTokenInfo = {
@@ -48,21 +49,7 @@ export function normalizeTokenPrecision(rawPrecision: unknown): number {
 export function formatTokenAmount(amount: bigint, decimals: number, rawPrecision: unknown = 4): string {
   const exactDecimals = requireTokenDecimals(decimals, 'formatTokenAmount');
   const precision = normalizeTokenPrecision(rawPrecision);
-  const negative = amount < 0n;
-  const abs = negative ? -amount : amount;
-  const divisor = BigInt(10) ** BigInt(exactDecimals);
-  const whole = abs / divisor;
-  const frac = abs % divisor;
-  let text = whole.toLocaleString('en-US');
-  if (precision > 0 && frac > 0n) {
-    const fracStr = frac
-      .toString()
-      .padStart(exactDecimals, '0')
-      .slice(0, Math.min(exactDecimals, precision))
-      .replace(/0+$/, '');
-    if (fracStr.length > 0) text = `${text}.${fracStr}`;
-  }
-  return `${negative ? '-' : ''}${text}`;
+  return formatDecimal(amount, exactDecimals, { max: precision });
 }
 
 export function parseTokenAmountInput(amount: string, decimals: number): bigint {
@@ -72,11 +59,7 @@ export function parseTokenAmountInput(amount: string, decimals: number): bigint 
 
 export function formatTokenInputAmount(amount: bigint, decimals: number): string {
   if (amount <= 0n) return '';
-  const divisor = 10n ** BigInt(decimals);
-  const whole = amount / divisor;
-  const frac = amount % divisor;
-  if (frac === 0n) return whole.toString();
-  return `${whole.toString()}.${frac.toString().padStart(decimals, '0').replace(/0+$/, '')}`;
+  return formatDecimal(amount, decimals, { max: decimals, grouping: false });
 }
 
 export function parsePositiveAssetAmount(raw: string, token: { decimals: number }, maxAmount?: bigint): bigint {

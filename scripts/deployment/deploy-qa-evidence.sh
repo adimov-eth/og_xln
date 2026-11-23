@@ -6,8 +6,7 @@
 # Curated story screenshots (tests/e2e/screenshots) are tracked in git and ship via
 # `bun run deploy` — they are intentionally NOT handled here.
 #
-# The prod runtime reads this root via QA_EVIDENCE_ROOT (see scripts/operations/start-server.sh),
-# so uploaded runs/videos appear at https://xln.finance/qa without restarting anything.
+# The prod host keeps this root at QA_EVIDENCE_ROOT (see scripts/operations/start-server.sh).
 #
 # Usage:
 #   ./scripts/deployment/deploy-qa-evidence.sh [--remote host] [--evidence-root path]
@@ -61,7 +60,7 @@ echo "[qa-evidence] local=$LOCAL_ROOT runs=[${RUNS[*]:-}] db_only=$DB_ONLY dry_r
 
 ssh "$REMOTE_HOST" "mkdir -p '$REMOTE_ROOT/e2e-parallel'"
 
-# History DB (+ WAL/SHM sidecars if present) — this is the index behind /api/qa/runs.
+# History DB (+ WAL/SHM sidecars if present) — the run index.
 if [ -f "$DB_PATH" ]; then
   echo "[qa-evidence] uploading history DB ($(du -h "$DB_PATH" | cut -f1))"
   for f in "$DB_PATH" "$DB_PATH-wal" "$DB_PATH-shm"; do
@@ -83,5 +82,3 @@ for r in "${RUNS[@]:-}"; do
 done
 
 echo "[qa-evidence] done."
-echo "[qa-evidence] verify page: curl -fsSI 'https://xln.finance/qa'"
-echo "[qa-evidence] verify public API: curl -fsS 'https://xln.finance/api/qa/runs?limit=5'"

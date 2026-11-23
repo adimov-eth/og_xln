@@ -55,6 +55,7 @@ import {
 import { assertNetworkMachineIsLive, networkMachineRuntime } from './network/networkMachineRuntimeStore';
 import { normalizeWsConnectUrl, normalizeWsUrl, sameWsEndpoint } from '#lib/utils/runtime/wsUrl.ts';
 import { createRuntimeViewEnv, unwrapLiveRuntimeEnv } from '#lib/utils/runtime/liveRuntimeEnv.ts';
+import { haltedRuntimeMessage } from '#lib/utils/runtime/runtimeFailure.ts';
 import { registerDebugSurface } from '#lib/utils/runtime/debugSurface.ts';
 import {
   decodeProtectedVaultSecrets,
@@ -95,6 +96,7 @@ import type {
   Profile as GossipProfile,
 } from '@xln/core/api/public/runtime-module';
 import { REMOTE_RUNTIME } from '@xln/core/config/constants';
+import { sleep } from '../utils/primitives';
 
 let unregisterEnvChange: (() => void) | null = null;
 let unregisterRuntimeControllerChange: (() => void) | null = null;
@@ -202,7 +204,7 @@ function showPendingResetNotice(): void {
   toasts.warning(notice, 8000);
 }
 
-export { xlnEnvironment, setXlnEnvironment } from './bootstrap/embeddedRuntimeStore';
+export { xlnEnvironment, setXlnEnvironment, runtimeHaltMessage } from './bootstrap/embeddedRuntimeStore';
 
 export const isLoading = writable<boolean>(true);
 export const error = writable<string | null>(null);
@@ -1353,7 +1355,6 @@ export async function refreshPaymentRuntimeGossip(options: {
   return { profiles: Array.from(mergedProfiles.values()), announced };
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const publishLocalRuntimeEnvIfActive = (env: RuntimeReplica): void => {
   const runtimeId = normalizeRuntimeIdentifier(env.runtimeId);
@@ -1363,6 +1364,18 @@ const publishLocalRuntimeEnvIfActive = (env: RuntimeReplica): void => {
   }
 };
 
+/** How long a caught-up Runtime may go without saving the input before the wait reports a stall. */
+const LOCAL_RUNTIME_INPUT_STALL_MS = 15_000;
+/** Last resort for a Runtime that keeps saving other frames but never this input. */
+const LOCAL_RUNTIME_INPUT_CEILING_MS = 120_000;
+
+/**
+ * Wait for the submitted input to reach a persisted frame, judged by progress, not a clock.
+ * A halt fails at once. While saved frames trail the in-memory height, the input may be in
+ * the unsaved tail (Safari's IndexedDB takes seconds per frame), so no stall clock runs.
+ * Once saving has caught up and the input is still absent for the stall window, it was
+ * dropped or is stuck, and the wait says so. The ceiling bounds everything else.
+ */
 const drainLocalRuntimeInput = async (
   xln: XLNModule,
   env: RuntimeReplica,
@@ -1370,23 +1383,33 @@ const drainLocalRuntimeInput = async (
   afterHeight: number,
 ): Promise<number> => {
   const startedAt = Date.now();
-  for (let i = 0; i < 80; i += 1) {
+  let caughtUpSince: number | null = null;
+  for (;;) {
+    const halted = haltedRuntimeMessage(env);
+    if (halted) throw new Error(halted);
+    const latestHeight = Math.max(afterHeight, Math.floor(Number(env.state.height || 0)));
     const persistedHeight = await findPersistedEmbeddedRuntimeInputHeight(
       (height) => xln.readPersistedStorageFrameRecord(env, height),
       input,
       afterHeight,
-      Math.max(afterHeight, Math.floor(Number(env.state.height || 0))),
+      latestHeight,
     );
     if (persistedHeight !== null) return persistedHeight;
+    const head = Math.floor(Number((await xln.readPersistedStorageHead(env))?.latestHeight ?? 0));
+    const now = Date.now();
+    // Saving still trails the in-memory height: the input may be in the unsaved tail, so no stall clock runs.
+    caughtUpSince = head < latestHeight ? null : (caughtUpSince ?? now);
+    const stalled = caughtUpSince !== null && now - caughtUpSince > LOCAL_RUNTIME_INPUT_STALL_MS;
+    if (stalled || now - startedAt > LOCAL_RUNTIME_INPUT_CEILING_MS) {
+      throw new Error(
+        `LOCAL_RUNTIME_INPUT_COMMIT_STALLED: after=${afterHeight} latest=${latestHeight} saved=${head}`,
+      );
+    }
     // The runtime loop created with this RuntimeReplica is the only owner allowed to call
     // process(). Command submission only enqueues and observes its durable
     // commit; a UI waiter must never become a second transition driver.
-    await sleep(25);
-    if (Date.now() - startedAt > 4_000) break;
+    await sleep(50);
   }
-  throw new Error(
-    `LOCAL_RUNTIME_INPUT_COMMIT_TIMEOUT: after=${afterHeight} latest=${Math.max(0, Number(env.state.height || 0))}`,
-  );
 };
 
 const normalizeRuntimeIdentifier = (value: unknown): string => String(value || '').trim().toLowerCase();

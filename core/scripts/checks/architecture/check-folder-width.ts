@@ -57,6 +57,7 @@ const EXCLUDED_REPOSITORY_PATHS: ReadonlySet<string> = new Set([
   'frontend/.svelte-kit-dev-https',
   'frontend/android/app/src/main/assets/public',
   'frontend/ios/App/App/public',
+  'frontend/static/docs-catalog',
   'jurisdictions/artifacts',
   'jurisdictions/build-tron',
   'jurisdictions/cache',
@@ -84,14 +85,12 @@ export const FOLDER_WIDTH_DEBT: Readonly<Record<string, number>> = {
   'core/orchestrator/process': 12,
   'core/runtime/workers/account': 13,
   'core/scripts/e2e/harness': 11,
-  'core/scripts/operations/hlt': 12,
+  'core/scripts/operations/hlt': 11,
   'frontend/src/lib/stores': 11,
   'jurisdictions/contracts': 16,
   'rscore/crates/entity-kernel/src': 11,
   'rscore/crates/entity-kernel/src/consensus': 11,
   'rscore/crates/entity-kernel/tests': 11,
-  'scripts/dev': 11,
-  'tools': 11,
 };
 
 const normalizeRelativePath = (root: string, path: string): string =>

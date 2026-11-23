@@ -1,6 +1,5 @@
 <script lang="ts">
   import Graph3DFpsOverlay from './Graph3DFpsOverlay.svelte';
-  import VRControlsHUD from './VRControlsHUD.svelte';
   import type { RuntimeGraphCanonicity } from '#lib/network3d/runtimeGraphProjection.ts';
 
   export let container: HTMLDivElement;
@@ -11,7 +10,6 @@
   export let connectionCount = 0;
   export let particleCount = 0;
   export let barsMode: 'close' | 'spread' = 'close';
-  export let isVRActive = false;
   export let tooltip: { visible: boolean; x: number; y: number; content: string } = {
     visible: false, x: 0, y: 0, content: '',
   };
@@ -35,9 +33,6 @@
   export let onRuntimeScopeChange: (scope: string) => void = () => {};
   export let onCanonicityChange: (policy: RuntimeGraphCanonicity) => void = () => {};
   export let toggleBarsMode: () => void = () => {};
-  export let handleVrPaymentClick: () => void = () => {};
-  export let handleVrAutoRotateClick: () => void = () => {};
-  export let exitVR: () => void = () => {};
 </script>
 
 <div class="graph3d-wrapper" class:present-mode={presentMode}>
@@ -135,15 +130,6 @@
       onToggleBars={toggleBarsMode}
     />
   {/if}
-
-  <VRControlsHUD
-    {isVRActive}
-    {entityCount}
-    currentFPS={renderFps}
-    onPaymentClick={handleVrPaymentClick}
-    onAutoRotateClick={handleVrAutoRotateClick}
-    onExitVR={exitVR}
-  />
 </div>
 
 <style>

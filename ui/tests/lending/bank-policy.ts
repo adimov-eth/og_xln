@@ -10,11 +10,16 @@ import type { EntityTx } from '../../../core/types/entity-tx';
 import type { LendingTermId } from '../../../core/types/finance/lending';
 import type { Parties } from './financial-evidence';
 
+function resolvePageApiUrl(page: Page, path: string): string {
+  const current = page.url();
+  return /^https?:\/\//i.test(current) ? new URL(path, new URL(current).origin).href : path;
+}
+
 export async function readBankOwnerConnection(page: Page, hubId: string) {
   const root = process.env['XLN_RDB_ROOT'];
   const manifestPath = process.env['XLN_RUNTIME_IMPORT_MANIFEST_PATH'] ?? (root ? join(root, 'prod-mesh/runtime-import-manifest.json') : null);
   if (!manifestPath) throw new Error('BANK_POLICY_STAND_REQUIRED');
-  const response = await page.request.get('/api/health');
+  const response = await page.request.get(resolvePageApiUrl(page, '/api/health'));
   expect(response.ok()).toBe(true);
   const health: AggregatedHealth = await response.json();
   const hub = health.hubs?.find(value => value.entityId === hubId);
@@ -48,7 +53,7 @@ export async function setBankPolicy(page: Page, ids: Parties, options: {
       commandId: `bank-policy-${crypto.randomUUID()}`, commandSequence: adapter.nextCommandSequence!,
     });
     const policy = async () => {
-      const result = await page.request.get('/api/lending/state', { params: { hubEntityId: ids.hubId, userEntityId: ids.ownerId, tokenId: String(ids.tokenId) } });
+      const result = await page.request.get(resolvePageApiUrl(page, '/api/lending/state'), { params: { hubEntityId: ids.hubId, userEntityId: ids.ownerId, tokenId: String(ids.tokenId) } });
       expect(result.ok()).toBe(true);
       return result.json();
     };

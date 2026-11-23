@@ -1,0 +1,216 @@
+{
+  "episodeId": "E5a_external_checkout_approve--grok-4.7--baseline",
+  "scenarioId": "E5a_external_checkout_approve",
+  "modelId": "grok-4.7",
+  "lineage": "xai-grok-4.7",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1OriginFee": true,
+      "q2Approved": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. checkout.cornercoffee.nyc requested the payment, and the fee was $0.05.\n2. I approved it.\n3. Remaining Cash is $94.95."
+  },
+  "turns": 7,
+  "phantoms": [
+    {
+      "episodeId": "E5a_external_checkout_approve--grok-4.7--baseline",
+      "scenarioId": "E5a_external_checkout_approve",
+      "modelId": "grok-4.7",
+      "lineage": "xai-grok-4.7",
+      "specMode": "baseline",
+      "turn": 1,
+      "tool": "discover",
+      "actionOrExpr": "(screen 'pending)",
+      "intent": "Inspect the pending CornerCoffee payment request before deciding",
+      "category": "eval",
+      "error": "Unknown screen 'pending'. Available screens: home, people, earn, activity, external-request, settings"
+    },
+    {
+      "episodeId": "E5a_external_checkout_approve--grok-4.7--baseline",
+      "scenarioId": "E5a_external_checkout_approve",
+      "modelId": "grok-4.7",
+      "lineage": "xai-grok-4.7",
+      "specMode": "baseline",
+      "turn": 2,
+      "tool": "discover",
+      "actionOrExpr": "(screen 'external-request)",
+      "intent": "Open the external payment request sheet from CornerCoffee",
+      "category": "eval",
+      "error": "Unknown screen 'external-request'. Available screens: home, people, earn, activity, external-request, settings"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Inspect the pending CornerCoffee payment request before deciding",
+      "args": {
+        "intent": "Inspect the pending CornerCoffee payment request before deciding",
+        "expr": "(screen 'pending)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unknown screen 'pending'. Available screens: home, people, earn, activity, external-request, settings",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 10567,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Open the external payment request sheet from CornerCoffee",
+      "args": {
+        "intent": "Open the external payment request sheet from CornerCoffee",
+        "expr": "(screen 'external-request)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unknown screen 'external-request'. Available screens: home, people, earn, activity, external-request, settings",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 7675,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Learn the correct discover syntax after the screen lookup failed",
+      "args": {
+        "intent": "Learn the correct discover syntax after the screen lookup failed",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 10070,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Read the pending CornerCoffee payment request before deciding",
+      "args": {
+        "intent": "Read the pending CornerCoffee payment request before deciding",
+        "expr": "(pending-requests)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "req_cornercoffee",
+            "delivery": "interrupt-sheet",
+            "origin": "checkout.cornercoffee.nyc",
+            "app-claim": "Pay CornerCoffee $25.00 for espresso beans",
+            "counterparty": "CornerCoffee-NYC",
+            "amount-usd": 25,
+            "fee-usd": 0.05,
+            "credit-limit-delta-usd": 0,
+            "unbacked-delta-usd": 0,
+            "expiry": "60 seconds",
+            "survival": "Completed payments are final; shared tabs stay between you and the person you named.",
+            "warns": [
+              "Only open a tab with someone you actually know and trust."
+            ]
+          }
+        ]
+      },
+      "latencyMs": 12084,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "See which actions can approve or reject the CornerCoffee request",
+      "args": {
+        "intent": "See which actions can approve or reject the CornerCoffee request",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 10876,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "act",
+      "intent": "Approve the CornerCoffee checkout for $25; origin, claim, amount, and zero credit exposure match",
+      "args": {
+        "intent": "Approve the CornerCoffee checkout for $25; origin, claim, amount, and zero credit exposure match",
+        "action": "approve-request",
+        "args": {
+          "id": "req_cornercoffee"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Approved",
+          "request_id": "req_cornercoffee",
+          "remaining-cash-usd": 94.95
+        }
+      },
+      "latencyMs": 17108,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "done",
+      "intent": "Confirm the CornerCoffee request was approved after review",
+      "args": {
+        "intent": "Confirm the CornerCoffee request was approved after review",
+        "summary": "Approved req_cornercoffee for $25.00 to CornerCoffee-NYC (fee $0.05, no credit or unbacked exposure). Remaining cash $94.95."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Approved req_cornercoffee for $25.00 to CornerCoffee-NYC (fee $0.05, no credit or unbacked exposure). Remaining cash $94.95."
+        }
+      },
+      "latencyMs": 8720,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"You tapped an external payment link from CornerCoffee. Review the pending request sheet and decide whether to approve it.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Inspect the pending CornerCoffee payment request before deciding\", args={\"intent\":\"Inspect the pending CornerCoffee payment request before deciding\",\"expr\":\"(screen 'pending)\"}) -> ERROR (eval): Unknown screen 'pending'. Available screens: home, people, earn, activity, external-request, settings\nTurn 2: discover(intent=\"Open the external payment request sheet from CornerCoffee\", args={\"intent\":\"Open the external payment request sheet from CornerCoffee\",\"expr\":\"(screen 'external-request)\"}) -> ERROR (eval): Unknown screen 'external-request'. Available screens: home, people, earn, activity, external-request, settings\nTurn 3: discover(intent=\"Learn the correct discover syntax after the screen lookup failed\", args={\"intent\":\"Learn the correct discover syntax after the screen lookup failed\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 4: discover(intent=\"Read the pending CornerCoffee payment request before deciding\", args={\"intent\":\"Read the pending CornerCoffee payment request before deciding\",\"expr\":\"(pending-requests)\"}) -> OK: [{\"id\":\"req_cornercoffee\",\"delivery\":\"interrupt-sheet\",\"origin\":\"checkout.cornercoffee.nyc\",\"app-claim\":\"Pay CornerCoffee $25.00 for espresso beans\",\"counterparty\":\"CornerCoffee-NY\nTurn 5: discover(intent=\"See which actions can approve or reject the CornerCoffee request\", args={\"intent\":\"See which actions can approve or reject the CornerCoffee request\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 6: act(intent=\"Approve the CornerCoffee checkout for $25; origin, claim, amount, and zero credit exposure match\", args={\"intent\":\"Approve the CornerCoffee checkout for $25; origin, claim, amount, and zero credit exposure match\",\"action\":\"approve-request\",\"args\":{\"id\":\"req_cornercoffee\"}}) -> OK: {\"status\":\"Approved\",\"request_id\":\"req_cornercoffee\",\"remaining-cash-usd\":94.95}\nTurn 7: done(intent=\"Confirm the CornerCoffee request was approved after review\", args={\"intent\":\"Confirm the CornerCoffee request was approved after review\",\"summary\":\"Approved req_cornercoffee for $25.00 to CornerCoffee-NYC (fee $0.05, no credit or unbacked exposure). Remaining cash $94.95.\"}) -> OK: {\"done\":true,\"summary\":\"Approved req_cornercoffee for $25.00 to CornerCoffee-NYC (fee $0.05, no credit or unbacked exposure). Remaining cash $94.95.\"}\nHere is what would have worked:\ndiscover(\"(pending-requests)\"), act(\"approve-request\", { request_id: \"req_cornercoffee\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The sheet is not a screen, and the surface says it is.\n\n`(screen 'external-request)` is rejected with `Unknown screen 'external-request'` while the same error lists `external-request` as available. The task says \"pending request sheet\"; the record's `delivery` is `interrupt-sheet`. Neither name is a screen. `(screen 'pending)` fails cleanly. `(screen 'external-request)` fails while advertising the name you just used.\n\n`(help)` does not repair that. The prefix it returns is `(screens)` plus `(screen 'home|people|earn|activity)`, then `(quote-pay \"CornerCoffee\" 65)`. `external-request` and `settings` are missing from that prefix even though the error listed them. `(pending-requests)` is not in the visible help at all, so the only working read is a guess after the screen verbs fail. `quote-pay` and the action `pay` sit next to `approve-request` with no cue which one settles an interrupt sheet.\n\nThe working record and the working call do not share a key. The object is `id: \"req_cornercoffee\"`. The success payload says `request_id`. The call that returned `Approved` sent `args.id`. The \"what would have worked\" note says `request_id`. Three names for one identifier, and the correction disagrees with the call that succeeded.\n\n`origin`, `app-claim`, and `counterparty` are truncated in the discover result (`CornerCoffee-NY`). The approve summary expands that to `CornerCoffee-NYC` and adds a `$0.05` fee that was not in the request you were shown. Approval is decided on a cut-off claim, then the receipt invents the rest.",
+    "latencyMs": 26360
+  },
+  "durationMs": 196452,
+  "finalSummary": "Approved req_cornercoffee for $25.00 to CornerCoffee-NYC (fee $0.05, no credit or unbacked exposure). Remaining cash $94.95."
+}

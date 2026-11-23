@@ -1,3 +1,4 @@
+import { normalizeId } from '../../utils/primitives';
 export const PAYMENT_TERMINAL_EVENT_NAMES = [
   'HtlcFinalized',
   'HtlcReceived',
@@ -65,7 +66,6 @@ const DEFAULT_MAX_GAP_RETRIES = 20;
 const DEFAULT_RETRY_MS = 100;
 const ENTITY_ID_RE = /^0x[0-9a-f]{64}$/;
 
-const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 const isTerminalEventName = (value: unknown): value is PaymentTerminalEventName =>
   PAYMENT_TERMINAL_EVENT_NAMES.includes(value as PaymentTerminalEventName);

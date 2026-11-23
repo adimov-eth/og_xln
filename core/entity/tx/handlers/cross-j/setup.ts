@@ -18,12 +18,11 @@ import {
   pushCrossJurisdictionEntityOutput,
 } from '../../j-events-htlc/cross-j-outputs';
 import {
-  canonicalizeCrossJurisdictionRouteForKnownEntities,
-  isCrossJurisdictionRouteParticipant,
   mergeCrossJurisdictionRoute,
   validateCrossJurisdictionLocalBinding,
   validateCrossJurisdictionRouteTransition,
 } from '../../j-events-htlc/cross-jurisdiction-helpers';
+import { isCrossJurisdictionRouteParticipant } from '../../../../extensions/cross-j/boundary';
 import { normalizeEntityRef , findAccountKey } from '../../account-key';
 import { prepareEntityTxState } from '../../../state-clone';
 import { ensureEntityCollectionCandidate } from '../../../state/persistent-collection-map';
@@ -295,9 +294,7 @@ export const handlePrepareCrossJurisdictionSwapEntityTx = (
   const newState = stateForEntityTx(entityState, options);
   const outputs: EntityInput[] = [];
   try {
-    route = withCanonicalCrossJurisdictionRouteHash(
-      canonicalizeCrossJurisdictionRouteForKnownEntities(env, newState, entityTx.data.route),
-    );
+    route = withCanonicalCrossJurisdictionRouteHash(entityTx.data.route);
   } catch (error) {
     addMessage(newState, `❌ Cross-j prepare invalid route: ${error instanceof Error ? error.message : String(error)}`);
     return { newState, outputs };
@@ -316,7 +313,7 @@ export const handlePrepareCrossJurisdictionSwapEntityTx = (
     addMessage(newState, `❌ Cross-j prepare ${route.orderId} wrong source hub`);
     return { newState, outputs };
   }
-  const bindingError = validateCrossJurisdictionLocalBinding(env, newState, route);
+  const bindingError = validateCrossJurisdictionLocalBinding(newState, route);
   if (bindingError) {
     addMessage(newState, `❌ Cross-j prepare ${route.orderId} blocked: ${bindingError}`);
     return { newState, outputs };
@@ -486,7 +483,6 @@ const buildTargetRegistrationTxs = (
 };
 
 export const handleRegisterCrossJurisdictionSwapEntityTx = (
-  env: EntityRuntimeContext,
   entityState: EntityState,
   entityTx: EntityTxOf<'registerCrossJurisdictionSwap'>,
   options?: ApplyEntityTxOptions,
@@ -501,18 +497,16 @@ export const handleRegisterCrossJurisdictionSwapEntityTx = (
     throw rejectFailure('CROSS_J_REGISTER_OPENING_PULLS_MISSING', `CROSS_J_REGISTER_OPENING_PULLS_MISSING:${incoming.orderId}`);
   }
   try {
-    route = withCanonicalCrossJurisdictionRouteHash(
-      canonicalizeCrossJurisdictionRouteForKnownEntities(env, newState, entityTx.data.route),
-    );
+    route = withCanonicalCrossJurisdictionRouteHash(entityTx.data.route);
   } catch (error) {
     addMessage(newState, `❌ Cross-j register invalid route: ${error instanceof Error ? error.message : String(error)}`);
     return { newState, outputs: [] };
   }
-  if (!isCrossJurisdictionRouteParticipant(newState.entityId, route)) {
+  if (!isCrossJurisdictionRouteParticipant(route, newState.entityId)) {
     addMessage(newState, `❌ Cross-j register ${route.orderId} routed to non-participant entity`);
     return { newState, outputs: [] };
   }
-  const bindingError = validateCrossJurisdictionLocalBinding(env, newState, route);
+  const bindingError = validateCrossJurisdictionLocalBinding(newState, route);
   if (bindingError) {
     addMessage(newState, `❌ Cross-j register ${route.orderId} blocked: ${bindingError}`);
     return { newState, outputs: [] };

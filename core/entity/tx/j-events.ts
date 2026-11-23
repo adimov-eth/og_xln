@@ -1,3 +1,4 @@
+import { normalizeEntityRef } from '../../support/boundary-guards';
 import { refreshDisputeSecretArguments } from '../dispute-secret-arguments';
 import type { EntityCandidateEffect, EntityInput, EntityState, HashToSign } from '../types';
 import type { EntityRuntimeContext } from '../runtime-context';
@@ -116,8 +117,6 @@ import type { BookIntentSlotWriter } from '../books/book-intents';
 import { retireDisputedLendingClaims } from '../../lendbook/lifecycle';
 
 const jEventLog = createStructuredLogger('j.event');
-const normalizeSignerId = (value: unknown): string => String(value || '').trim().toLowerCase();
-
 const incrementAccountNonce = (nonce: number, code: string): number => {
   if (nonce >= Number.MAX_SAFE_INTEGER) throw new Error(`${code}:${nonce}`);
   return nonce + 1;
@@ -366,7 +365,7 @@ export const applyJEvent = async (
   mutableFrameState = false,
   bookIntentSlot?: BookIntentSlotWriter,
 ): Promise<JEventApplyResult> => {
-  const activeProposerId = normalizeSignerId(getEntityLeaderState(entityState).activeValidatorId);
+  const activeProposerId = normalizeEntityRef(getEntityLeaderState(entityState).activeValidatorId);
   // Reject unauthorized senders before canonicalizing attacker-controlled bytes.
   // Active proposers still pass the exact same aggregate frame budget below.
   assertEntityFrameJRangeBudget([{ type: 'j_event', data }]);
@@ -383,7 +382,7 @@ export const applyJEvent = async (
     if (validated.code === 'J_RANGE_PROPOSER_SIGNATURE_INVALID') {
       throw haltRuntimeFailure(
         'J_EVENT_PROPOSER_SIGNATURE_INVALID',
-        `j_event rejected: invalid proposer signature for ${normalizeSignerId(data.from)}`,
+        `j_event rejected: invalid proposer signature for ${normalizeEntityRef(data.from)}`,
       );
     }
     throw haltRuntimeFailure('J_EVENT_RANGE_REJECTED', `j_event rejected: ${validated.code}`);

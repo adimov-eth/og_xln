@@ -90,25 +90,14 @@ test('packed package installs inertly and runs from an audited empty directory',
     const dependencyLockHash = new Bun.CryptoHasher('sha256').update(dependencyLock).digest('hex');
     const manifest = readFileSync(`${PACKAGE_ROOT}/docs/manifest.sha256`, 'utf8');
     expect(manifest).toContain(`${dependencyLockHash}  docs/dependency-lock.audit\n`);
-    if (files.includes('package/src/native/source/opencl/COPYING-GPL-2.0-or-later')) {
-      expect(packageJson.license).toContain('GPL-2.0-or-later');
-    }
-    expect(files).toContain('package/docs/media/brainvault-terminal-demo.mp4');
-    expect(files).toContain('package/src/native/source/rust/vendor/argon2-rust/.cargo-checksum.json');
     for (const testFile of packageJson.scripts['test']?.match(/[\w/-]+\.test\.ts/g) ?? []) {
       expect(files).toContain(`package/${testFile}`);
     }
     if (process.platform === 'darwin' && process.arch === 'arm64') {
       expect(files).toContain('package/src/native/prebuilds/darwin-arm64/brainvault-argon2');
       expect(files).toContain('package/src/native/prebuilds/darwin-arm64/brainvault-argon2-m3');
-      expect(files).toContain('package/src/native/prebuilds/darwin-arm64/brainvault-argon2-rust');
-      expect(files).toContain('package/src/native/prebuilds/darwin-arm64/brainvault-argon2-rust-m3');
-      expect(files).toContain('package/src/native/prebuilds/darwin-arm64/brainvault-argon2-rust-no-wipe');
-      expect(files).toContain('package/src/native/prebuilds/darwin-arm64/brainvault-argon2-rust-no-wipe-m3');
       expect(files).toContain('package/src/native/prebuilds/darwin-arm64/brainvault-argon2-metal');
       expect(files).toContain('package/src/native/prebuilds/darwin-arm64/argon2.metallib');
-      expect(files).toContain('package/src/native/prebuilds/darwin-arm64/brainvault-argon2-opencl');
-      expect(files).toContain('package/src/native/source/opencl/data/kernels/argon2_kernel.cl');
     }
     expect(files.some(path => path.includes('node_modules/'))).toBe(false);
     expect(files.some(path => path.includes('docs/evidence/'))).toBe(false);
@@ -145,11 +134,6 @@ test('packed package installs inertly and runs from an audited empty directory',
       'src/native/prebuilds/darwin-arm64/brainvault-argon2',
       'src/native/prebuilds/darwin-arm64/brainvault-argon2-m3',
       'src/native/prebuilds/darwin-arm64/brainvault-argon2-metal',
-      'src/native/prebuilds/darwin-arm64/brainvault-argon2-opencl',
-      'src/native/prebuilds/darwin-arm64/brainvault-argon2-rust',
-      'src/native/prebuilds/darwin-arm64/brainvault-argon2-rust-m3',
-      'src/native/prebuilds/darwin-arm64/brainvault-argon2-rust-no-wipe',
-      'src/native/prebuilds/darwin-arm64/brainvault-argon2-rust-no-wipe-m3',
     ]) verifyBundledExecutable(join(installedRoot, executable), installedRoot);
     const help = Bun.spawnSync({
       cmd: ['bun', 'node_modules/brainvault/brainvault', '--help'],
@@ -225,7 +209,7 @@ test('published benchmark math and every audit-surface size cannot drift', () =>
   const rows = [...table.matchAll(
     /^\| .*? \| \*{0,2}([\d.]+) s\*{0,2} \| \*{0,2}[\d.]+\*{0,2} \| \*{0,2}([\d.]+)x\*{0,2} \|$/gm,
   )];
-  expect(rows).toHaveLength(8);
+  expect(rows).toHaveLength(3);
   for (const row of rows) {
     expect(row[2]).toBe((15.335 / Number(row[1])).toFixed(2));
   }
@@ -241,7 +225,7 @@ test('published benchmark math and every audit-surface size cannot drift', () =>
   const nativeLines = countLines([
     'src/native/index.ts', 'src/native/hybrid.ts', 'src/native/shard-collector.ts',
     'src/native/children.ts', 'src/native/progress.ts', 'src/native/workers/browser.ts',
-    'src/native/workers/native.ts', 'src/native/workers/sync.ts', 'src/native/workers/wasm.ts',
+    'src/native/workers/native.ts', 'src/native/workers/wasm.ts',
   ]);
   const packagingLines = countLines([
     'src/packaging/binary-integrity.ts', 'src/packaging/manifest.ts', 'src/packaging/normalize-macho.ts',

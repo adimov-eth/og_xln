@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
+import { Glob } from 'bun';
 import fs from 'node:fs';
-import path from 'node:path';
 import ts from 'typescript';
 
 const EXCLUDED_PATH = /\/(?:__tests__|qa|scenarios)\//;
@@ -9,16 +9,11 @@ const VALIDATOR_PARAMETER = /(?:validate|validator|schema|decode|assert)/i;
 const RAW_DECODER = /^(?:decodeBinaryPayload|decodeBuffer|decryptJSON|deserializeTaggedJson|safeParse)$/;
 
 const collectFiles = (directory: string, excludeRuntimeScripts: boolean): string[] =>
-  fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-    const target = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      if (EXCLUDED_PATH.test(`/${target}/`)) return [];
-      if (excludeRuntimeScripts && target === path.join('core', 'scripts')) return [];
-      return collectFiles(target, excludeRuntimeScripts);
-    }
-    if (!entry.isFile() || !target.endsWith('.ts') || target.endsWith('.d.ts')) return [];
-    return [target];
-  });
+  [...new Glob(`${directory}/**/*.ts`).scanSync({ dot: true, onlyFiles: true })]
+    .filter(target => !target.endsWith('.d.ts')
+      && !EXCLUDED_PATH.test(`/${target}`)
+      && !(excludeRuntimeScripts && target.startsWith('core/scripts/')))
+    .sort();
 
 const isExported = (node: ts.Node): boolean =>
   ts.canHaveModifiers(node)

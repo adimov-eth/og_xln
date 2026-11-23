@@ -2,6 +2,7 @@
  * Canonical RLP encoding of Account collection values.
  * Isolated from state-root so Patricia maps can hash leaves without an import cycle.
  */
+import { compareBytes } from '../../support/boundary-guards';
 import { ethers } from 'ethers';
 import { utf8Bytes } from '../../protocol/crypto/keccak-text';
 import { compareStableText } from '../../protocol/serialization';
@@ -24,15 +25,6 @@ const scalarNode = (value: null | boolean | number | bigint | string): RlpNode =
     return [textNode('bigint'), value < 0n ? '0x01' : '0x00', ethers.toBeHex(magnitude)];
   }
   return [textNode('string'), textNode(value)];
-};
-
-const compareBytes = (left: Uint8Array, right: Uint8Array): number => {
-  const limit = Math.min(left.byteLength, right.byteLength);
-  for (let index = 0; index < limit; index += 1) {
-    const difference = Number(left[index]) - Number(right[index]);
-    if (difference !== 0) return difference;
-  }
-  return left.byteLength - right.byteLength;
 };
 
 const rlpLengthBytes = (length: number): Uint8Array => {

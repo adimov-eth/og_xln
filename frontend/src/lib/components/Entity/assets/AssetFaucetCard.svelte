@@ -61,9 +61,9 @@
     gap: 12px;
     margin-bottom: 12px;
     padding: 10px 14px;
-    border: 1px solid rgba(120, 113, 108, 0.22);
+    border: 1px solid var(--theme-border, #262a31);
     border-radius: 14px;
-    background: rgba(23, 20, 18, 0.58);
+    background: var(--theme-surface, #121418);
   }
 
   .faucet-inline-row {
@@ -79,7 +79,7 @@
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #fbbf24;
+    color: var(--theme-text-secondary, #9aa3b2);
     white-space: nowrap;
   }
 
@@ -89,9 +89,9 @@
     min-height: 34px;
     padding: 6px 28px 6px 10px;
     border-radius: 10px;
-    background: rgba(17, 13, 11, 0.92);
-    border: 1px solid rgba(120, 113, 108, 0.32);
-    color: #f5f5f4;
+    background: var(--theme-surface, #121418);
+    border: 1px solid var(--theme-input-border, #5f656e);
+    color: var(--theme-text-primary, #f5f5f4);
   }
 
   .btn-table-action {
@@ -107,7 +107,7 @@
 
   .btn-table-action.faucet {
     background: linear-gradient(135deg, #0ea5e9, #0284c7);
-    color: #f0f9ff;
+    color: #050608;
   }
 
   .btn-table-action.faucet:hover:not(:disabled) {
@@ -116,7 +116,7 @@
 
   .btn-table-action.deposit {
     background: linear-gradient(135deg, #16a34a, #15803d);
-    color: #f0fdf4;
+    color: #050608;
   }
 
   .btn-table-action.deposit:hover:not(:disabled) {

@@ -3,7 +3,7 @@ import type { EntityInput, EntityState } from '../../../types';
 import type { EntityRuntimeContext } from '../../../runtime-context';
 import type { AccountInputDisputeRequired } from '../../../../account/consensus/types';
 import { addMessage } from '../../../frame-events';
-import { armPaymentSecretAckTimeout, persistVerifiedPaymentSecret } from '../../../../paybook/lifecycle';
+import { persistVerifiedPaymentSecret, queueInboundSecretResolution } from '../../../../paybook/lifecycle';
 import { handlePrepareDispute } from '../dispute';
 import type { CommittedAccountEffects } from './committed-input';
 import { hasInboundPayment } from '../../../../paybook/views';
@@ -38,14 +38,7 @@ const persistDisputeEvidenceSecrets = (context: UnsafeFrameContext): void => {
     const localIsLeft = account.state.leftEntity.toLowerCase() === state.entityId.toLowerCase();
     const localSentLock = lock.senderIsLeft === localIsLeft;
     if (!localSentLock || !hasInboundPayment(route)) continue;
-    effects.accountTxs.push({
-      accountId: route.inboundEntity,
-      tx: {
-        type: 'htlc_resolve',
-        data: { lockId: hashlock, outcome: 'secret', secret },
-      },
-    });
-    armPaymentSecretAckTimeout(state, route);
+    queueInboundSecretResolution(state, route, effects.accountTxs, hashlock);
   }
 };
 

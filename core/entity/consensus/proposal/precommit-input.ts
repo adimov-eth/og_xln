@@ -1,6 +1,5 @@
 import { shortHash, shortId } from '../../../support/logger';
 import { DEBUG } from '../../../support/debug-flags';
-import { log } from '../../../support/diagnostics';
 import { finalizeCommitNotification } from '../commit/finalization';
 import { getEntityHashManifestMismatch } from '../input/hanko-witness';
 import {
@@ -178,7 +177,7 @@ export const handleHashPrecommits = async (
     const totalShares = Object.values(
       authorityConfig.shares,
     ).reduce((sum, value) => sum + value, 0n);
-    log.info(
+    entityLog.info(
       `    🔍 Threshold check: ${power} / ${totalShares} ` +
         `[${((Number(power) / Number(authorityConfig.threshold)) * 100).toFixed(1)}%]`,
     );

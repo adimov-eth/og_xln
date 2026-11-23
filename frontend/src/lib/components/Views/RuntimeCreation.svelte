@@ -1,12 +1,11 @@
 <script lang="ts">
   import WalletPasswordForm from './WalletPasswordForm.svelte';
-  import { explainWalletError } from '#lib/utils/ui/walletError.ts';
+  import { explainWalletError, walletErrorLead } from '#lib/utils/ui/walletError.ts';
   import { hasPasswordVault, savePasswordVault } from '#lib/security/passwordVault.ts';
   let passwordSetupRuntimeId: string | null = null;
   let pendingPasswordOpen: (() => Promise<boolean>) | null = null;
   import './runtime-creation.css';
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { locale, translations$, initI18n, loadTranslations } from '#lib/i18n/index.ts';
   // Runtime creation is entry only; entity capabilities are resolved in EntityWorkspace.
   import HierarchicalNav from '#lib/components/Navigation/HierarchicalNav.svelte';
   import { appStateOperations } from '#lib/stores/appStateStore.ts';
@@ -33,8 +32,9 @@
     entropyToMnemonic,
     factorForShardCount,
     getShardCount,
-    hexToBytes,
   } from '@xln/brainvault/core';
+  import { shardRequestFingerprint } from '@xln/brainvault/core/primitives/spec.ts';
+  import { acceptShard, createShardSlots, finalizeShards } from '@xln/brainvault/native/shard-collector.ts';
   import { assertDemoNetwork, DEMO_ACCOUNTS } from '#lib/config/demo-accounts.ts';
   import { fetchJurisdictions } from '#lib/stores/vault/vault-bootstrap.ts';
   import { listDefaultJurisdictionImports } from '#lib/stores/vault/vault-helpers.ts';
@@ -67,8 +67,6 @@
   export let embedded: boolean = false;
   export let unlockRuntimeId: string | null = null;
   const dispatch = createEventDispatcher<{ nodeReadyComplete: { entityId: string }; walletReady: { runtimeId: string } }>();
-
-  $: t = $translations$;
 
   function logRuntimeCreationDiagnostic(message: string, details?: unknown): void {
     errorLog.log(message, 'Runtime Creation', details);
@@ -304,7 +302,7 @@
   $: allocatedMemoryMB = activeWorkerCount * 256;
   let shardCount = 0;
   let shardsCompleted = 0;
-  let shardResults: Map<number, Uint8Array> = new Map();
+  let shardSlots: Array<Uint8Array | undefined> = [];
   const persistedShardTimeMs = readPersistedShardTime();
   let estimatedShardTimeMs = persistedShardTimeMs ?? 3000;
   let shardTimeMeasured = persistedShardTimeMs !== null;
@@ -694,7 +692,7 @@
   }
 
   function requeueShard(shardIndex: number, message: string): boolean {
-    if (shardResults.has(shardIndex)) return true;
+    if (shardSlots[shardIndex] !== undefined) return true;
     const attempts = (shardRetryCounts.get(shardIndex) ?? 0) + 1;
     shardRetryCounts.set(shardIndex, attempts);
     if (attempts > 3) {
@@ -725,9 +723,8 @@
   }
 
   function wipeShardResults(): void {
-    for (const shard of shardResults.values()) shard.fill(0);
-    shardResults.clear();
-    shardResults = new Map();
+    for (const shard of shardSlots) shard?.fill(0);
+    shardSlots = [];
   }
 
   function clearDerivedWalletMaterial(): void {
@@ -858,7 +855,7 @@
           logRuntimeCreationDiagnostic('BrainVault worker returned invalid probe timing', data?.estimatedShardTimeMs);
         }
       } else if (type === 'shard_complete') {
-        void handleShardComplete(worker, data?.shardIndex, data?.resultHex, data?.elapsedMs)
+        void handleShardComplete(worker, data)
           .catch((err) => failDerivation(workerErrorMessage(err)));
       } else if (type === 'error') {
         const error = data?.message ?? 'Worker failed';
@@ -938,6 +935,7 @@
     shardRetryCounts.clear();
     shardsCompleted = 0;
     wipeShardResults();
+    shardSlots = createShardSlots(shardCount);
 
     if (derivesBrainVaultOnNode) {
       await startNodeDerivation(run);
@@ -1117,10 +1115,10 @@
     const run = derivationRun;
     if (!run) throw new Error('BRAINVAULT_DERIVATION_RUN_MISSING');
     if (isWorkerDraining(worker)) return;
-    while (nextShardToDispatch < shardCount && shardResults.has(nextShardToDispatch)) {
+    while (nextShardToDispatch < shardCount && shardSlots[nextShardToDispatch] !== undefined) {
       nextShardToDispatch++;
     }
-    while (retryShardQueue.length > 0 && shardResults.has(retryShardQueue[0]!)) {
+    while (retryShardQueue.length > 0 && shardSlots[retryShardQueue[0]!] !== undefined) {
       retryShardQueue.shift();
     }
     if (retryShardQueue.length === 0 && nextShardToDispatch >= shardCount) return;
@@ -1141,27 +1139,27 @@
     });
   }
 
-  async function handleShardComplete(worker: Worker, shardIndex: unknown, resultHex: unknown, elapsedMs: unknown) {
+  async function handleShardComplete(
+    worker: Worker,
+    data: { shardIndex?: unknown; elapsedMs?: unknown; specId?: unknown; requestId?: unknown; resultHex?: unknown } | undefined,
+  ) {
     const activeShard = workerActiveShard.get(worker);
-    if (!Number.isSafeInteger(shardIndex) || Number(shardIndex) < 0 || Number(shardIndex) >= shardCount) {
-      throw new Error(`BRAINVAULT_WORKER_SHARD_INDEX_INVALID:${String(shardIndex)}`);
-    }
+    const shardIndex = data?.shardIndex;
+    const elapsedMs = data?.elapsedMs;
     if (activeShard !== shardIndex) {
       throw new Error(`BRAINVAULT_WORKER_SHARD_MISMATCH:${String(activeShard)}:${String(shardIndex)}`);
     }
-    if (typeof resultHex !== 'string' || resultHex.length !== BRAINVAULT_V1.SHARD_OUTPUT_BYTES * 2) {
-      throw new Error(`BRAINVAULT_WORKER_RESULT_INVALID:${typeof resultHex === 'string' ? resultHex.length : typeof resultHex}`);
-    }
     const measuredShardTimeMs = normalizeBrainVaultShardTimeSample(elapsedMs);
-    const validatedShardIndex = Number(shardIndex);
     clearWorkerShardWatchdog(worker);
     workerActiveShard.delete(worker);
-    if (shardResults.has(validatedShardIndex)) {
-      throw new Error(`BRAINVAULT_WORKER_DUPLICATE_SHARD:${validatedShardIndex}`);
-    }
-
-    shardResults.set(validatedShardIndex, hexToBytes(resultHex));
-    shardsCompleted = shardResults.size;
+    acceptShard(
+      shardSlots,
+      { specId: data?.specId, shardIndex, requestId: data?.requestId, result: data?.resultHex },
+      BRAINVAULT_V1_SPEC_ID,
+      BRAINVAULT_V1.SHARD_OUTPUT_BYTES,
+      index => shardRequestFingerprint(index, shardCount, BRAINVAULT_V1.ALG_ID, BRAINVAULT_V1.SHARD_MEMORY_KB),
+    );
+    shardsCompleted += 1;
 
     // Timing is telemetry: invalid or extreme samples must never discard valid Argon2 output.
     if (measuredShardTimeMs === null) {
@@ -1184,7 +1182,7 @@
     }
 
     // Check if all done
-    if (!finalizeInProgress && shardResults.size >= shardCount) {
+    if (!finalizeInProgress && shardsCompleted >= shardCount) {
       finalizeInProgress = true;
       try {
         await finalizeDeriv();
@@ -1198,22 +1196,15 @@
   async function finalizeDeriv() {
     const run = derivationRun;
     if (!run) throw new Error('BRAINVAULT_DERIVATION_RUN_MISSING');
-    const runShardResults = shardResults;
+    const runShardSlots = shardSlots;
     const isCurrentRun = (): boolean => isCurrentDerivationRun(run);
     const wipeRunShards = (): void => {
-      for (const shard of runShardResults.values()) shard.fill(0);
-      runShardResults.clear();
-      if (shardResults === runShardResults) shardResults = new Map();
+      for (const shard of runShardSlots) shard?.fill(0);
+      if (shardSlots === runShardSlots) shardSlots = [];
     };
     terminateWorkers();
 
-    // Collect results in order
-    const orderedResults: Uint8Array[] = [];
-    for (let i = 0; i < run.shardCount; i++) {
-      const shard = runShardResults.get(i);
-      if (!shard) throw new Error(`Missing shard ${i}`);
-      orderedResults.push(shard);
-    }
+    const orderedResults = finalizeShards(runShardSlots);
 
     let masterKey: Uint8Array | null = null;
     let entropy: Uint8Array | null = null;
@@ -1360,31 +1351,11 @@
     terminateWorkers();
   });
 
-  // Check for saved resume on mount + init i18n
   onMount(() => {
-    let unsubscribe: (() => void) | undefined;
-
     // Restore the saved auth scheme (dark default)
     if (typeof localStorage !== 'undefined' && localStorage.getItem(AUTH_SCHEME_STORAGE_KEY) === 'light') {
       scheme = 'light';
     }
-
-    // Run async init
-    (async () => {
-      // Init i18n
-      await initI18n();
-
-      // Watch for locale changes
-      unsubscribe = locale.subscribe(async (loc) => {
-        await loadTranslations(loc);
-      });
-
-      // No auto-login — user must create/login manually
-    })();
-
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
   });
 
 </script>
@@ -1481,7 +1452,12 @@
           <button class="back-to-create" disabled={openingTestWallet} on:click={() => { testEntry = false; }}>
             Create or restore a personal wallet
           </button>
-          {#if derivationError}<div class="matrix-status error" role="alert">{derivationError}</div>{/if}
+          {#if derivationError}
+            <div class="matrix-status error test-wallet-failure" role="alert">
+              <p class="failure-lead">{walletErrorLead(derivationError) ?? "The test wallet didn't open. Try again; the details below say what failed."}</p>
+              <code class="failure-diagnostic">{derivationError}</code>
+            </div>
+          {/if}
         {:else}
         {#if localTestEntry && !unlockRuntimeId}
           <button class="back-to-create" on:click={() => { reset(); testEntry = true; }}>← Back to test network</button>
@@ -1552,7 +1528,7 @@
               type="text"
               id="name"
               bind:value={name}
-              placeholder={t('vault.name.placeholder')}
+              placeholder="satoshi@bitcoin.org"
               autocomplete="off"
               autocapitalize="none"
               autocorrect="off"
@@ -1572,7 +1548,7 @@
               type={showPassphrase ? 'text' : 'password'}
               id="passphrase"
               bind:value={passphrase}
-              placeholder={t('vault.password.placeholder')}
+              placeholder="your secret phrase"
               autocomplete="off"
               autocapitalize="none"
               autocorrect="off"

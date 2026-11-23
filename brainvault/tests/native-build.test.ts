@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -39,11 +39,6 @@ test('shipped Apple Silicon artifacts target the M1-era macOS baseline', () => {
     'brainvault-argon2',
     'brainvault-argon2-m3',
     'brainvault-argon2-metal',
-    'brainvault-argon2-opencl',
-    'brainvault-argon2-rust',
-    'brainvault-argon2-rust-m3',
-    'brainvault-argon2-rust-no-wipe',
-    'brainvault-argon2-rust-no-wipe-m3',
   ]) {
     const inspected = Bun.spawnSync({
       cmd: ['vtool', '-show-build', `${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/${artifact}`],
@@ -99,52 +94,6 @@ test('locked native release builds are byte-reproducible', () => {
     expect(sha256(m3First)).toBe(sha256(m3Second));
     expect(sha256(m3First)).toBe(sha256(`${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/brainvault-argon2-m3`));
 
-    const rustRoot = `${PACKAGE_ROOT}/src/native/source/rust`;
-    const relocatedRustRoot = join(temp, 'relocated-rust-source');
-    cpSync(rustRoot, relocatedRustRoot, { recursive: true });
-    const cargoHome = join(temp, 'empty-cargo-home');
-    mkdirSync(cargoHome);
-    const buildRust = (
-      sourceRoot: string,
-      target: string,
-      noWipe: boolean,
-      cpu: 'apple-m1' | 'apple-m3',
-    ) => Bun.spawnSync({
-      cmd: [
-        'cargo', 'build', '--offline', '--release', '--locked',
-        ...(noWipe ? ['--no-default-features'] : []), '--target-dir', target,
-      ],
-      cwd: sourceRoot,
-      env: {
-        ...process.env,
-        CARGO_HOME: cargoHome,
-        MACOSX_DEPLOYMENT_TARGET: '11.0',
-        RUSTFLAGS: `-C target-cpu=${cpu} -C link-arg=-mmacosx-version-min=11.0 `
-          + `--remap-path-prefix=${realpathSync(sourceRoot)}=/brainvault-rust-src`,
-      },
-      stderr: 'pipe',
-      stdout: 'pipe',
-    });
-    for (const cpu of ['apple-m1', 'apple-m3'] as const) {
-      for (const noWipe of [false, true]) {
-        const variant = `${cpu === 'apple-m3' ? 'm3' : 'm1'}${noWipe ? '-no-wipe' : ''}`;
-        const first = join(temp, `rust-${variant}-1`);
-        const second = join(temp, `rust-${variant}-2`);
-        expect(buildRust(rustRoot, first, noWipe, cpu).exitCode).toBe(0);
-        const secondRoot = cpu === 'apple-m1' && !noWipe ? relocatedRustRoot : rustRoot;
-        expect(buildRust(secondRoot, second, noWipe, cpu).exitCode).toBe(0);
-        const prebuildName = `brainvault-argon2-rust${noWipe ? '-no-wipe' : ''}${cpu === 'apple-m3' ? '-m3' : ''}`;
-        const firstBinary = join(first, `release/${prebuildName}`);
-        const secondBinary = join(second, `release/${prebuildName}`);
-        renameSync(join(first, 'release/brainvault-argon2-rust'), firstBinary);
-        renameSync(join(second, 'release/brainvault-argon2-rust'), secondBinary);
-        normalize(firstBinary);
-        normalize(secondBinary);
-        expect(sha256(firstBinary)).toBe(sha256(secondBinary));
-        expect(sha256(firstBinary)).toBe(sha256(`${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/${prebuildName}`));
-      }
-    }
-
     const metalRoot = `${PACKAGE_ROOT}/src/native/source/metal`;
     const metalSources = [
       'brainvault_argon2_metal.m',
@@ -195,38 +144,6 @@ test('locked native release builds are byte-reproducible', () => {
     expect(compileMetalLibrary(metalAir2, metalLib2).exitCode).toBe(0);
     expect(sha256(metalLib1)).toBe(sha256(metalLib2));
     expect(sha256(metalLib1)).toBe(sha256(`${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/argon2.metallib`));
-
-    const openclRoot = `${PACKAGE_ROOT}/src/native/source/opencl`;
-    const openclSources = [
-      'brainvault_argon2_opencl.cpp',
-      'lib/argon2-gpu-common/argon2params.cpp',
-      'lib/argon2-gpu-common/blake2b.cpp',
-      'lib/argon2-opencl/device.cpp',
-      'lib/argon2-opencl/globalcontext.cpp',
-      'lib/argon2-opencl/kernelloader.cpp',
-      'lib/argon2-opencl/kernelrunner.cpp',
-      'lib/argon2-opencl/processingunit.cpp',
-      'lib/argon2-opencl/programcontext.cpp',
-    ];
-    const compileOpencl = (output: string) => Bun.spawnSync({
-      cmd: [
-        'clang++', '-Iinclude', '-Iinclude/argon2-gpu-common', '-Iinclude/argon2-opencl',
-        '-Ilib/argon2-gpu-common', '-Ilib/argon2-opencl', '-O3', '-DNDEBUG',
-        '-mmacosx-version-min=11.0',
-        '-std=c++11', ...openclSources, '-framework', 'OpenCL', '-o', output,
-      ],
-      cwd: openclRoot,
-      stderr: 'pipe',
-      stdout: 'pipe',
-    });
-    const opencl1 = join(temp, 'c1/brainvault-argon2-opencl');
-    const opencl2 = join(temp, 'c2/brainvault-argon2-opencl');
-    expect(compileOpencl(opencl1).exitCode).toBe(0);
-    expect(compileOpencl(opencl2).exitCode).toBe(0);
-    normalize(opencl1);
-    normalize(opencl2);
-    expect(sha256(opencl1)).toBe(sha256(opencl2));
-    expect(sha256(opencl1)).toBe(sha256(`${PACKAGE_ROOT}/src/native/prebuilds/darwin-arm64/brainvault-argon2-opencl`));
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

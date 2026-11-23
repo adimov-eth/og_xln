@@ -7,6 +7,7 @@ import { usdOf } from './financial/prices';
 import { walletTokenTotals } from './financial/token-totals';
 import { accountNetBalance } from '@xln/frontend/lib/utils/ui/accountBalance';
 import { disputeView, settlementView, type AccountDoc, type DisputePhase, type SettlementPhase } from './financial/manage';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
 
 /**
  * One projection read per committed frame, the same `view-frame` the SvelteKit
@@ -108,10 +109,6 @@ export type WalletView = {
 	refresh: () => void;
 };
 
-const normalizeId = (value: unknown): string =>
-	String(value || '')
-		.trim()
-		.toLowerCase();
 
 export function displayEntityName(names: Map<string, string>, entityId: string): string {
 	const name = names.get(normalizeId(entityId));

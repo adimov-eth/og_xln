@@ -44,9 +44,6 @@ Simulator results do not satisfy those physical/public gates.
 4. On the physical device, verify camera QR, VoiceOver task completion, default
    BrainVault latency, interruptions and response under an instrumented run.
 5. Run `bun run check`; report evidence, unresolved checks and reviewer scores.
-   When changing quote models, also compile/run the existing Foundation-only
-   `scripts/native/tests/quote-expiry.swift` with `WalletQuote.swift`; the app
-   build alone can hide unwanted UI dependencies in that model.
 
 Apple references: [automated audits](https://developer.apple.com/documentation/accessibility/performing-accessibility-audits-for-your-app),
 [manual accessibility testing](https://developer.apple.com/documentation/accessibility/performing-accessibility-testing-for-your-app).

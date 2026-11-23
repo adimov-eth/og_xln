@@ -1,5 +1,5 @@
+import { Glob } from 'bun';
 import fs from 'node:fs';
-import path from 'node:path';
 import ts from 'typescript';
 
 const EXCLUDED_PATH = /\/(?:__tests__|qa|scenarios|scripts)\//;
@@ -12,9 +12,9 @@ const DOUBLE_ASSERTION_DEBT: Readonly<Record<string, number>> = {};
 // Suppressions can hide unrelated errors on the same line. The empty ratchet
 // makes their removal permanent.
 const TS_SUPPRESSION_DEBT: Readonly<Record<string, number>> = {};
-const NON_NULL_ASSERTION_FILES = 174;
-const NON_NULL_ASSERTION_COUNT = 603;
-const NON_NULL_ASSERTION_SHA256 = '5de4a04fa2888d58daab3fb7100f6ea00c942e5ab18806f6042e26c94a72c6c7';
+const NON_NULL_ASSERTION_FILES = 171;
+const NON_NULL_ASSERTION_COUNT = 590;
+const NON_NULL_ASSERTION_SHA256 = '25005f5317f79ed885386f7c040897ca9f554e6441b099a8601f438ec7dade5b';
 
 type UnsafeTypeCounts = {
   explicitAnyLines: number[];
@@ -25,14 +25,9 @@ type UnsafeTypeCounts = {
 };
 
 const collectFiles = (directory: string): string[] =>
-  fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-    const target = path.join(directory, entry.name);
-    if (entry.isDirectory()) return collectFiles(target);
-    if (!entry.isFile() || !target.endsWith('.ts') || target.endsWith('.d.ts')) return [];
-    return EXCLUDED_PATH.test(`/${target}`) || target.endsWith('.test.ts') || target.endsWith('.spec.ts')
-      ? []
-      : [target];
-  });
+  [...new Glob(`${directory}/**/*.ts`).scanSync({ dot: true, onlyFiles: true })].filter(target =>
+    !target.endsWith('.d.ts') && !target.endsWith('.test.ts') && !target.endsWith('.spec.ts')
+    && !EXCLUDED_PATH.test(`/${target}`));
 
 const lineOf = (source: ts.SourceFile, position: number): number =>
   source.getLineAndCharacterOfPosition(position).line + 1;

@@ -54,6 +54,22 @@ export function bankOfferFor(
   return committed.expiresAt > now ? { kind: 'active', terms: committed } : { kind: 'not-lending' };
 }
 
+const SAVINGS_TERM_ORDER: readonly LendingTermId[] = ['demand', '1d', '1h', '1m'];
+
+/** Picks the first active savings term in Everyday preference order, falling back to demand status. */
+export function pickActiveSavingsOffer(
+  terms: readonly LendingBankTerms[],
+  domain: { chainId: number; depositoryAddress: string },
+  tokenId: number,
+  now = Date.now(),
+): BankOffer {
+  for (const termId of SAVINGS_TERM_ORDER) {
+    const candidate = bankOfferFor(terms, domain, tokenId, termId, now);
+    if (candidate.kind === 'active') return candidate;
+  }
+  return bankOfferFor(terms, domain, tokenId, 'demand', now);
+}
+
 export type TermId = LendingTermId;
 
 export const LENDING_TERMS: Array<{ id: TermId; label: string }> = [

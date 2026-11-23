@@ -35,27 +35,24 @@ import type { RuntimeReplica } from '../../runtime/types';
 import { createExternalWalletApi } from '../public/external-wallet-api';
 import { createJAdapter, createXlnJsonRpcProvider, type JAdapter } from '../../jurisdiction/adapter';
 import type { JAdapterConfig } from '../../jurisdiction/adapter/types';
-import { createMarketMakerServerState, resetMarketMakerServerState } from './health/market-maker';
 import { serveStaticApp } from './static-assets';
 import { hasDaemonControlAuth, parseTaggedControlBody, requireDaemonControlAuth } from './control/auth';
 import { resolveSocketPeerAddress } from './health/redaction';
 import { listLocalControlEntities } from './control/entities';
-import { getAccountReplica, getEntityReplicaById } from './entities/lookup';
-import { createRelayStore, pushDebugEvent, removeClient } from '../../network/relay/store';
+import { getEntityReplicaById } from './entities/lookup';
+import { createRelayStore, pushDebugEvent } from '../../network/relay/store';
 import { openRelayIncidentJournal } from '../../network/relay/incident-journal';
 import { maybeHandleRelayDebugRequest } from '../../network/relay/debug-http';
-import { forgetRelaySocketRuntimeId, isRelaySocketAuthenticated, relayRoute, type RelayRouterConfig } from '../../network/relay/router';
+import type { RelayRouterConfig } from '../../network/relay/router';
+import { createRelaySocketHandlers } from '../../network/relay/socket-handlers';
 import {
   canonicalizeRuntimeWsAudience,
-  resolveRuntimeWsMaxMessageBytes,
   resolveRuntimeWsRelayAudience,
-  serializeWsMessage,
-  toRuntimeWsBytes,
-  type RuntimeWsMessage,
 } from '../../network/p2p/ws-protocol';
 import { createHelloChallengeRegistry } from '../../network/p2p/auth/hello-challenge';
 import { resolveJurisdictionsJsonPath } from '../../jurisdiction/adapter/jurisdictions-path';
 import { createStructuredLogger, registerStructuredLogSink, shortId } from '../../support/logger';
+import { raceTimeout } from '../../support/time';
 import { startParentLivenessWatch } from '../../support/process/parent-watch';
 import { startIdleShutdownWatch } from '../../support/process/idle-shutdown';
 import {
@@ -65,8 +62,6 @@ import {
   type MarketSnapshotPayload,
 } from '../../network/relay/market/snapshot';
 import { createMarketSubscriptionStack } from '../../network/relay/market/subscriptions';
-import { encodeMarketWireMessage } from '../../network/relay/market/wire';
-import { decodeRelaySocketFrame } from './network/relay-frame';
 import { JSON_HEADERS, getErrorMessage, resolveRequiredAnvilRpc } from './utils';
 import { handleCustomContractsApi } from './custom-contracts';
 import { enforceFaucetPolicy } from './faucet/policy';
@@ -176,25 +171,12 @@ const requireWatcherConfirmationDepth = (adapter: JAdapter): number => {
 // A malformed value used to become NaN, which timed out every startup step.
 const STARTUP_STEP_TIMEOUT_MS = Math.max(5_000, readPositiveIntegerEnv('XLN_STARTUP_STEP_TIMEOUT_MS', 20_000));
 
-const withStartupStepTimeout = async <T>(
+const withStartupStepTimeout = <T>(
   label: string,
   work: Promise<T>,
   timeoutMs = STARTUP_STEP_TIMEOUT_MS,
-): Promise<T> => {
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      work,
-      new Promise<T>((_resolve, reject) => {
-        timeoutHandle = setTimeout(() => {
-          reject(new Error(`[XLN] Startup step timed out: ${label} after ${timeoutMs}ms`));
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
-  }
-};
+): Promise<T> =>
+  raceTimeout(work, timeoutMs, () => new Error(`[XLN] Startup step timed out: ${label} after ${timeoutMs}ms`));
 
 const currentRuntimeHeight = (env: RuntimeReplica | null): number => Math.max(0, Math.floor(Number(env?.state.height ?? 0)));
 
@@ -258,7 +240,6 @@ const resolveTrustedServerRestoreRpcBindings = (): Array<{
 const RELAY_MARKET_MAX_SUBSCRIPTIONS = readPositiveIntegerEnv('XLN_RELAY_MARKET_MAX_SUBSCRIPTIONS', 1000);
 const RELAY_MARKET_MAX_SUBSCRIPTION_CELLS = readPositiveIntegerEnv('XLN_RELAY_MARKET_MAX_SUBSCRIPTION_CELLS', 64);
 const RELAY_MARKET_MAX_SUBSCRIPTIONS_PER_IP = readPositiveIntegerEnv('XLN_RELAY_MARKET_MAX_SUBSCRIPTIONS_PER_IP', 8);
-const marketMakerState = createMarketMakerServerState();
 
 const externalWalletApi = createExternalWalletApi({
   getJAdapter: (entityId, jurisdiction) => {
@@ -296,10 +277,6 @@ const externalWalletApi = createExternalWalletApi({
     return true;
   },
 });
-
-const stopMarketMakerLoop = (): void => {
-  resetMarketMakerServerState(marketMakerState);
-};
 
 export type XlnServerOptions = {
   port: number;
@@ -425,8 +402,6 @@ const marketSubscriptionStack = createMarketSubscriptionStack<RelaySocket>({
   },
 });
 
-const cleanupRpcMarketSubscription = (ws: RelaySocket): void => marketSubscriptionStack.cleanup(ws);
-
 const handleRpcMessage = createServerRpcMessageHandler({
   validateRuntimeInputAdmission,
   deriveBrainVault: (env, input, options) => brainVaultOwnerController.deriveAndInstall(env, input, options),
@@ -544,8 +519,6 @@ const maybeHandleRuntimeInfoApi = async (
           error: serverBootError,
         },
         activeHubEntityIds: relayStore.activeHubEntityIds,
-        marketMakerState,
-        getAccountReplica,
         ensureTokenCatalog: () => tokenCatalogController.ensureTokenCatalog(),
       },
       operatorAuthorized,
@@ -957,115 +930,46 @@ const handleHttpRequest = async (
   return new Response('Not found', { status: 404 });
 };
 
-const routeRelaySocketMessage = (session: ServerSession, ws: RelaySocket, peerMessage: RuntimeWsMessage, rawBytes?: Uint8Array): void => {
-  const routerConfig = session.routerConfig;
-  if (!routerConfig) {
-    ws.send(serializeWsMessage({ type: 'error', error: 'Runtime transport not ready' }));
-    return;
-  }
-  Promise.resolve(relayRoute(routerConfig, ws, peerMessage, rawBytes)).catch(error => {
-    const reason = getErrorMessage(error, 'relay handler error');
-    serverLog.error('ws.relay_handler_error', { reason, type: peerMessage.type });
-    pushDebugEvent(relayStore, {
-      event: 'error',
-      reason: 'RELAY_HANDLER_EXCEPTION',
-      details: {
-        error: reason,
-        msgType: peerMessage.type,
-        from: peerMessage.from,
-        to: peerMessage.to,
-      },
-    });
-    try {
-      ws.send(serializeWsMessage({ type: 'error', error: 'Relay handler exception' }));
-    } catch (sendError) {
-      serverLog.debug('ws.relay_error_response_failed', {
-        error: getErrorMessage(sendError),
-      });
-    }
-  });
-};
-
-const handleWebSocketMessage = (
+const handleRpcSocketMessage = (
   session: ServerSession,
   ws: RelaySocket,
   message: string | Uint8Array | ArrayBuffer,
 ): void => {
-  // The listener binds before WAL/bootstrap recovery so health remains
-  // observable. Transport work is never queued across that boundary: each
-  // decoded message could otherwise retain attacker-controlled memory until
-  // startup completes. The upgrade path rejects these sockets too; this guard
-  // closes the race between an accepted upgrade and its first message.
-  if (!isRuntimeTransportReady(serverBootPhase)) {
-    ws.close(1013, 'Runtime transport not ready');
-    return;
-  }
-  const messageLength = (): number => typeof message === 'string' ? message.length : message.byteLength;
-  const wsType = ws.data.type;
   try {
-    if (wsType === 'rpc') {
-      const request = decodeRuntimeAdapterRequest(message);
-      // The HTTP listener is intentionally bound before Runtime recovery, but
-      // authenticated RPC must not observe the half-restored owner or enqueue
-      // work while WAL/J/bootstrap recovery is still in progress. Holding every
-      // RPC message behind the boot barrier also ensures a socket opened early
-      // gets its ticker attached to the final Runtime replica.
-      if (session.env) attachRuntimeAdapterTicker(session.env, registerEnvChangeCallback);
-      void handleRpcMessage(ws, request, session.env)
-        .catch(error => {
-          const reason = getErrorMessage(error);
-          serverLog.error('ws.rpc_handler_error', { reason, op: request.op });
-          pushDebugEvent(relayStore, {
-            event: 'error',
-            reason: 'RPC_HANDLER_EXCEPTION',
-            details: { error: reason, op: request.op },
-          });
-          closeInvalidRuntimeAdapterMessage(ws, error);
-        });
-      return;
-    }
-
-    const frame = decodeRelaySocketFrame(message, isRelaySocketAuthenticated(ws));
-    if (frame.kind === 'market') {
-      const marketMessage = frame.message;
-      Promise.resolve(marketSubscriptionStack.handleMessage(ws, marketMessage)).catch(error => {
+    const request = decodeRuntimeAdapterRequest(message);
+    // The HTTP listener is intentionally bound before Runtime recovery, but
+    // authenticated RPC must not observe the half-restored owner or enqueue
+    // work while WAL/J/bootstrap recovery is still in progress. Holding every
+    // RPC message behind the boot barrier also ensures a socket opened early
+    // gets its ticker attached to the final Runtime replica.
+    if (session.env) attachRuntimeAdapterTicker(session.env, registerEnvChangeCallback);
+    void handleRpcMessage(ws, request, session.env)
+      .catch(error => {
         const reason = getErrorMessage(error);
-        serverLog.error('ws.market_handler_error', { reason, type: marketMessage.type });
+        serverLog.error('ws.rpc_handler_error', { reason, op: request.op });
         pushDebugEvent(relayStore, {
           event: 'error',
-          reason: 'MARKET_HANDLER_EXCEPTION',
-          details: { error: reason, msgType: marketMessage.type },
+          reason: 'RPC_HANDLER_EXCEPTION',
+          details: { error: reason, op: request.op },
         });
-        ws.send(encodeMarketWireMessage({ type: 'error', error: reason }));
+        closeInvalidRuntimeAdapterMessage(ws, error);
       });
-      return;
-    }
-
-    routeRelaySocketMessage(session, ws, frame.message, typeof message === 'string' ? undefined : toRuntimeWsBytes(message));
   } catch (error) {
-    const byteLength = wsType === 'rpc' ? runtimeAdapterMessageByteLength(message) : messageLength();
+    const byteLength = runtimeAdapterMessageByteLength(message);
     const errorMessage = getErrorMessage(error);
-    serverLog.error('ws.parse_error', { type: wsType, len: byteLength, error: errorMessage });
+    serverLog.error('ws.parse_error', { type: 'rpc', len: byteLength, error: errorMessage });
     pushDebugEvent(relayStore, {
       event: 'error',
-      reason: wsType === 'rpc' ? 'Invalid runtime adapter message' : 'Invalid relay message',
-      details: { wsType, len: byteLength, error: errorMessage },
+      reason: 'Invalid runtime adapter message',
+      details: { wsType: 'rpc', len: byteLength, error: errorMessage },
     });
-    if (wsType === 'rpc') {
-      closeInvalidRuntimeAdapterMessage(ws, error);
-    } else {
-      ws.send(serializeWsMessage({ type: 'error', error: 'Invalid relay message' }));
-    }
+    closeInvalidRuntimeAdapterMessage(ws, error);
   }
 };
 
-const handleWebSocketClose = (session: ServerSession, ws: RelaySocket, code: number, reason: string | Buffer): void => {
-  session.relayHelloChallenges.forget(ws);
-  cleanupRpcMarketSubscription(ws);
+const handleWebSocketClosed = (ws: RelaySocket, code: number, reason: string, removedId: string | null): void => {
   forgetRuntimeAdapterClient(ws);
-  forgetRelaySocketRuntimeId(ws);
-  const removedId = removeClient(relayStore, ws);
-  const reasonText = typeof reason === 'string' ? reason : reason.toString();
+  const reasonText = typeof reason === 'string' ? reason : String(reason);
   serverLog.warn('ws.close', {
     type: ws.data.type,
     runtime: removedId ? shortId(removedId, 10) : 'unknown',
@@ -1097,8 +1001,17 @@ const serverIdleWatch = startIdleShutdownWatch('runtime-server', idleMs => {
   process.kill(process.pid, 'SIGTERM');
 });
 
-const createHttpServer = (options: XlnServerOptions, session: ServerSession) =>
-  Bun.serve<RelaySocketData>({
+const createHttpServer = (options: XlnServerOptions, session: ServerSession) => {
+  const relaySocketHandlers = createRelaySocketHandlers<RelaySocketData>({
+    relayStore,
+    relayHelloChallenges: session.relayHelloChallenges,
+    marketSubscriptionStack,
+    getRouterConfig: () => session.routerConfig ?? undefined,
+    wsType: ws => ws.data.type,
+    helloAudience: ws => ws.data.type === 'relay' ? ws.data.audience : undefined,
+    onClose: handleWebSocketClosed,
+  });
+  return Bun.serve<RelaySocketData>({
     port: options.port,
     hostname: options.host ?? '127.0.0.1',
     maxRequestBodySize: WATCHTOWER_PROXY_BODY_MAX_BYTES,
@@ -1107,23 +1020,35 @@ const createHttpServer = (options: XlnServerOptions, session: ServerSession) =>
       return handleHttpRequest(options, session, req, server);
     }),
     websocket: {
-      maxPayloadLength: resolveRuntimeWsMaxMessageBytes(),
+      maxPayloadLength: relaySocketHandlers.maxPayloadLength!,
       open(ws: RelaySocket) {
         serverIdleWatch.noteActivity();
         serverLog.info('ws.open', { type: ws.data.type });
         if (ws.data.type === 'rpc' && session.env) {
           attachRuntimeAdapterTicker(session.env, registerEnvChangeCallback);
         }
-        if (ws.data.type === 'relay') session.relayHelloChallenges.issue(ws, ws.data.audience);
-        pushDebugEvent(relayStore, { event: 'ws_open', details: { wsType: ws.data.type } });
+        relaySocketHandlers.open!(ws);
       },
       message: (ws, message) => {
         serverIdleWatch.noteActivity();
-        return handleWebSocketMessage(session, ws, message);
+        // The listener binds before WAL/bootstrap recovery so health remains
+        // observable. Transport work is never queued across that boundary: each
+        // decoded message could otherwise retain attacker-controlled memory until
+        // startup completes. The upgrade path rejects these sockets too; this guard
+        // closes the race between an accepted upgrade and its first message.
+        if (!isRuntimeTransportReady(serverBootPhase)) {
+          ws.close(1013, 'Runtime transport not ready');
+          return;
+        }
+        if (ws.data.type === 'rpc') handleRpcSocketMessage(session, ws, message);
+        else relaySocketHandlers.message!(ws, message);
       },
-      close: (ws, code, reason) => handleWebSocketClose(session, ws, code, reason),
+      close: (ws, code, reason) => {
+        relaySocketHandlers.close!(ws, code, reason);
+      },
     },
   });
+};
 
 type ServerJurisdictionRegistration = {
   name: string;
@@ -1445,7 +1370,6 @@ const closeFailedServerStartup = async (
   env: RuntimeReplica | null,
   bound: BoundServerSession,
 ): Promise<never> => {
-  stopMarketMakerLoop();
   const original = startupError instanceof Error ? startupError : new Error(String(startupError));
   const cleanup = await Promise.allSettled([
     globalJAdapter?.close() ?? Promise.resolve(),
@@ -1571,7 +1495,6 @@ export async function startXlnServer(opts: Partial<XlnServerOptions> = {}): Prom
     if (SKIP_SERVER_BOOTSTRAP) {
       serverLog.info('bootstrap.skip');
       relayStore.activeHubEntityIds = [];
-      stopMarketMakerLoop();
       hubEntityIds = [];
     } else {
       throw new Error('SHARED_HUB_BOOTSTRAP_REMOVED: use core/orchestrator/orchestrator.ts');
@@ -1580,10 +1503,7 @@ export async function startXlnServer(opts: Partial<XlnServerOptions> = {}): Prom
     // Start P2P overlay after WS /relay is actually listening.
     // Plain daemons stay connected even before they own a routing entity;
     // routing capability is an entity-level setting announced later.
-    const advertisedEntityIds = [
-      ...hubEntityIds,
-      ...(marketMakerState.entityId ? [marketMakerState.entityId.toLowerCase()] : []),
-    ];
+    const advertisedEntityIds = hubEntityIds;
     startP2P(env, {
       relayUrls: [bound.internalRelayUrl],
       ...(advertisedEntityIds.length > 0 ? { advertiseEntityIds: advertisedEntityIds } : {}),

@@ -30,19 +30,15 @@ const EXTERNAL_RUNTIME_CONSUMERS: Readonly<Record<string, readonly ExternalRunti
     consumer: 'frontend/src/routes/rpc-proxy-safety.ts',
     specifier: '@xln/core/api/server/rpc/proxy-safety',
     downstream: {
-      consumer: 'frontend/src/routes/rpc/+server.ts',
-      specifier: '../rpc-proxy-safety',
-    },
-  }, {
-    consumer: 'frontend/src/routes/rpc-proxy-safety.ts',
-    specifier: '@xln/core/api/server/rpc/proxy-safety',
-    downstream: {
-      consumer: 'frontend/src/routes/rpc2/+server.ts',
-      specifier: '../rpc-proxy-safety',
+      consumer: 'frontend/src/routes/rpc-proxy-handler.ts',
+      specifier: './rpc-proxy-safety',
     },
   }],
   'core/config/constants.ts': [{
     consumer: 'frontend/src/lib/view/core/TimeMachine.svelte',
+    specifier: '@xln/core/config/constants',
+  }, {
+    consumer: 'frontend/src/lib/components/Health/BootstrapLive.svelte',
     specifier: '@xln/core/config/constants',
   }],
   'core/network/relay/market/wire.ts': [{
@@ -64,10 +60,6 @@ const EXTERNAL_RUNTIME_CONSUMERS: Readonly<Record<string, readonly ExternalRunti
   'core/qa/severity.ts': [{
     consumer: 'frontend/src/routes/health/+page.svelte',
     specifier: '@xln/core/qa/severity',
-  }],
-  'core/qa/hlt/hlt-dashboard-preview.ts': [{
-    consumer: 'frontend/src/routes/qa/hlt/+page.svelte',
-    specifier: '@xln/core/qa/hlt/hlt-dashboard-preview',
   }],
   'core/qa/types.ts': [{
     consumer: 'frontend/src/lib/qa/types.ts',

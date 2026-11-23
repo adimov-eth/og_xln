@@ -16,7 +16,6 @@ import { runtimeView } from "#lib/stores/runtimeViewStore.ts";
 import { runtimeGraphLiveFrameCache, watchRuntimeGraphFrameCache } from "#lib/network3d/runtimeGraphFrameCache.ts";
 import { runtimeGraphCanonicity, runtimeGraphControlOperations, runtimeGraphScope } from "#lib/stores/network/runtimeGraphControlStore.ts";
 import { beginGraphGesture, emptyGraphGestureState, endGraphGesture, type GraphGestureOutcome } from "#lib/network3d/graphSelectionGesture.ts";
-import { ImmersiveWalletSurface } from "#lib/network3d/ImmersiveWalletSurface.ts";
 import { registerDebugSurface } from "#lib/utils/runtime/debugSurface.ts";
 import { networkMachineRuntime } from "#lib/stores/network/networkMachineRuntimeStore.ts";
 import { networkMachineDemo } from "#lib/stores/network/networkMachineDemoStore.ts";
@@ -239,7 +238,6 @@ let hasMoved: boolean = false; // Track if actual movement occurred during drag
 let justDragged: boolean = false; // Flag to prevent click after drag
 let selectedGraphEntityId = "";
 let graphGestureState = emptyGraphGestureState();
-let immersiveWalletSurface: ImmersiveWalletSurface | null = null;
 function loadBirdViewSettings(): BirdViewSettings {
   return readBirdViewSettings(typeof localStorage === "undefined" ? null : localStorage);
 }
@@ -401,8 +399,6 @@ $: if (entities.length > 0) {
     entityMeshMap.set(entity.id, entity.mesh);
   });
 }
-let isVRSupported: boolean = false;
-let isVRActive: boolean = false;
 let availableRoutes: GraphPaymentRoute[] = [];
 let selectedRouteIndex: number = 0;
 let graphInitialized = false;
@@ -413,16 +409,6 @@ async function initAndSetup() {
     XLN = await getXLN();
   } catch (err) {
     console.error("[Graph3D] Failed to load XLN runtime:", err);
-  }
-  if (navigator.xr) {
-    try {
-      const vrSupported = await navigator.xr.isSessionSupported("immersive-vr");
-      isVRSupported = vrSupported === true;
-    } catch (err) {
-      isVRSupported = false;
-    }
-  } else {
-    isVRSupported = false;
   }
   await initThreeJS();
   // Store updates that arrived while the scene was being built were skipped (no scene yet);
@@ -437,14 +423,6 @@ onMount(() => {
   if (initEnabled) {
     initAndSetup().catch(reportGraphInitError);
   }
-  const handleVRToggle = () => {
-    if (isVRActive) {
-      exitVR();
-    } else {
-      enterVR();
-    }
-  };
-  panelBridge.on("vr:toggle", handleVRToggle);
   const handleBroadcastToggle = (event: { enabled: boolean }) => {
     broadcastEnabled = event.enabled;
   };
@@ -569,7 +547,6 @@ onMount(() => {
     unsubscribe7();
     stopRemoteGraphWatch();
     panelBridge.off("scenario:loaded", handleScenarioLoaded);
-    panelBridge.off("vr:toggle", handleVRToggle);
     panelBridge.off("broadcast:toggle", handleBroadcastToggle);
     panelBridge.off("settings:update", handleSettingsUpdate);
     panelBridge.off("settings:reset", handleSettingsReset);
@@ -579,8 +556,6 @@ onMount(() => {
 });
 let resizeObserver: ResizeObserver | null = null;
 onDestroy(() => {
-  immersiveWalletSurface?.dispose();
-  immersiveWalletSurface = null;
   if (resizeObserver && container) {
     resizeObserver.disconnect();
     resizeObserver = null;
@@ -653,7 +628,6 @@ async function initThreeJS() {
     return;
   }
   renderer = createdRenderer;
-  renderer.xr.enabled = !(typeof navigator !== "undefined" && navigator.webdriver); // Keep XR off in automation
   renderer.setSize(containerWidth, containerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.maxPixelRatio));
   // Canvas pixels have no DOM nodes. Expose only detached rendered IDs, selection
@@ -736,41 +710,7 @@ async function initThreeJS() {
     }, 50); // 50ms debounce
   });
   resizeObserver.observe(container);
-  if (isVRSupported && renderer) {
-    setupVRControllers();
-  }
 }
-function setupVRControllers() {
-  if (!renderer || !scene) return;
-  const geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1.5)]);
-  for (let index = 0; index < 2; index += 1) {
-    const controller = renderer.xr.getController(index);
-    controller.userData["sourceId"] = `xr:${index}`;
-    controller.addEventListener("connected", (event) => {
-      const inputSource = 'data' in event ? event.data as XRInputSource | undefined : undefined;
-      const handedness = inputSource?.handedness || `slot-${index}`;
-      const mode = inputSource?.targetRayMode || "unknown";
-      controller.userData["sourceId"] = `xr:${mode}:${handedness}`;
-      controller.userData["inputSource"] = inputSource ?? null;
-      controller.visible = true;
-    });
-    controller.addEventListener("disconnected", () => {
-      const sourceId = String(controller.userData["sourceId"] || `xr:${index}`);
-      vrGrabs.delete(sourceId);
-      controller.userData["inputSource"] = null;
-      controller.visible = false;
-    });
-    controller.addEventListener("selectstart", onVRSelectStart);
-    controller.addEventListener("selectend", onVRSelectEnd);
-    const ray = new THREE.Line(geometry.clone(), new THREE.LineBasicMaterial({ color: 0x00ffff, opacity: 0.8, transparent: true }));
-    ray.name = "xln-xr-target-ray";
-    controller.add(ray);
-    scene.add(controller);
-  }
-  geometry.dispose();
-}
-type VRGrab = { entity: GraphEntityData; controller: THREE.Object3D; sourceId: string; startPosition: THREE.Vector3; rayDistance: number };
-const vrGrabs = new Map<string, VRGrab>();
 function entityFromObject(object: THREE.Object3D | null | undefined): GraphEntityData | null {
   let current = object ?? null;
   while (current) {
@@ -780,172 +720,6 @@ function entityFromObject(object: THREE.Object3D | null | undefined): GraphEntit
     current = current.parent;
   }
   return null;
-}
-function onVRSelectStart(event: { target: THREE.Object3D }) {
-  const controller = event.target as THREE.Object3D;
-  const sourceId = String(controller.userData["sourceId"] || controller.uuid);
-  const tempMatrix = new THREE.Matrix4();
-  tempMatrix.identity().extractRotation(controller.matrixWorld);
-  const raycaster = new THREE.Raycaster();
-  raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-  raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-  if (immersiveWalletSurface?.select(raycaster)) return;
-  const intersects = raycaster.intersectObjects(
-    entities.map((e) => e.mesh),
-    true,
-  );
-  if (intersects.length > 0) {
-    const hit = intersects[0];
-    const entity = entityFromObject(hit?.object);
-    if (entity) {
-      graphGestureState = beginGraphGesture(graphGestureState, { sourceId, entityId: entity.id, at: performance.now() });
-      vrGrabs.set(sourceId, { entity, controller, sourceId, startPosition: entity.position.clone(), rayDistance: hit?.distance ?? 1 });
-      entity.isDragging = true;
-    }
-  }
-}
-function onVRSelectEnd(event: { target: THREE.Object3D }) {
-  const controller = event.target as THREE.Object3D;
-  const sourceId = String(controller.userData["sourceId"] || controller.uuid);
-  const grab = vrGrabs.get(sourceId);
-  if (grab) {
-    const moved = grab.entity.position.distanceTo(grab.startPosition) > 0.5;
-    const result = endGraphGesture(graphGestureState, {
-      sourceId,
-      entityId: grab.entity.id,
-      at: performance.now(),
-      moved,
-    });
-    graphGestureState = result.state;
-    grab.entity.isDragging = false;
-    handleGraphGestureOutcome(result.outcome, grab.entity);
-    if (moved) {
-      grab.entity.isPinned = true;
-      saveEntityPositionOverride(grab.entity);
-    }
-    enforceSpacingConstraints();
-    updateConnectionsForEntity(grab.entity.id);
-    vrGrabs.delete(sourceId);
-  }
-}
-async function enterVR() {
-  if (!renderer || !isVRSupported) {
-    debug.error("VR not supported on this device");
-    return;
-  }
-  try {
-    const sessionInit: XRSessionInit = {
-      optionalFeatures: [
-        "local-floor",
-        "bounded-floor",
-        "hand-tracking",
-        "layers", // Vision Pro AR passthrough
-        "dom-overlay", // Better UI integration
-        "anchors", // Physical world anchoring
-      ],
-      requiredFeatures: [],
-      domOverlay: { root: container },
-    };
-    if (!navigator.xr) throw new Error('GRAPH_XR_API_UNAVAILABLE');
-    const session = await navigator.xr.requestSession("immersive-vr", sessionInit);
-    await renderer.xr.setSession(session);
-    isVRActive = true;
-    immersiveWalletSurface?.dispose();
-    const xrCamera = renderer.xr.getCamera();
-    immersiveWalletSurface = new ImmersiveWalletSurface(scene, xrCamera, (identity, action) => {
-      panelBridge.emit("openEntityOperations", { ...identity, action });
-    });
-    scene.background = null; // Transparent = passthrough mode
-    graphWorld.scale.setScalar(0.01); // Graph units become table-sized meters; XR input stays unscaled.
-    graphWorld.position.set(0, -0.5, -1);
-    const createWelcomePanel = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = 1024;
-      canvas.height = 512;
-      const ctx = canvas.getContext("2d")!;
-      const gradient = ctx.createLinearGradient(0, 0, 0, 512);
-      gradient.addColorStop(0, "rgba(0, 0, 0, 0.95)");
-      gradient.addColorStop(1, "rgba(10, 30, 50, 0.95)");
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, 1024, 512);
-      ctx.strokeStyle = "#00ffff";
-      ctx.lineWidth = 6;
-      ctx.shadowColor = "#00ffff";
-      ctx.shadowBlur = 20;
-      ctx.strokeRect(3, 3, 1018, 506);
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = "#00ffff";
-      ctx.font = "bold 56px monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("🏦 XLN FINANCIAL NETWORK", 512, 80);
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "28px monospace";
-      ctx.fillText("Cross-Jurisdictional Settlement System", 512, 130);
-      ctx.font = "bold 32px monospace";
-      ctx.fillStyle = "#4fd18b";
-      ctx.fillText(" GREEN NUMBERS = Bank Reserves", 512, 200);
-      ctx.fillStyle = "#00ff41";
-      ctx.fillText("🔵 BLUE LINES = Open Accounts", 512, 250);
-      ctx.fillStyle = "#ffff00";
-      ctx.fillText("🟡 YELLOW DOTS = Payments Flowing", 512, 300);
-      ctx.fillStyle = "#888888";
-      ctx.font = "24px monospace";
-      ctx.fillText("Payments auto-starting in 3 seconds...", 512, 380);
-      ctx.fillStyle = "#aaaaaa";
-      ctx.font = "italic 20px monospace";
-      ctx.fillText("(Tap outside panel or wait 10s to dismiss)", 512, 420);
-      const texture = new THREE.CanvasTexture(canvas);
-      const material = new THREE.MeshBasicMaterial({
-        map: texture,
-        transparent: true,
-        opacity: 1.0,
-        side: THREE.DoubleSide,
-      });
-      const geometry = new THREE.PlaneGeometry(1.2, 0.6);
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.set(0, 0.2, -0.8); // In front of user at eye level
-      scene.add(mesh);
-      setTimeout(() => {
-        scene.remove(mesh);
-        mesh.geometry.dispose();
-        mesh.material.map?.dispose();
-        mesh.material.dispose();
-      }, 10000);
-      return mesh;
-    };
-    const welcomePanel = createWelcomePanel();
-    setTimeout(() => {
-      panelBridge.emit("auto-demo:start", {});
-    }, 3000);
-    renderer.setAnimationLoop(animate);
-    session.addEventListener("end", () => {
-      isVRActive = false;
-      if (welcomePanel && scene) {
-        scene.remove(welcomePanel);
-        welcomePanel.geometry.dispose();
-        welcomePanel.material.map?.dispose();
-        welcomePanel.material.dispose();
-      }
-      scene.background = new THREE.Color(0x0a0a0a);
-      graphWorld.scale.setScalar(1);
-      graphWorld.position.set(0, 0, 0);
-      immersiveWalletSurface?.dispose();
-      immersiveWalletSurface = null;
-      renderer.setAnimationLoop(null);
-      animate();
-    });
-  } catch (error) {
-    console.error("Failed to enter VR:", error);
-    debug.error("VR session failed: " + (error as Error).message);
-  }
-}
-async function exitVR() {
-  if (renderer?.xr?.getSession) {
-    const session = await renderer.xr.getSession();
-    if (session) {
-      await session.end();
-    }
-  }
 }
 function fitCameraToEntities(preferredEntityIds: ReadonlySet<string> = new Set()) {
   if (!camera || !controls || entities.length === 0) return;
@@ -1215,7 +989,6 @@ function createEntityNode(profile: GraphEntityProfile, index: number, total: num
     getEntitySize: getEntitySizeForToken,
     labelContent: entityLabelContent(profile.entityId),
     labelScale,
-    isVrActive: isVRActive,
   });
   graphWorld.add(node.mesh);
   entities.push(node);
@@ -1523,7 +1296,7 @@ function entityLabelContent(entityId: string): EntityLabelContent {
   return {
     flag,
     labelText: entityName + balanceStr,
-    key: `${entityName}|${flag}|${balanceStr}|${labelScale}|${isVRActive ? "vr" : "screen"}`,
+    key: `${entityName}|${flag}|${balanceStr}|${labelScale}`,
   };
 }
 /**
@@ -1636,7 +1409,7 @@ function updateEntityLabels() {
         }
         entity.label.material?.dispose();
       }
-      entity.label = createEntityLabel(content, labelScale, isVRActive);
+      entity.label = createEntityLabel(content, labelScale);
       entity.mesh.add(entity.label);
     }
     if (entity.label.parent !== entity.mesh) {
@@ -1677,20 +1450,8 @@ const perfMonitor = new PerformanceMonitor((metrics: PerfMetrics) => {
 });
 function animate() {
   perfMonitor.begin(); // Start FPS measurement
-  if (!renderer?.xr?.isPresenting) {
-    animationId = requestAnimationFrame(animate);
-  }
+  animationId = requestAnimationFrame(animate);
   animateCallCount++;
-  for (const grab of vrGrabs.values()) {
-    const controllerWorldPosition = new THREE.Vector3().setFromMatrixPosition(grab.controller.matrixWorld);
-    const controllerWorldRotation = new THREE.Matrix4().extractRotation(grab.controller.matrixWorld);
-    const rayDirection = new THREE.Vector3(0, 0, -1).applyMatrix4(controllerWorldRotation).normalize();
-    const rayPoint = controllerWorldPosition.add(rayDirection.multiplyScalar(grab.rayDistance));
-    const graphPosition = graphWorld.worldToLocal(rayPoint);
-    grab.entity.mesh.position.copy(graphPosition);
-    grab.entity.position.copy(graphPosition);
-    updateConnectionsForEntity(grab.entity.id);
-  }
   if ((rotationX > 0 || rotationY > 0 || rotationZ > 0) && controls) {
     const maxRotationSpeed = 0.01; // Maximum rotation speed at slider = 10000
     const currentPosition = camera.position.clone();
@@ -2224,9 +1985,6 @@ async function openGraphEntityWallet(entity: GraphEntityData): Promise<void> {
   const actionableState = mergedNode?.states.find((state) => state.runtimeId === targetRuntimeId);
   const entityName = mergedNode?.selected.label || getEntityName(entity.id);
   const signerId = actionableState?.signerId || getSignerIdForEntity(entity.id);
-  if (isVRActive && immersiveWalletSurface) {
-    immersiveWalletSurface.open({ entityId: entity.id, entityName: entityName || entity.id, signerId: signerId || entity.id });
-  }
   panelBridge.emit("openEntityOperations", {
     entityId: entity.id,
     entityName: entityName || entity.id,
@@ -2489,29 +2247,17 @@ function toggleBarsMode() {
   barsMode = barsMode === "close" ? "spread" : "close";
   saveBirdViewSettings();
 }
-function handleVrPaymentClick(): void {
-  if (entities.length < 2) return;
-  const from = entities[Math.floor(Math.random() * entities.length)];
-  const to = entities[Math.floor(Math.random() * entities.length)];
-  if (from && to && from.id !== to.id) {
-    panelBridge.emit("vr:payment", { from: from.id, to: to.id });
-  }
-}
-function handleVrAutoRotateClick(): void {
-  autoRotate = !autoRotate;
-  panelBridge.emit("settings:update", { key: "autoRotate", value: autoRotate });
-}
 </script>
 <Graph3DViewport
   bind:container
   {showFpsOverlay}
   {renderFps} {frameTime}
   entityCount={entities.length} connectionCount={connections.length} particleCount={motionEffects.length} {presentMode}
-  {barsMode} {isVRActive} {tooltip} {dualTooltip}
+  {barsMode} {tooltip} {dualTooltip}
   runtimeScope={$runtimeGraphScope} runtimeScopeOptions={graphRuntimeOptions} canonicity={$runtimeGraphCanonicity} sourceCount={mergedRuntimeGraph.sources.length}
   desyncCount={graphDesyncCount} projectionError={graphProjectionError} runtimeNodeLabels={mergedRuntimeGraph.nodes.map((node) => node.selected.label)} timelineRuntimeId={$networkMachineRuntime.selectedStep?.activeRuntimeId ?? ''}
   timelineRuntimeColor={$networkMachineRuntime.selectedStep?.activeRuntimeColor ?? ''} timelineHeight={$networkMachineRuntime.selectedStep?.event.height ?? 0} timelineTimestamp={$networkMachineRuntime.selectedStep?.event.timestamp ?? 0}
   onRuntimeScopeChange={(scope) => { void selectGraphRuntimeScope(scope).catch(reportGraphInitError); }}
   onCanonicityChange={selectGraphCanonicity}
-  {toggleBarsMode} {handleVrPaymentClick} {handleVrAutoRotateClick} {exitVR}
+  {toggleBarsMode}
 />

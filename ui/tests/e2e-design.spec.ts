@@ -24,9 +24,10 @@ test.describe('wallet UI design presets', () => {
 		expect(await cssVar(page, '--accent')).not.toBe(initialAccent);
 
 		await page.getByTestId('design-material-obsidian').click();
-		await page.getByTestId('design-accent-brass').click();
-		await expect(html).toHaveAttribute('data-accent', 'brass');
-		expect(await cssVar(page, '--accent')).toBe('#c9a962');
+		await expect(html).toHaveAttribute('data-accent', 'silver');
+		await page.getByTestId('design-accent-indigo').click();
+		await expect(html).toHaveAttribute('data-accent', 'indigo');
+		expect(await cssVar(page, '--accent')).not.toBe(initialAccent);
 
 		await page.getByTestId('design-risk-red').click();
 		await expect(html).toHaveAttribute('data-risk', 'red');
@@ -38,17 +39,18 @@ test.describe('wallet UI design presets', () => {
 
 		// Survives a reload, before React mounts.
 		await page.reload();
-		await expect(html).toHaveAttribute('data-accent', 'brass');
+		await expect(html).toHaveAttribute('data-accent', 'indigo');
 		await expect(html).toHaveAttribute('data-risk', 'red');
 		await expect(html).toHaveAttribute('data-numbers', 'serif');
 
 		// Unlock the same wallet, retaining its persisted appearance choices.
 		await reopenStack(page, wallet);
 		await page.getByRole('link', { name: 'Settings' }).first().click();
-		await page.getByTestId('design-accent-indigo').click();
+		await page.getByTestId('design-accent-silver').click();
 		await page.getByTestId('design-risk-violet').click();
 		await page.getByTestId('design-numbers-sans').click();
-		await expect(html).toHaveAttribute('data-accent', 'indigo');
+		await expect(html).toHaveAttribute('data-accent', 'silver');
+		expect(await cssVar(page, '--accent')).toBe(initialAccent);
 
 		expect(pageErrors, 'no uncaught browser errors during the flow').toEqual([]);
 	});

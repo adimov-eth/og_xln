@@ -12,6 +12,7 @@ import {
 } from '#lib/utils/onboarding/remoteRuntimeImport.ts';
 import type { RuntimeRecoveryPeerSource } from '#lib/stores/vault/vaultStore.ts';
 import type { RuntimeAdapter } from '../../../../../core/api/runtime-adapter/types';
+import { sleep } from '../primitives';
 
 const normalizeRuntimeId = (value: unknown): string =>
   String(value || '')
@@ -40,7 +41,6 @@ export type RuntimeWsRecoveryPeerEndpoint = {
   wsUrl: string;
 };
 
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 const waitForRuntimeWsOpen = async (
   client: RuntimeRecoveryWsClient,

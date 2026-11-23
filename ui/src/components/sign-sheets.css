@@ -1,0 +1,245 @@
+.sign-sheet,
+.sign-outcome {
+  margin: 0 0 16px;
+  padding: 16px 20px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--ink);
+}
+.sign-outcome {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.sign-outcome span {
+  flex: 1;
+}
+.sign-from {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.sign-who {
+  font: 600 13px var(--font-mono);
+  color: var(--ink);
+}
+.sign-count {
+  margin-left: auto;
+  color: var(--ink-3);
+}
+.sign-origin {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.sign-fact {
+  display: grid;
+  gap: 2px;
+  margin-top: 16px;
+}
+.sign-verb {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.sign-amount {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--display);
+}
+.sign-party {
+  display: grid;
+  gap: 2px;
+}
+.sign-key {
+  font: 500 14px var(--font-mono);
+  color: var(--display);
+}
+.sign-to-word {
+  font-family: inherit;
+  color: var(--ink-2);
+}
+.sign-rel {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.sign-effect {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.sign-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  column-gap: 8px;
+  align-items: baseline;
+}
+.sign-row .k {
+  color: var(--ink-2);
+}
+.sign-row .was {
+  color: var(--ink-3);
+  text-align: right;
+}
+.sign-row .to {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.sign-row .now {
+  color: var(--display);
+  font-weight: 600;
+  text-align: right;
+}
+.sign-row .risk {
+  color: var(--risk);
+}
+.sign-plain {
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.sign-line {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+  margin: 12px 0 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.sign-line [aria-hidden] {
+  color: var(--slate, var(--ink-2));
+  font-size: 10px;
+  line-height: 1.9;
+}
+.sign-note {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-2);
+}
+.sign-note-label {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.sign-note p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sign-exact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  cursor: pointer;
+}
+.sign-terms {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 6px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font: 400 11.5px/1.7 var(--font-mono);
+}
+.sign-terms div {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  column-gap: 14px;
+}
+.sign-terms dt {
+  color: var(--ink-3);
+}
+.sign-terms dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sign-acts {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.sign-acts.alone {
+  grid-template-columns: 1fr;
+}
+.sign-acts .btn {
+  width: 100%;
+  min-height: 48px;
+  font-size: 15px;
+}
+.sign-primary {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+.sign-label {
+  position: relative;
+}
+.sign-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  box-shadow: inset -1.5px 0 0 color-mix(in srgb, currentColor 70%, transparent);
+  pointer-events: none;
+}
+.sign-primary.holding .sign-fill {
+  width: 100%;
+  transition: width 1s linear;
+}
+.sign-primary.holding.still .sign-fill {
+  width: 0;
+  transition: none;
+}
+.sign-hint {
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.sign-failure {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--debt);
+}
+.steward-pin-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.steward-pin-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 12px;
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.steward-pin-facts dt {
+  color: var(--ink-3);
+}
+.steward-pin-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

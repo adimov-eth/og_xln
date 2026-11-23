@@ -4,12 +4,13 @@
  * prepare() path-copies only; `.hash` / `.root` / `.nodeChanges` seal lazily.
  * Human-audit importance: 100/100 — this replaces hidden machine cloning.
  */
+import { bytesToHex } from '../../support/bytes/hex-bytes';
 import {
   PersistentRadixValueMap,
   type PersistentRadixNodeChanges,
 } from './persistent-radix-value-map';
 
-import { compareBytes } from './persistent-radix-value-ops';
+import { compareBytes } from '../../support/boundary-guards';
 
 const RADIX_OVERLAY_VIEW = Symbol('RADIX_OVERLAY_VIEW');
 const RADIX_OVERLAY_OWNER = Symbol('RADIX_OVERLAY_OWNER');
@@ -60,12 +61,9 @@ const startsWithBytes = (value: Uint8Array, prefix: Uint8Array): boolean => {
   return true;
 };
 
-const HEX_BYTE = Array.from({ length: 256 }, (_, value) => value.toString(16).padStart(2, '0'));
 const keyIdentity = (bytes: Uint8Array): string => {
   if (bytes.length === 0) throw new Error('RADIX_OVERLAY_KEY_EMPTY');
-  let output = '';
-  for (let index = 0; index < bytes.length; index += 1) output += HEX_BYTE[bytes[index]!];
-  return output;
+  return bytesToHex(bytes);
 };
 
 class RadixOverlayTransaction<K, V> implements RadixOverlayOwner<K, V> {

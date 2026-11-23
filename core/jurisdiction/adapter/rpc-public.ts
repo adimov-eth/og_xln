@@ -13,7 +13,7 @@ import { ethers } from 'ethers';
 import { BLOCKCHAIN } from '../../config/constants';
 import { createStructuredLogger } from '../../support/logger';
 import type { JBatch } from '../machine/batch';
-import { type AuthenticatedReceiptRange, type ReceiptReadProfile } from './receipt-root';
+import { type AuthenticatedReceiptRange, type ReceiptReadProfile } from './receipt/reader';
 import { type RpcBatchResponse } from './rpc-utils';
 import { applyJBlockHeadersIngressTransform } from './watcher';
 import type { JAdapterMode } from './types';

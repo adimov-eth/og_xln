@@ -8,8 +8,8 @@ import type { StorageHead } from '../../core/storage/types';
 import type { RuntimeAdapter } from '../../core/api/runtime-adapter/types';
 import type { RuntimeAdapterFrameSummary } from '../../core/api/runtime-adapter/resolve';
 
-import { BOOT_TIMEOUT, LOCAL_PASSWORD, importStackPhraseUi } from './wallet-ui';
-export { BOOT_TIMEOUT, LOCAL_PASSWORD, importStackPhraseUi } from './wallet-ui';
+import { BOOT_TIMEOUT, LOCAL_PASSWORD, gotoProWallet, importStackPhraseUi } from './wallet-ui';
+export { BOOT_TIMEOUT, LOCAL_PASSWORD, gotoProWallet, importStackPhraseUi } from './wallet-ui';
 
 type DebugWindow = Window & {
   __xln?: {
@@ -66,11 +66,25 @@ async function readWalletIdentity(page: Page): Promise<Omit<StackWallet, 'phrase
 
 /** Enter the wallet on the running stack with a fresh phrase; the account with the stack hub must exist on our side. */
 export async function enterStack(page: Page, providedPhrase?: string): Promise<StackWallet> {
-  await page.goto('/');
+  await gotoProWallet(page, '/');
   const phrase = providedPhrase ?? HDNodeWallet.createRandom().mnemonic?.phrase;
   if (!phrase) throw new Error('TEST_WALLET_MNEMONIC_MISSING');
   const identity = await importStackPhrase(page, phrase);
   await expect(page.getByTestId('account-row').first()).toBeVisible({ timeout: 90_000 });
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async entityId => {
+          const debug = (window as DebugWindow).__xln;
+          const adapter = debug?.adapter();
+          if (!adapter) return false;
+          const view = await adapter.read<RuntimeAdapterViewFrame>('view-frame', { entityId, accountsLimit: 100 });
+          const account = view.activeEntity?.accounts.items[0];
+          return Boolean(account && !account.pendingFrame && account.mempoolCount === 0 && account.state.deltas.get(1));
+        }, identity.entityId).catch(() => false),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
   if (process.env['XLN_HLT_ENGINE'] === 'rust') {
     const checkpoint = await readWalletCheckpoint(page);
     expect(checkpoint.accounts, 'Fresh wallet must select exactly one native H1 Account').toHaveLength(1);

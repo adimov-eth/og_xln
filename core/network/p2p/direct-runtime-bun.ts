@@ -32,9 +32,9 @@ import {
   serializeWsMessage,
   type RuntimeWsMessage,
 } from './ws-protocol';
-import { countOp, OP_COUNTERS_ENABLED, recordOpEvent } from '../../support/performance/op-counters';
+import { countOp, OP_COUNTERS_ENABLED } from '../../support/performance/op-counters';
 import { getPerfMs } from '../../support/time';
-import { isRuntimeId, normalizeRuntimeId } from './auth/runtime-id';
+import { isRuntimeId, normalizeRuntimeId } from '../../protocol/identity/runtime-id';
 import { verifyHelloAuth, verifyRuntimeWsFrameAuth } from './auth/hello-auth';
 import { createHelloChallengeRegistry } from './auth/hello-challenge';
 import { decodeRuntimeEntityInputsEnvelope } from './auth/entity-input-envelope';
@@ -187,51 +187,19 @@ const rememberOutstandingOutput = (session: DirectWsSession, messageId: string):
   }
 };
 
-const countEntityInputEnvelopeKinds = (
-  prefix: string,
-  envelope: RuntimeEntityInputsEnvelope,
-  route: Readonly<{ fromRuntimeId: string; toRuntimeId: string }>,
-): void => {
-  let entityTxs = 0;
-  let accountInputs = 0;
-  let accountProposals = 0;
-  let ackFrames = 0;
-  let acks = 0;
-  let htlcLocks = 0;
-  let htlcResolves = 0;
+const countEntityInputEnvelopeKinds = (prefix: string, envelope: RuntimeEntityInputsEnvelope): void => {
   countOp(`${prefix}.envelopes`);
   for (const input of envelope.entityInputs) {
     countOp(`${prefix}.entityInputs`);
     for (const tx of input.entityTxs ?? []) {
-      entityTxs += 1;
       countOp(`${prefix}.entityTx.${tx.type}`);
       if (tx.type !== 'accountInput') continue;
-      accountInputs += 1;
       countOp(`${prefix}.accountInput.${tx.data.kind}`);
-      if (tx.data.kind === 'ack_frame') {
-        accountProposals += 1;
-        if (tx.data.ack) ackFrames += 1;
-      }
-      else if (tx.data.kind === 'ack') acks += 1;
       for (const accountTx of accountInputProposal(tx.data)?.frame.accountTxs ?? []) {
         countOp(`${prefix}.accountTx.${accountTx.type}`);
-        if (accountTx.type === 'htlc_lock') htlcLocks += 1;
-        else if (accountTx.type === 'htlc_resolve') htlcResolves += 1;
       }
     }
   }
-  recordOpEvent(`${prefix}.envelope`, {
-    fromRuntimeId: route.fromRuntimeId,
-    toRuntimeId: route.toRuntimeId,
-    entityInputs: envelope.entityInputs.length,
-    entityTxs,
-    accountInputs,
-    accountProposals,
-    ackFrames,
-    acks,
-    htlcLocks,
-    htlcResolves,
-  });
 };
 
 const isSocketOpen = (ws: DirectWebSocket | null | undefined): boolean => {
@@ -257,12 +225,6 @@ const timeOp = <T>(name: string, fn: () => T): T => {
 const send = (ws: DirectWebSocket, msg: RuntimeWsMessage): void => {
   const payload = serializeWsMessage(msg);
   countOp(`socket.directServer.out.${msg.type}`, payload.length);
-  recordOpEvent('socket.directServer.out.wire', {
-    type: msg.type,
-    fromRuntimeId: String(msg.from ?? ''),
-    toRuntimeId: String(msg.to ?? ''),
-    bytes: payload.length,
-  });
   if (classifyWebSocketSendResult(ws.send(payload)) === 'dropped') {
     throw retryFailure('DIRECT_CONTROL_FRAME_DROPPED', `DIRECT_CONTROL_FRAME_DROPPED:${msg.type}`);
   }
@@ -323,12 +285,6 @@ const trySend = (ws: DirectWebSocket, msg: RuntimeWsMessage): DirectSendAttempt 
     const payload = serializeWsMessage(msg);
     countOp('socket.directServer.out.serialize', payload.length, OP_COUNTERS_ENABLED ? Math.round((getPerfMs() - serializeAt) * 1_000) : 0);
     countOp(`socket.directServer.out.${msg.type}`, payload.length);
-    recordOpEvent('socket.directServer.out.wire', {
-      type: msg.type,
-      fromRuntimeId: String(msg.from ?? ''),
-      toRuntimeId: String(msg.to ?? ''),
-      bytes: payload.length,
-    });
     result = timeOp('socket.directServer.out.wsSend', () => ws.send(payload));
   } catch (error) {
     return { sent: false, error: error instanceof Error ? error.message : String(error) };
@@ -553,10 +509,7 @@ const sendEntityInputsDelivery = (
   }
   let msg: RuntimeWsMessage;
   try {
-    countEntityInputEnvelopeKinds('socket.directServer.out', envelope, {
-      fromRuntimeId: context.serverRuntimeId,
-      toRuntimeId: target.targetKey,
-    });
+    countEntityInputEnvelopeKinds('socket.directServer.out', envelope);
     const sessionKeys = target.session.sessionKeys;
     // The counter advances only after the socket accepted the frame: a
     // dropped send must not leave a gap the strict receiver would reject.
@@ -884,10 +837,7 @@ const handleEntityInputs = async (
       countOp('socket.directServer.in.decrypt', msg.payload.byteLength, Math.round((decodeAt - decryptAt) * 1_000));
       countOp('socket.directServer.in.decodeEnvelope', 0, Math.round((getPerfMs() - decodeAt) * 1_000));
     }
-    countEntityInputEnvelopeKinds('socket.directServer.in', envelope, {
-      fromRuntimeId,
-      toRuntimeId: context.serverRuntimeId,
-    });
+    countEntityInputEnvelopeKinds('socket.directServer.in', envelope);
     directWsLog.debug('entity_inputs.received', {
       id: msg.id,
       from: fromRuntimeId,
@@ -984,12 +934,6 @@ const handleDirectMessage = async (
     const wireBytes = typeof raw === 'string' ? raw.length : raw.byteLength;
     countOp(`socket.directServer.in.${msg.type}`, wireBytes);
     countOp('socket.directServer.in.deserialize', wireBytes, OP_COUNTERS_ENABLED ? Math.round((getPerfMs() - receivedAt) * 1_000) : 0);
-    recordOpEvent('socket.directServer.in.wire', {
-      type: msg.type,
-      fromRuntimeId: String(msg.from ?? ''),
-      toRuntimeId: String(msg.to ?? ''),
-      bytes: wireBytes,
-    });
   } catch (error) {
     directWsLog.warn('wire_message.deserialize_failed', {
       bytes: typeof raw === 'string' ? raw.length : raw.byteLength,

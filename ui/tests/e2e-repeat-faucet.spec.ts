@@ -57,7 +57,7 @@ test('faucet can fund twice on the same page without duplicate payments', { tag:
     );
     await expect(faucet).toBeEnabled();
     await expect(faucet).toHaveText('Get 100 USDC');
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/(?:\?[^#]*)?$/);
     await expectDollarScale(page);
     console.log('REPEAT_FAUCET_COMMITTED', count, count * 100_000_000);
   }

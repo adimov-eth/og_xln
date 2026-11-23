@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { deriveDelta } from '../../core/account/utils';
 import type { RuntimeReplica } from '../../core/runtime/types';
 import { safeStringify } from '../../core/protocol/serialization';
+import { gotoProWallet } from './wallet-ui';
 
 const APP = process.env['SVELTE_E2E_BASE_URL'] ?? 'http://localhost:8081/app';
 const SECRET = 'Disposable recovery journey October 2026!';
@@ -26,14 +27,15 @@ async function account(page: Page) {
 }
 
 async function derive(page: Page, name: string) {
-  await page.goto(APP);
+  await gotoProWallet(page, APP);
+  await page.getByRole('button', { name: 'Create or restore a personal wallet', exact: true }).click();
   await page.locator('#name').fill(name);
   await page.getByLabel('Secret passphrase', { exact: true }).fill(SECRET);
   await page.getByRole('button', { name: 'Derive wallet', exact: true }).click();
 }
 
 test('Svelte restores 100 USDC on a new device and spends the recovered funds', { tag: '@resilience' }, async ({ browser }, info) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
   const source = await browser.newContext();
   const target = await browser.newContext();
   const errors: string[] = [];

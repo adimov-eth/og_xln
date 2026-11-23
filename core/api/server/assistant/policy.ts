@@ -11,14 +11,6 @@ export type AssistantProxyConfig = Readonly<{
   streamTimeoutMs: number;
 }>;
 
-const readPositiveEnv = (name: string, defaultValue: number): number => {
-  const raw = process.env[name]?.trim();
-  if (!raw) return defaultValue;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
-  return value;
-};
-
 const readUpstreamUrl = (): string => {
   const raw = String(process.env['XLN_AI_SERVER_URL'] || 'http://127.0.0.1:3031').replace(/\/+$/, '');
   const url = new URL(raw);
@@ -31,12 +23,12 @@ const readUpstreamUrl = (): string => {
 export const readAssistantProxyConfig = (): AssistantProxyConfig => ({
   upstreamUrl: readUpstreamUrl(),
   allowedModels: parseAllowedAssistantModels(process.env['XLN_ASSISTANT_ALLOWED_MODELS']),
-  rateWindowMs: readPositiveEnv('XLN_ASSISTANT_RATE_WINDOW_MS', 60_000),
-  perClientRateLimit: readPositiveEnv('XLN_ASSISTANT_PER_CLIENT_RATE_LIMIT', 30),
-  globalRateLimit: readPositiveEnv('XLN_ASSISTANT_GLOBAL_RATE_LIMIT', 300),
-  maxConcurrentStreams: readPositiveEnv('XLN_ASSISTANT_MAX_CONCURRENT_STREAMS', 4),
-  catalogTimeoutMs: readPositiveEnv('XLN_ASSISTANT_CATALOG_TIMEOUT_MS', 2_500),
-  streamTimeoutMs: readPositiveEnv('XLN_ASSISTANT_STREAM_TIMEOUT_MS', 180_000),
+  rateWindowMs: 60_000,
+  perClientRateLimit: 30,
+  globalRateLimit: 300,
+  maxConcurrentStreams: 4,
+  catalogTimeoutMs: 2_500,
+  streamTimeoutMs: 180_000,
 });
 
 const LOOPBACK_CLIENTS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);

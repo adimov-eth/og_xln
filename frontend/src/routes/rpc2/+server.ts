@@ -1,36 +1,8 @@
-import type { RequestHandler } from './$types';
-import { createRpcProxyHandler } from '../rpc-proxy-handler';
-import { isLocalProxyRequest } from '../rpc-proxy-safety';
+import { createRpcRouteHandlers } from '../rpc-proxy-handler';
 
-const DEFAULT_LOCAL_RPC2_URL = 'http://localhost:8546';
-
-function resolveLocalRpc2UrlFromRequest(requestUrl: string): string {
-  const { hostname, port } = new URL(requestUrl);
-  if (hostname !== 'localhost') return DEFAULT_LOCAL_RPC2_URL;
-  const currentPort = Number(port || 0);
-  if (!Number.isFinite(currentPort) || currentPort < 1) return DEFAULT_LOCAL_RPC2_URL;
-  if (currentPort === 8080) return DEFAULT_LOCAL_RPC2_URL;
-  const shiftedRpcPort = currentPort - 3;
-  if (shiftedRpcPort < 1) return DEFAULT_LOCAL_RPC2_URL;
-  return `http://localhost:${shiftedRpcPort}`;
-}
-
-const getRpc2Url = (requestUrl: string, clientAddress?: string): string => {
-  if (isLocalProxyRequest(requestUrl, clientAddress)) {
-    return resolveLocalRpc2UrlFromRequest(requestUrl);
-  }
-  const rpcUrl = process.env['RPC_TRON'] ?? process.env['ANVIL_RPC2'];
-  if (!rpcUrl) {
-    throw new Error('RPC2_PROXY_MISCONFIGURED: set RPC_TRON or ANVIL_RPC2 for non-local host');
-  }
-  return rpcUrl;
-};
-
-export const POST: RequestHandler = createRpcProxyHandler(getRpc2Url, 'RPC2');
-
-export const GET: RequestHandler = async () => {
-  return new Response(
-    JSON.stringify({ error: 'RPC2 proxy requires POST requests' }),
-    { status: 405, headers: { 'Content-Type': 'application/json' } },
-  );
-};
+export const { POST, GET } = createRpcRouteHandlers({
+  label: 'RPC2',
+  defaultLocalUrl: 'http://localhost:8546',
+  localPortOffset: 3,
+  envVars: ['RPC_TRON', 'ANVIL_RPC2'],
+});

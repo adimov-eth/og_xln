@@ -162,6 +162,8 @@ export type TowerAppointmentV1 = {
   slot?: number;
   bundle: EncryptedRuntimeRecoveryBundleV1;
   lastResortPayload?: TowerLastResortPayloadV1;
+  /** Signed owner consent to replace this slot at a lower height. Only a retired-testnet rebuild sets it. */
+  replaceSlot?: true;
   ownerProof: TowerAppointmentOwnerProofV1;
 };
 

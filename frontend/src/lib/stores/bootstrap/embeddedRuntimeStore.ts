@@ -3,6 +3,8 @@ import type { RuntimeReplica } from '@xln/core/api/public/runtime-module';
 import { activeRuntimeId, runtimes } from '../runtimeStore';
 import { createDetachedRuntimeViewEnv, createRuntimeViewEnv, unwrapLiveRuntimeEnv } from '#lib/utils/runtime/liveRuntimeEnv.ts';
 import { registerDebugSurface } from '#lib/utils/runtime/debugSurface.ts';
+import { haltedRuntimeMessage } from '#lib/utils/runtime/runtimeFailure.ts';
+import { runtimeControllerHandle } from '../runtimeControllerStore';
 import { errorLog } from '../errorLogStore';
 import { hasConnectedJurisdictionAdapter } from '../vault/vault-helpers';
 
@@ -17,6 +19,12 @@ export const xlnEnvironment = derived(
     if (selectedRuntimeId) return $runtimes.get(selectedRuntimeId)?.env ?? null;
     return $bootstrapEnvironment;
   },
+);
+
+/** Why the active Runtime stopped, in the user's words; null while it runs. The handle republishes on halt. */
+export const runtimeHaltMessage = derived(
+  [runtimeControllerHandle, xlnEnvironment],
+  ([$handle, $env]) => ($handle.commandReady ? null : haltedRuntimeMessage(unwrapLiveRuntimeEnv($env))),
 );
 
 let localDebugEnv: RuntimeReplica | null = null;

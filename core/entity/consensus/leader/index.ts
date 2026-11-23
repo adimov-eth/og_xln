@@ -1,3 +1,4 @@
+import { normalizeEntityRef } from '../../../support/boundary-guards';
 import {
   canonicalConsensusValuesEqual,
   encodeCanonicalConsensusBytes,
@@ -15,8 +16,6 @@ const ENTITY_LEADER_TIMEOUT_BASE_MS = 10_000;
 const ENTITY_LEADER_TIMEOUT_MAX_MS = 60_000;
 export const ENTITY_J_SUBMIT_RETRY_MS = 60_000;
 
-const normalizeSignerId = (value: string): string => value.trim().toLowerCase();
-
 /**
  * Exact pre-frame authority projection used by both live consensus and durable
  * certificate verification. Keeping this projection explicit prevents storage
@@ -28,11 +27,11 @@ export type EntityLeaderStateView = Pick<
 >;
 
 const validatorShares = (config: ConsensusConfig, normalizedId: string): bigint => {
-  return Object.entries(config.shares).find(([signerId]) => normalizeSignerId(signerId) === normalizedId)?.[1] ?? 0n;
+  return Object.entries(config.shares).find(([signerId]) => normalizeEntityRef(signerId) === normalizedId)?.[1] ?? 0n;
 };
 
 export const getEntityLeaderOrder = (config: ConsensusConfig): string[] => {
-  const validators = config.validators.map(normalizeSignerId);
+  const validators = config.validators.map(normalizeEntityRef);
   const ceo = validators[0];
   if (!ceo) return [];
   const successors = validators.slice(1).sort((left, right) => {
@@ -48,7 +47,7 @@ export const getEntityLeaderState = (state: EntityLeaderStateView): EntityLeader
   const order = getEntityLeaderOrder(state.config);
   const ceo = order[0];
   if (!ceo) throw new Error(`ENTITY_LEADER_MISSING: entity=${state.entityId}`);
-  const active = normalizeSignerId(state.leaderState?.activeValidatorId ?? ceo);
+  const active = normalizeEntityRef(state.leaderState?.activeValidatorId ?? ceo);
   if (!order.includes(active)) {
     throw new Error(`ENTITY_LEADER_NOT_VALIDATOR: entity=${state.entityId} leader=${active}`);
   }
@@ -68,7 +67,7 @@ export const getNextEntityFailoverLeader = (state: EntityLeaderStateView): strin
 };
 
 export const isEntityActiveLeader = (replica: EntityReplica): boolean =>
-  getEntityLeaderState(replica.state).activeValidatorId === normalizeSignerId(replica.signerId);
+  getEntityLeaderState(replica.state).activeValidatorId === normalizeEntityRef(replica.signerId);
 
 export const getReplicaProposalLeader = (replica: EntityReplica): EntityLeaderState => {
   const certificate = replica.pendingLeaderCertificate;
@@ -83,7 +82,7 @@ export const getReplicaProposalLeader = (replica: EntityReplica): EntityLeaderSt
 };
 
 export const isReplicaProposalLeader = (replica: EntityReplica): boolean =>
-  getReplicaProposalLeader(replica).activeValidatorId === normalizeSignerId(replica.signerId);
+  getReplicaProposalLeader(replica).activeValidatorId === normalizeEntityRef(replica.signerId);
 
 export const getEntityLeaderTimeoutMs = (nextView: number): number =>
   Math.min(ENTITY_LEADER_TIMEOUT_MAX_MS, ENTITY_LEADER_TIMEOUT_BASE_MS * Math.max(1, Math.floor(nextView)));
@@ -91,7 +90,7 @@ export const getEntityLeaderTimeoutMs = (nextView: number): number =>
 export const buildEntityLeaderVoteBody = (state: EntityLeaderStateView): EntityLeaderTimeoutVoteBody => {
   const leader = getEntityLeaderState(state);
   return {
-    entityId: normalizeSignerId(state.entityId),
+    entityId: normalizeEntityRef(state.entityId),
     targetHeight: state.height + 1,
     previousFrameHash: state.height === 0 ? 'genesis' : String(state.prevFrameHash || ''),
     fromView: leader.view,
@@ -102,13 +101,13 @@ export const buildEntityLeaderVoteBody = (state: EntityLeaderStateView): EntityL
 };
 
 const leaderVoteFields = (vote: EntityLeaderTimeoutVoteBody): EntityLeaderTimeoutVoteBody => ({
-  entityId: normalizeSignerId(vote.entityId),
+  entityId: normalizeEntityRef(vote.entityId),
   targetHeight: vote.targetHeight,
   previousFrameHash: vote.previousFrameHash,
   fromView: vote.fromView,
   toView: vote.toView,
-  previousLeaderId: normalizeSignerId(vote.previousLeaderId),
-  nextLeaderId: normalizeSignerId(vote.nextLeaderId),
+  previousLeaderId: normalizeEntityRef(vote.previousLeaderId),
+  nextLeaderId: normalizeEntityRef(vote.nextLeaderId),
 });
 
 export const buildPreparedFrameEvidence = (frame: EntityFrame | undefined): EntityFrame | undefined => {
@@ -166,7 +165,7 @@ export const buildEntityLeaderCertificate = (
   votes: Map<string, EntityLeaderTimeoutVote>,
 ): EntityLeaderCertificate => {
   const canonicalVotes = Array.from(votes.entries())
-    .map(([signerId, vote]) => [normalizeSignerId(signerId), vote] as const)
+    .map(([signerId, vote]) => [normalizeEntityRef(signerId), vote] as const)
     .sort(([left], [right]) => compareStableText(left, right));
   const preparedVotes = canonicalVotes.some(([, vote]) => vote.preparedFrame)
     ? new Map<string, EntityLeaderTimeoutVote>(
@@ -176,7 +175,7 @@ export const buildEntityLeaderCertificate = (
             signerId,
             {
               ...leaderVoteFields(vote),
-              voterId: normalizeSignerId(vote.voterId),
+              voterId: normalizeEntityRef(vote.voterId),
               signature: vote.signature,
               ...(preparedFrame ? { preparedFrame } : {}),
             },

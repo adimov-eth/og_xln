@@ -64,13 +64,13 @@
 
   .tab-style-card:hover {
     transform: translateY(-1px);
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 18%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 18%, transparent);
   }
 
   .tab-style-card.active {
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) var(--ui-accent-border-mix, 22%), transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) var(--ui-accent-border-mix, 22%), transparent);
     box-shadow:
-      inset 0 0 0 1px color-mix(in srgb, var(--theme-accent, #fbbf24) 16%, transparent),
+      inset 0 0 0 1px color-mix(in srgb, var(--theme-accent, #c5cfde) 16%, transparent),
       0 14px 28px color-mix(in srgb, var(--theme-background, #09090b) 10%, transparent);
   }
 
@@ -147,7 +147,7 @@
     right: 0;
     bottom: -1px;
     height: 1px;
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 88%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 88%, transparent);
   }
 
   .tab-style-card[data-style='underline'] .preview-rail {
@@ -170,7 +170,7 @@
     bottom: -1px;
     height: 2px;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 90%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 90%, transparent);
   }
 
   .tab-style-card[data-style='rail'] .preview-rail {
@@ -184,7 +184,7 @@
   .tab-style-card[data-style='rail'] .preview-tab.active {
     background: color-mix(in srgb, var(--theme-surface-hover, #1c1c20) 94%, transparent);
     box-shadow:
-      inset 0 -1px 0 color-mix(in srgb, var(--theme-accent, #fbbf24) 86%, transparent),
+      inset 0 -1px 0 color-mix(in srgb, var(--theme-accent, #c5cfde) 86%, transparent),
       0 1px 0 color-mix(in srgb, white 4%, transparent);
   }
 
@@ -195,8 +195,8 @@
   }
 
   .tab-style-card[data-style='pill'] .preview-tab.active {
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 24%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 12%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 24%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent);
   }
 
   .tab-style-card[data-style='segmented'] .preview-rail {
@@ -213,7 +213,7 @@
 
   .tab-style-card[data-style='segmented'] .preview-tab.active {
     background: color-mix(in srgb, var(--theme-surface-hover, #1c1c20) 96%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--theme-accent, #fbbf24) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--theme-accent, #c5cfde) 22%, transparent);
   }
 
   .tab-style-card[data-style='floating'] .preview-rail {
@@ -228,7 +228,7 @@
 
   .tab-style-card[data-style='floating'] .preview-tab.active {
     transform: translateY(-1px);
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 20%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 20%, transparent);
     background: color-mix(in srgb, var(--theme-surface-hover, #1c1c20) 92%, transparent);
   }
 

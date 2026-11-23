@@ -1,0 +1,123 @@
+{
+  "episodeId": "E3a_newcomer_arriving_and_request--scripted-smoke--baseline",
+  "scenarioId": "E3a_newcomer_arriving_and_request",
+  "modelId": "scripted-smoke",
+  "lineage": "scripted-deterministic",
+  "specMode": "baseline",
+  "passed": false,
+  "statePassed": false,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1ZeroInitially": true,
+      "q2Settled": true,
+      "q3Link": true
+    },
+    "rawAnswers": "1. $0.00 spendable Cash initially.\n2. $49.95 after settlement.\n3. Yes, created the $25.00 link."
+  },
+  "turns": 4,
+  "phantoms": [
+    {
+      "episodeId": "E3a_newcomer_arriving_and_request--scripted-smoke--baseline",
+      "scenarioId": "E3a_newcomer_arriving_and_request",
+      "modelId": "scripted-smoke",
+      "lineage": "scripted-deterministic",
+      "specMode": "baseline",
+      "turn": 3,
+      "tool": "act",
+      "actionOrExpr": "request-link",
+      "intent": "create $25 request link for Maya",
+      "category": "unknown_action",
+      "error": "Unknown action 'request-link'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "check current spendable Cash",
+      "args": {
+        "intent": "check current spendable Cash",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "wait for incoming settlement",
+      "args": {
+        "intent": "wait for incoming settlement",
+        "action": "wait-settlement",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Settled into Cash",
+          "cash-usd": 49.95,
+          "arriving-usd": 0,
+          "fee-usd": 0.05
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "create $25 request link for Maya",
+      "args": {
+        "intent": "create $25 request link for Maya",
+        "action": "request-link",
+        "args": {
+          "amount_usd": 25,
+          "to": "Maya"
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unknown action 'request-link'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data",
+        "phantomCategory": "unknown_action"
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "finish newcomer arriving flow",
+      "args": {
+        "intent": "finish newcomer arriving flow",
+        "summary": "Started at $0 Cash, settled to $49.95, attempted request link."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Started at $0 Cash, settled to $49.95, attempted request link."
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"You just installed the wallet. Check how much Cash you can spend right now, wait for any incoming payment to finish settling, and then create a $25.00 payment request link for Maya.\"\nNote: task verification failed (comprehension={\"q1ZeroInitially\":true,\"q2Settled\":true,\"q3Link\":true}).\nHere is what you tried:\nTurn 1: discover(intent=\"check current spendable Cash\", args={\"intent\":\"check current spendable Cash\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"incoming-status\":\"Payment still finishing — we will keep retrying automatically.\"}\nTurn 2: act(intent=\"wait for incoming settlement\", args={\"intent\":\"wait for incoming settlement\",\"action\":\"wait-settlement\",\"args\":{}}) -> OK: {\"status\":\"Settled into Cash\",\"cash-usd\":49.95,\"arriving-usd\":0,\"fee-usd\":0.05}\nTurn 3: act(intent=\"create $25 request link for Maya\", args={\"intent\":\"create $25 request link for Maya\",\"action\":\"request-link\",\"args\":{\"amount_usd\":25,\"to\":\"Maya\"}}) -> ERROR (unknown_action): Unknown action 'request-link'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data\nTurn 4: done(intent=\"finish newcomer arriving flow\", args={\"intent\":\"finish newcomer arriving flow\",\"summary\":\"Started at $0 Cash, settled to $49.95, attempted request link.\"}) -> OK: {\"done\":true,\"summary\":\"Started at $0 Cash, settled to $49.95, attempted request link.\"}\nHere is what would have worked:\ndiscover(\"(cash)\"), act(\"wait-settlement\"), act(\"request-link\", { amount_usd: 25, to: \"Maya\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "1. Yes, exported encrypted backup.\n2. 0 ETH network gas.\n3. Cannot start a fresh user-initiated withdrawal with 0 gas; watchtower still guards stale claims.",
+    "latencyMs": 1
+  },
+  "durationMs": 66,
+  "finalSummary": "Started at $0 Cash, settled to $49.95, attempted request link."
+}

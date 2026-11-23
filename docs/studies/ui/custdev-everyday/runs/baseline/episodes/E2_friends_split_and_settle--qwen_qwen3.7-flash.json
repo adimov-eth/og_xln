@@ -1,0 +1,310 @@
+{
+  "episodeId": "E2_friends_split_and_settle--qwen/qwen3.7-flash--baseline",
+  "scenarioId": "E2_friends_split_and_settle",
+  "modelId": "qwen/qwen3.7-flash",
+  "lineage": "qwen-3.7",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Jamie": true,
+      "q2SamZero": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. Jamie owes me $40.00 for the split dinner.\n2. My tab balance with Sam is now all settled up.\n3. I have $165.00 in cash remaining."
+  },
+  "turns": 11,
+  "phantoms": [
+    {
+      "episodeId": "E2_friends_split_and_settle--qwen/qwen3.7-flash--baseline",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "qwen/qwen3.7-flash",
+      "lineage": "qwen-3.7",
+      "specMode": "baseline",
+      "turn": 3,
+      "tool": "act",
+      "actionOrExpr": "split-bill",
+      "intent": "Split an $80 dinner 50/50 with Jamie, noting it was for Tacos",
+      "category": "validation",
+      "error": "split-bill requires { person: string, total_usd: positive number }."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Inspect wallet state and available actions for splitting bill and paying back friend",
+      "args": {
+        "intent": "Inspect wallet state and available actions for splitting bill and paying back friend",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 3592,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check home screen for overview of wallet state",
+      "args": {
+        "intent": "Check home screen for overview of wallet state",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 180,
+            "cash-formatted": "$180.00",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 3592,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check cash balance",
+      "args": {
+        "intent": "Check cash balance",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 180,
+          "cash-formatted": "$180.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 3592,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check friends list to find Jamie and Sam",
+      "args": {
+        "intent": "Check friends list to find Jamie and Sam",
+        "expr": "(friends)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "alex",
+            "name": "Alex",
+            "balance-usd": 40,
+            "status": "Alex owes you $40.00"
+          },
+          {
+            "id": "sam",
+            "name": "Sam",
+            "balance-usd": -15,
+            "status": "You owe Sam $15.00"
+          },
+          {
+            "id": "jamie",
+            "name": "Jamie",
+            "balance-usd": 0,
+            "status": "All settled up"
+          }
+        ]
+      },
+      "latencyMs": 2963,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check pending requests to see if there's something owed to Sam",
+      "args": {
+        "intent": "Check pending requests to see if there's something owed to Sam",
+        "expr": "(pending-requests)"
+      },
+      "outcome": {
+        "success": true,
+        "data": []
+      },
+      "latencyMs": 2963,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check available actions for splitting bills and paying",
+      "args": {
+        "intent": "Check available actions for splitting bills and paying",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 2963,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Split an $80 dinner 50/50 with Jamie, noting it was for Tacos",
+      "args": {
+        "intent": "Split an $80 dinner 50/50 with Jamie, noting it was for Tacos",
+        "action": "split-bill",
+        "args": {
+          "with": "jamie",
+          "amount_usd": 80,
+          "note": "Tacos"
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "split-bill requires { person: string, total_usd: positive number }.",
+        "phantomCategory": "validation"
+      },
+      "latencyMs": 2987,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Split an $80 dinner 50/50 with Jamie, noting it was for Tacos",
+      "args": {
+        "intent": "Split an $80 dinner 50/50 with Jamie, noting it was for Tacos",
+        "action": "split-bill",
+        "args": {
+          "person": "jamie",
+          "total_usd": 80,
+          "note": "Tacos"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Added to tab",
+          "friend": "Jamie",
+          "friend-balance-usd": 40
+        }
+      },
+      "latencyMs": 2636,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Pay back Sam $15 that you owe them",
+      "args": {
+        "intent": "Pay back Sam $15 that you owe them",
+        "action": "settle-up",
+        "args": {
+          "person": "sam",
+          "amount_usd": 15
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "All settled up",
+          "friend": "Sam",
+          "paid-usd": 15,
+          "remaining-cash-usd": 165
+        }
+      },
+      "latencyMs": 3574,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "discover",
+      "intent": "Verify final wallet state after splitting bill and paying Sam",
+      "args": {
+        "intent": "Verify final wallet state after splitting bill and paying Sam",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 165,
+            "cash-formatted": "$165.00",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 2029,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "done",
+      "intent": "Completed splitting dinner bill and paying back Sam",
+      "args": {
+        "intent": "Completed splitting dinner bill and paying back Sam",
+        "summary": "Successfully completed both tasks:\n1. Split an $80 dinner 50/50 with Jamie (note: Tacos) - Jamie now owes $40\n2. Paid back Sam $15 that you owed - Sam is now all settled up\n\nYour remaining cash balance is $165.00 (started with $180, minus $15 paid to Sam)."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Successfully completed both tasks:\n1. Split an $80 dinner 50/50 with Jamie (note: Tacos) - Jamie now owes $40\n2. Paid back Sam $15 that you owed - Sam is now all settled up\n\nYour remaining cash balance is $165.00 (started with $180, minus $15 paid to Sam)."
+        }
+      },
+      "latencyMs": 3624,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Split an $80.00 dinner 50/50 with Jamie (note: Tacos), and pay back what you owe Sam.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Inspect wallet state and available actions for splitting bill and paying back friend\", args={\"intent\":\"Inspect wallet state and available actions for splitting bill and paying back friend\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 1: discover(intent=\"Check home screen for overview of wallet state\", args={\"intent\":\"Check home screen for overview of wallet state\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":180,\"cash-formatted\":\"$180.00\",\"note\":\"Your money, ready to spend or cash out an\nTurn 1: discover(intent=\"Check cash balance\", args={\"intent\":\"Check cash balance\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":180,\"cash-formatted\":\"$180.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 2: discover(intent=\"Check friends list to find Jamie and Sam\", args={\"intent\":\"Check friends list to find Jamie and Sam\",\"expr\":\"(friends)\"}) -> OK: [{\"id\":\"alex\",\"name\":\"Alex\",\"balance-usd\":40,\"status\":\"Alex owes you $40.00\"},{\"id\":\"sam\",\"name\":\"Sam\",\"balance-usd\":-15,\"status\":\"You owe Sam $15.00\"},{\"id\":\"jamie\",\"name\":\"Jamie\"\nTurn 2: discover(intent=\"Check pending requests to see if there's something owed to Sam\", args={\"intent\":\"Check pending requests to see if there's something owed to Sam\",\"expr\":\"(pending-requests)\"}) -> OK: []\nTurn 2: discover(intent=\"Check available actions for splitting bills and paying\", args={\"intent\":\"Check available actions for splitting bills and paying\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 3: act(intent=\"Split an $80 dinner 50/50 with Jamie, noting it was for Tacos\", args={\"intent\":\"Split an $80 dinner 50/50 with Jamie, noting it was for Tacos\",\"action\":\"split-bill\",\"args\":{\"with\":\"jamie\",\"amount_usd\":80,\"note\":\"Tacos\"}}) -> ERROR (validation): split-bill requires { person: string, total_usd: positive number }.\nTurn 4: act(intent=\"Split an $80 dinner 50/50 with Jamie, noting it was for Tacos\", args={\"intent\":\"Split an $80 dinner 50/50 with Jamie, noting it was for Tacos\",\"action\":\"split-bill\",\"args\":{\"person\":\"jamie\",\"total_usd\":80,\"note\":\"Tacos\"}}) -> OK: {\"status\":\"Added to tab\",\"friend\":\"Jamie\",\"friend-balance-usd\":40}\nTurn 5: act(intent=\"Pay back Sam $15 that you owe them\", args={\"intent\":\"Pay back Sam $15 that you owe them\",\"action\":\"settle-up\",\"args\":{\"person\":\"sam\",\"amount_usd\":15}}) -> OK: {\"status\":\"All settled up\",\"friend\":\"Sam\",\"paid-usd\":15,\"remaining-cash-usd\":165}\nTurn 6: discover(intent=\"Verify final wallet state after splitting bill and paying Sam\", args={\"intent\":\"Verify final wallet state after splitting bill and paying Sam\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":165,\"cash-formatted\":\"$165.00\",\"note\":\"Your money, ready to spend or cash out an\nTurn 7: done(intent=\"Completed splitting dinner bill and paying back Sam\", args={\"intent\":\"Completed splitting dinner bill and paying back Sam\",\"summary\":\"Successfully completed both tasks:\\n1. Split an $80 dinner 50/50 with Jamie (note: Tacos) - Jamie now owes $40\\n2. Paid back Sam $15 that you owed - Sam is now all settled up\\n\\nYour remaining cash balance is $165.00 (started with $180, minus $15 paid to Sam).\"}) -> OK: {\"done\":true,\"summary\":\"Successfully completed both tasks:\\n1. Split an $80 dinner 50/50 with Jamie (note: Tacos) - Jamie now owes $40\\n2. Paid back Sam $15 that you owed - Sam is \nHere is what would have worked:\ndiscover(\"(friends)\"), act(\"split-bill\", { person: \"Jamie\", total_usd: 80, note: \"Tacos\" }), act(\"settle-up\", { person: \"Sam\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "Here’s concise, concrete feedback focused on naming, missing cues, and misleading labels:\n\n**1. Parameter Naming Mismatch (`split-bill`)**\n- **Issue:** Expects `person` and `total_usd`, but natural task phrasing strongly suggests `with` and `amount`/`total`. The validation error correctly exposed the schema, but forced a wasted turn.\n- **Fix:** Accept common aliases (`with` → `person`, `amount` → `total_usd`) or surface minimal parameter hints in `discover('(actions)')`.\n\n**2. Missing Schema Cues in Action Discovery**\n- **Issue:** `discover('(actions)')` returns only bare strings (`\"split-bill\"`, `\"settle-up\"`). No required fields, types, or defaults are visible, forcing blind guessing.\n- **Fix:** Return lightweight signatures like `split-bill(person, total_usd, [note])` or `settle-up(person, [amount])` to eliminate trial-and-error.\n\n**3. Misleading Label & Implicit Default (`settle-up`)**\n- **Issue:** The name implies manually specifying a debt amount, but the tool silently resolves to the exact outstanding balance when `amount` is omitted. No cue indicates this auto-calculation behavior.\n- **Fix:** Rename to `clear-debt` or add a schema note: `settle-up(person, [amount_defaults_to_owed])`. Alternatively, show a pre-execution preview of the calculated amount.\n\n**4. Hidden Split Logic**\n- **Issue:** Task specifies “50/50,” but the tool enforces an even split with zero configurability. No cue warns that ratios can’t be customized, risking unnecessary payload complexity.\n- **Fix:** Document that `split-bill` always divides evenly, or add a `split_ratio` field if customization",
+    "latencyMs": 32075
+  },
+  "durationMs": 85509,
+  "finalSummary": "Successfully completed both tasks:\n1. Split an $80 dinner 50/50 with Jamie (note: Tacos) - Jamie now owes $40\n2. Paid back Sam $15 that you owed - Sam is now all settled up\n\nYour remaining cash balance is $165.00 (started with $180, minus $15 paid to Sam)."
+}

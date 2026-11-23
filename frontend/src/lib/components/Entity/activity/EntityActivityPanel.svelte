@@ -88,14 +88,14 @@
 <style>
   .section-head {
     margin: 0 0 12px;
-    color: #f5f5f5;
+    color: var(--theme-text-primary, #f5f5f5);
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.01em;
   }
 
   .muted {
-    color: #52525b;
+    color: var(--theme-text-muted, #52525b);
     line-height: 1.5;
     margin: 0 0 12px;
   }
@@ -116,7 +116,7 @@
     display: inline-flex;
     align-items: center;
     gap: 10px;
-    color: #a1a1aa;
+    color: var(--theme-text-secondary, #a1a1aa);
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.04em;
@@ -129,8 +129,8 @@
     padding: 0 12px;
     border-radius: 12px;
     border: 1px solid #2f333b;
-    background: #111315;
-    color: #f5f5f5;
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-primary, #f5f5f5);
     font-size: 13px;
   }
 
@@ -166,7 +166,7 @@
     height: 40px;
     border-radius: 14px;
     border: 1px solid #2c3139;
-    background: #121416;
+    background: var(--theme-surface, #121418);
     flex-shrink: 0;
   }
 
@@ -174,7 +174,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: #f5f5f5;
+    color: var(--theme-text-primary, #f5f5f5);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -188,14 +188,14 @@
   }
 
   .entity-activity-author-name {
-    color: #f5f5f5;
+    color: var(--theme-text-primary, #f5f5f5);
     font-size: 13px;
     font-weight: 700;
     line-height: 1.2;
   }
 
   .entity-activity-author-badge {
-    color: #a1a1aa;
+    color: var(--theme-text-secondary, #a1a1aa);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -234,7 +234,7 @@
   }
 
   .entity-activity-headline {
-    color: #fafafa;
+    color: var(--theme-text-primary, #fafafa);
     font-size: 15px;
     font-weight: 700;
     line-height: 1.35;
@@ -242,7 +242,7 @@
 
   .entity-activity-time {
     font-size: 11px;
-    color: #8b8b8b;
+    color: var(--theme-text-secondary, #8b8b8b);
     font-family: 'JetBrains Mono', monospace;
     white-space: nowrap;
   }
@@ -255,7 +255,7 @@
   }
 
   .entity-activity-line {
-    color: #d4d4d4;
+    color: var(--theme-text-secondary, #d4d4d4);
     font-size: 13px;
     line-height: 1.45;
   }
@@ -274,8 +274,8 @@
     padding: 0 10px;
     border-radius: 999px;
     border: 1px solid #353535;
-    background: #121212;
-    color: #d4d4d4;
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-secondary, #d4d4d4);
     font-size: 11px;
     font-weight: 600;
     white-space: nowrap;
@@ -300,7 +300,7 @@
     display: flex;
     justify-content: space-between;
     gap: 12px;
-    color: #7a7a7a;
+    color: var(--theme-text-muted, #7a7a7a);
     font-size: 11px;
     font-family: 'JetBrains Mono', monospace;
   }

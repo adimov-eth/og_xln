@@ -10,9 +10,7 @@ import {
 } from '../../../jurisdiction/machine/jurisdiction-runtime';
 import type { AccountTx } from '../../../types/account';
 import type { CrossJurisdictionSwapRoute } from '../../../types/cross-jurisdiction';
-import * as crossJurisdictionBoundary from '../../../extensions/cross-j/boundary';
 import type { EntityState } from '../../types';
-import type { EntityRuntimeContext } from '../../runtime-context';
 
 export const findCrossJurisdictionOfferRoute = (
   state: EntityState,
@@ -64,24 +62,6 @@ export const validateCrossJurisdictionRouteTransition = (
   return null;
 };
 
-export const isCrossJurisdictionRouteParticipant = (
-  entityId: string,
-  route: CrossJurisdictionSwapRoute,
-): boolean => crossJurisdictionBoundary.isCrossJurisdictionRouteParticipant(route, entityId);
-
-export const canonicalizeCrossJurisdictionRouteForKnownEntities = (
-  env: EntityRuntimeContext,
-  state: EntityState,
-  route: CrossJurisdictionSwapRoute,
-): CrossJurisdictionSwapRoute => {
-  void env;
-  void state;
-  // Jurisdiction labels are part of route identity and may be local aliases for
-  // the same chain/depository. Rewriting them after signing changes routeHash
-  // and breaks prepared pull commitments. Identity binding is enforced below.
-  return route;
-};
-
 const jurisdictionIdentityKey = (jurisdiction: { name?: string; chainId?: number; depositoryAddress?: string } | undefined | null): string => {
   if (!jurisdiction) return '';
   return getJurisdictionStackId(jurisdiction);
@@ -110,11 +90,9 @@ const routeSignerHintForLocalEntity = (
 };
 
 export const validateCrossJurisdictionLocalBinding = (
-  env: EntityRuntimeContext,
   state: EntityState,
   route: CrossJurisdictionSwapRoute,
 ): string | null => {
-  void env;
   const local = normalizeEntityRef(state.entityId);
   if (!state.config?.jurisdiction) return 'local jurisdiction unknown';
 

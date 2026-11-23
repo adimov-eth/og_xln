@@ -91,7 +91,7 @@
       {:else}
         <span>Resolving root incident…</span>
       {/if}
-      <a href={`/qa?runtimeId=${encodeURIComponent(runtimeId)}#system-health`}>Open QA</a>
+      <a href="/health">Runtime health</a>
     </div>
     {/if}
   </aside>

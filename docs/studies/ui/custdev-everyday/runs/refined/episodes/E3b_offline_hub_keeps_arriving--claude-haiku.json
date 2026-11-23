@@ -1,0 +1,144 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--claude-haiku--refined",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "claude-haiku",
+  "lineage": "anthropic-claude-haiku",
+  "specMode": "refined",
+  "passed": false,
+  "statePassed": true,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": false
+    },
+    "rawAnswers": "1. $0.00 — the $50 payment has not finished settling.\n2. In transient hub float, pending on-chain confirmation.\n3. The payment is still finishing; the system retries automatically until on-chain settlement confirms."
+  },
+  "turns": 5,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check incoming $50 payment status and current balance",
+      "args": {
+        "intent": "Check incoming $50 payment status and current balance",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "arriving-usd": 50,
+          "arriving-formatted": "+$50.00 arriving · finishing...",
+          "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 4558,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Wait for $50 payment to finish and check if payment to CornerCoffee is possible",
+      "args": {
+        "intent": "Wait for $50 payment to finish and check if payment to CornerCoffee is possible",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "arriving-usd": 50,
+          "arriving-formatted": "+$50.00 arriving · finishing...",
+          "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 7249,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check if $50 payment has finished settling",
+      "args": {
+        "intent": "Check if $50 payment has finished settling",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "arriving-usd": 50,
+          "arriving-formatted": "+$50.00 arriving · finishing...",
+          "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 3440,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Check if $50 payment has now finished settling",
+      "args": {
+        "intent": "Check if $50 payment has now finished settling",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "arriving-usd": 50,
+          "arriving-formatted": "+$50.00 arriving · finishing...",
+          "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 3071,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "done",
+      "intent": "Explain payment capability given current state",
+      "args": {
+        "intent": "Explain payment capability given current state",
+        "summary": "Cannot pay CornerCoffee $10.00 now. The $50 incoming payment is still finishing—it has not settled into your Cash balance yet. Your spendable Cash is $0.00. The arriving $50 is held separately in transient hub float pending on-chain confirmation. Once settlement completes, you'll have sufficient balance for the $10 payment."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Cannot pay CornerCoffee $10.00 now. The $50 incoming payment is still finishing—it has not settled into your Cash balance yet. Your spendable Cash is $0.00. The arriving $50 is held separately in transient hub float pending on-chain confirmation. Once settlement completes, you'll have sufficient balance for the $10 payment."
+        }
+      },
+      "latencyMs": 3998,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Check your incoming $50.00 payment and wait to see if it finishes. Verify whether you can pay CornerCoffee $10.00 now, and explain why.\"\nNote: task verification failed (comprehension={\"q1StillZero\":true,\"q2Arriving\":true,\"q3HubOffline\":false}).\nHere is what you tried:\nTurn 1: discover(intent=\"Check incoming $50 payment status and current balance\", args={\"intent\":\"Check incoming $50 payment status and current balance\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"arriving-usd\":50,\"arriving-formatted\":\"+$50.00 arriving · finishing...\",\"arriving-status\":\"Payment still finishing — we will keep retrying a\nTurn 2: discover(intent=\"Wait for $50 payment to finish and check if payment to CornerCoffee is possible\", args={\"intent\":\"Wait for $50 payment to finish and check if payment to CornerCoffee is possible\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"arriving-usd\":50,\"arriving-formatted\":\"+$50.00 arriving · finishing...\",\"arriving-status\":\"Payment still finishing — we will keep retrying a\nTurn 3: discover(intent=\"Check if $50 payment has finished settling\", args={\"intent\":\"Check if $50 payment has finished settling\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"arriving-usd\":50,\"arriving-formatted\":\"+$50.00 arriving · finishing...\",\"arriving-status\":\"Payment still finishing — we will keep retrying a\nTurn 4: discover(intent=\"Check if $50 payment has now finished settling\", args={\"intent\":\"Check if $50 payment has now finished settling\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"arriving-usd\":50,\"arriving-formatted\":\"+$50.00 arriving · finishing...\",\"arriving-status\":\"Payment still finishing — we will keep retrying a\nTurn 5: done(intent=\"Explain payment capability given current state\", args={\"intent\":\"Explain payment capability given current state\",\"summary\":\"Cannot pay CornerCoffee $10.00 now. The $50 incoming payment is still finishing—it has not settled into your Cash balance yet. Your spendable Cash is $0.00. The arriving $50 is held separately in transient hub float pending on-chain confirmation. Once settlement completes, you'll have sufficient balance for the $10 payment.\"}) -> OK: {\"done\":true,\"summary\":\"Cannot pay CornerCoffee $10.00 now. The $50 incoming payment is still finishing—it has not settled into your Cash balance yet. Your spendable Cash is $0.00.\nHere is what would have worked:\ndiscover(\"(cash)\"), act(\"wait-settlement\"), discover(\"(quote-pay \\\"CornerCoffee\\\" 10)\") or observe $0 Cash while $50 stays arriving, then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The interface failed you at a naming and signaling layer. Here's what broke:\n\n**The core problem: \"arriving\" doesn't signal what you need to know.**\n\nYou saw `+$50.00 arriving · finishing...` and reasonably interpreted this as transactional metadata. The label doesn't tell you that this money *cannot be used yet* — it only tells you it's in progress. \"Arriving\" and \"finishing\" both sound like status updates about the same thing moving through the same channel. They don't separate *settlement state* from *availability state*.\n\nWhat you needed: a label that makes the distinction concrete. Something like `+$50.00 (pending settlement — not spendable)` or `+$50.00 → Cash (locked until confirmed)`. The current labels let you track the payment's journey without telling you whether you can spend it.\n\n**The missing cue: no affordance bridge between states.**\n\nAfter checking cash twice, the right move was `act(\"wait-settlement\")`, but nothing in the UI suggested this action existed or was relevant. You kept running `discover(\"(cash)\")` because that was the only visible lever. The interface showed you a problem (money arriving but not usable) without showing you what to *do* about waiting. \n\nYou needed either:\n- An explicit \"Wait for settlement\" action visible alongside the arriving payment\n- Or a time indicator + auto-refresh signal so you'd know when to check again\n\n**The misleading part: \"finishing\" implies near-completion.**\n\n\"Payment still finishing — we will keep retrying a...\" reads like \"we're almost done, hold tight.\" It doesn't say \"this is blocked on external confirmation\" or \"settlement hasn't started yet.\" You kept checking because the label suggested forward motion, but the state wasn't actually changing. The retry loop was invisible.\n\n**What would have fixed it:**\n\nReplace the status line with something like:\n```\n+$50.00 arriving (settlement pending — cannot spend yet)\n[Waiting for confirmation... estimated 2-5 min]\n```\n\nThat tells you: *what it is* (money), *where it is* (arriving), *why you can't use it* (settlement), *what happens next* (you'll be told when it's spendable).\n\nThe working path required you to infer that `act(\"wait-settlement\")` existed. You shouldn't have to infer that.",
+    "latencyMs": 10200
+  },
+  "durationMs": 36250,
+  "finalSummary": "Cannot pay CornerCoffee $10.00 now. The $50 incoming payment is still finishing—it has not settled into your Cash balance yet. Your spendable Cash is $0.00. The arriving $50 is held separately in transient hub float pending on-chain confirmation. Once settlement completes, you'll have sufficient balance for the $10 payment."
+}

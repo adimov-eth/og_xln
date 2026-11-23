@@ -133,7 +133,7 @@ export function ScanSheet({ onDecode, onClose }: { onDecode: (value: string) => 
 			{error ? (
 				<p style={{ color: 'var(--dispute)', fontSize: 13 }}>The camera is unavailable: {error}</p>
 			) : null}
-			<label className="btn quiet sm" style={{ marginTop: 8, display: 'inline-block', cursor: 'pointer' }} data-testid="scan-upload">
+			<label className="btn quiet sm" style={{ marginTop: 8, alignSelf: 'flex-start', cursor: 'pointer' }} data-testid="scan-upload">
 				Use a picture of the invoice
 				<input
 					type="file"

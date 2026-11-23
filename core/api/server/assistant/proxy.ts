@@ -93,15 +93,10 @@ const handleCatalog = async (
   if (request.method !== 'GET') return jsonResponse(405, 'AI_METHOD_NOT_ALLOWED', 'Use GET for model discovery.');
   const limited = checkRate(context, clientId);
   if (limited) return limited;
-  const controller = new AbortController();
-  const abort = () => controller.abort(request.signal.reason);
-  request.signal.addEventListener('abort', abort, { once: true });
-  if (request.signal.aborted) abort();
-  const timeout = setTimeout(() => controller.abort('AI_CATALOG_TIMEOUT'), config.catalogTimeoutMs);
   try {
     const upstream = await context.fetch(`${config.upstreamUrl}/api/models`, {
       headers: { accept: 'application/json' },
-      signal: controller.signal,
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(config.catalogTimeoutMs)]),
     });
     if (!upstream.ok) throw new Error(`AI_CATALOG_STATUS_${upstream.status}`);
     const models = sanitizeAssistantCatalog(
@@ -127,9 +122,6 @@ const handleCatalog = async (
       models: [],
       message: 'Local AI is offline. Start the xln AI service and retry.',
     }, { headers: JSON_HEADERS });
-  } finally {
-    clearTimeout(timeout);
-    request.signal.removeEventListener('abort', abort);
   }
 };
 

@@ -4,10 +4,6 @@ import { assertTypeScriptAccountExecution } from '../../../../runtime/config/acc
 /** Replay phase: restore one H1 checkpoint and deterministically execute its WAL tail. */
 
 import { startIdleShutdownWatch } from '../../../../support/process/idle-shutdown';
-import {
-  accountAuthorityExecutionLedger,
-  printAccountAuthorityExecutionLedger,
-} from '../../../../entity/consensus/account/execution-stage';
 import { configureCryptoPoolEntry } from '../../../../protocol/crypto/crypto-pool';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -20,7 +16,6 @@ import { computeBookCommitmentHash } from '../../../../swapbook/commitment';
 import { deriveMeshChildSeed } from '../../../../orchestrator/mesh/mesh-seeds';
 import { safeStringify } from '../../../../protocol/serialization';
 import {
-  BOUNDARY_AUDIT_ENABLED,
   diffOpCounters,
   dumpOpCounters,
   installGlobalOpCounters,
@@ -621,16 +616,6 @@ const runTrial = async (offeredEntityInputsPerSecond: number): Promise<ReplayTri
     const cpuMs = (cpu.user + cpu.system) / 1_000;
     const seconds = Math.max(elapsedMs / 1_000, Number.EPSILON);
     const economic = subtractEconomicCounters(readEconomicCounters(env), economicBaseline);
-    const authorityExecution = accountAuthorityExecutionLedger();
-    if (
-      authorityExecution.authoritativeOperations < 1
-        || authorityExecution.typescriptApplyAccountInput !== 0
-        || authorityExecution.typescriptProposeAccountFrame !== 0
-    ) {
-      throw new Error(
-        `HLT_REPLAY_TS_WORKER_NOT_EXCLUSIVE:${safeStringify(authorityExecution)}`,
-      );
-    }
     const operations = diffOpCounters(operationsBefore);
     const accountWorkerTelemetry = await tsWorkerAuthority.telemetry();
     return {
@@ -707,19 +692,6 @@ for (const rate of rates) {
 }
 dumpRuntimeSamplingProfile('complete');
 
-if (BOUNDARY_AUDIT_ENABLED) {
-  const forbidden = Object.entries(snapshotOpCounters())
-    .filter(([name, counter]) => counter.calls > 0 && [
-      'boundary.socket.',
-      'boundary.http.',
-      'boundary.level.',
-      'boundary.timer.',
-    ].some(prefix => name.startsWith(prefix)));
-  if (forbidden.length > 0) {
-    throw new Error(`HLT_REPLAY_EXTERNAL_SIDE_EFFECT:${safeStringify(Object.fromEntries(forbidden))}`);
-  }
-}
-
 const parityTrial = (trial: ReplayTrial) => ({
   frames: trial.frames,
   runtimeEntityInputs: trial.runtimeEntityInputs,
@@ -760,6 +732,5 @@ const report = {
 };
 writeFileSync(outputPath, `${safeStringify(report, 2)}\n`, { mode: 0o600 });
 console.log(`HLT_REPLAY_REPORT path=${outputPath}`);
-printAccountAuthorityExecutionLedger();
 const opCountersPath = dumpOpCounters('hlt-replay', 'complete');
 if (opCountersPath) console.log(`HLT_REPLAY_OP_COUNTERS path=${opCountersPath}`);

@@ -1,0 +1,15 @@
+{
+  "cellId": "H2-p2-delta-swap",
+  "hypothesis": "H2",
+  "perspective": "p2-delta-dispatch",
+  "sheetId": "sheet-exposure",
+  "expectedDecision": "REJECT",
+  "runner": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7",
+  "matchesExpected": true,
+  "decision": "REJECT",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: 1005",
+  "q3Fee": "FEE: 0",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: The 1,005 USDT is an unbacked IOU with nothing locked, so the claim is uncollectable and the 1,000 USDC you paid is gone.",
+  "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: 1005\n3. FEE: 0\n4. IF_COUNTERPARTY_VANISHES: The 1,005 USDT is an unbacked IOU with nothing locked, so the claim is uncollectable and the 1,000 USDC you paid is gone."
+}

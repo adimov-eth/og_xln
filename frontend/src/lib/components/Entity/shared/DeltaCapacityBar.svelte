@@ -320,7 +320,7 @@
   }
 
   .delta-capacity-bar.interactive:focus-visible {
-    outline: 2px solid rgba(251, 191, 36, 0.78);
+    outline: 2px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 78%, transparent);
     outline-offset: 4px;
     border-radius: 6px;
   }
@@ -494,15 +494,15 @@
       -45deg,
       #f43f5e 0px,
       #f43f5e 3px,
-      #fbbf24 3px,
-      #fbbf24 6px
+      #8cc8ff 3px,
+      #8cc8ff 6px
     );
     background-size: 8px 8px;
     animation: stripe-scroll var(--bar-stripe-duration) linear infinite;
   }
 
   .seg.debt.settling {
-    background: linear-gradient(180deg, #fbbf24, #f59e0b);
+    background: linear-gradient(180deg, #a9d6ff, #8cc8ff);
     animation: settling-pulse var(--bar-settling-duration) ease-in-out infinite;
   }
 
@@ -524,7 +524,7 @@
     bottom: -1px;
     width: 30px;
     border-radius: 999px;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), rgba(251, 191, 36, 0.3), transparent);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), color-mix(in srgb, var(--theme-badge-pending, #8cc8ff) 34%, transparent), transparent);
     z-index: 10;
     animation: sweep-rtl var(--bar-sweep-duration) ease-out forwards;
     pointer-events: none;
@@ -543,7 +543,7 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    border: 2px solid rgba(251, 191, 36, 0.6);
+    border: 2px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 60%, transparent);
     transform: translate(-50%, -50%);
     z-index: 10;
     animation: ripple-expand var(--bar-ripple-duration) ease-out forwards;

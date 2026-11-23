@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["bun", "node"],
+    "paths": {
+      "@here.build/arrival": [
+        "/Users/adimov/inhuman/arrival/packages/arrival/dist/index.d.ts"
+      ]
+    }
+  },
+  "include": ["./*.ts", "./engine/*.ts", "./drivers/*.ts"]
+}

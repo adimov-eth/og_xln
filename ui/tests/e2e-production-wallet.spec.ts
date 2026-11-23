@@ -1,6 +1,6 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { HDNodeWallet } from 'ethers';
-import { importStackPhraseUi, LOCAL_PASSWORD } from './wallet-ui';
+import { gotoProWallet, importStackPhraseUi, LOCAL_PASSWORD } from './wallet-ui';
 
 const WAIT = { timeout: 15_000 };
 // Every main function below gets its own bound; none may borrow time from another.
@@ -74,7 +74,7 @@ test.describe('production wallet imports, funds 100, moves reserve, pays 25 and 
     test.setTimeout(FUNCTION_TIMEOUT);
     const phrase = HDNodeWallet.createRandom().mnemonic?.phrase;
     if (!phrase) throw new Error('TEST_WALLET_MNEMONIC_MISSING');
-    await page.goto('./');
+    await gotoProWallet(page, './');
     await importStackPhraseUi(page, phrase);
     expect(await page.evaluate(() => '__xln' in window)).toBe(!production);
     await expect(page.locator('script[src*="/@vite/client"]')).toHaveCount(production ? 0 : 1);

@@ -32,7 +32,9 @@ import {
   type VaultUnlockDurationMs,
 } from '../../security/vaultProtection';
 import { unwrapLiveRuntimeEnv } from '../../utils/runtime/liveRuntimeEnv';
+import { RETIRED_TESTNET_REBOOTSTRAP_KEY } from '../../utils/control/resetBrowserData';
 import { installRuntimeCommandJournalKeys } from '../commands/runtimeCommandJournalKeyring';
+import { parseEverydayTowerUrls, resolveDefaultTowerUrls } from '../../everyday/everyday-recovery';
 
 /**
  * Vault-shaped wrappers over the canonical recovery implementation in
@@ -397,57 +399,9 @@ export function getSignerDerivationIndex(signer: Signer | null | undefined): num
   return Number.isInteger(signer?.derivationIndex) ? Number(signer!.derivationIndex) : Number(signer?.index ?? 0);
 }
 
-export const parseRecoveryTowerUrls = (value: unknown): string[] => {
-  if (Array.isArray(value)) {
-    return value
-      .map(entry => {
-        if (typeof entry === 'string') return entry;
-        if (entry && typeof entry === 'object' && typeof (entry as { url?: unknown }).url === 'string') {
-          return String((entry as { url: string }).url);
-        }
-        return '';
-      })
-      .map(url => String(url || '').trim())
-      .filter(Boolean);
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return [];
-    try {
-      return parseRecoveryTowerUrls(parseJsonUnknown(trimmed, 'RECOVERY_TOWER_URLS_JSON_INVALID'));
-    } catch {
-      return trimmed
-        .split(',')
-        .map(entry => entry.trim())
-        .filter(Boolean);
-    }
-  }
-  return [];
-};
+export const parseRecoveryTowerUrls = parseEverydayTowerUrls;
 
-export const resolveDefaultRecoveryTowerUrls = (options: {
-  hostname: string;
-  globalUrls?: unknown;
-  localUrls?: unknown;
-  envUrls?: unknown;
-}): string[] => {
-  const globalTowerUrls = parseRecoveryTowerUrls(options.globalUrls);
-  if (globalTowerUrls.length > 0) return globalTowerUrls;
-  const localTowerUrls = parseRecoveryTowerUrls(options.localUrls);
-  if (localTowerUrls.length > 0) return localTowerUrls;
-  const envTowerUrls = parseRecoveryTowerUrls(options.envUrls);
-  if (envTowerUrls.length > 0) return envTowerUrls;
-  const hostname = String(options.hostname || '')
-    .trim()
-    .toLowerCase();
-  // Local/dev environments should not assume an always-on watchtower. Recovery towers
-  // there must be configured explicitly, otherwise fresh wallet creation gets blocked by
-  // an unrelated localhost dependency.
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    return [];
-  }
-  return ['https://xln.finance'];
-};
+export const resolveDefaultRecoveryTowerUrls = resolveDefaultTowerUrls;
 
 export const defaultRecoveryTowerUrls = (): string[] => {
   if (typeof window === 'undefined') return ['https://xln.finance'];
@@ -460,6 +414,7 @@ export const defaultRecoveryTowerUrls = (): string[] => {
   }
   return resolveDefaultRecoveryTowerUrls({
     hostname: window.location.hostname,
+    origin: window.location.origin,
     globalUrls: w.__XLN_WATCHTOWERS__,
     localUrls,
     envUrls: import.meta.env?.['VITE_XLN_WATCHTOWER_URL'],
@@ -747,4 +702,47 @@ export const applyRecoveryBundleMetadata = (runtime: Runtime, bundle: RuntimeRec
     }
   }
   return changed;
+};
+
+export { RETIRED_TESTNET_REBOOTSTRAP_KEY };
+
+/** A rebuild relaxes the strict restore check; it may stay unfinished for at most this long. */
+const REBUILD_LENIENCY_MS = 24 * 60 * 60 * 1000;
+
+type RebootstrapMarker = { ids: string[]; markedAt: number | null };
+
+const readRetiredTestnetRebootstrapMarker = (): RebootstrapMarker => {
+  const empty: RebootstrapMarker = { ids: [], markedAt: null };
+  if (typeof localStorage === 'undefined' || typeof localStorage.getItem !== 'function') return empty;
+  const raw = localStorage.getItem(RETIRED_TESTNET_REBOOTSTRAP_KEY);
+  if (!raw) return empty;
+  try {
+    const parsed = parseJsonUnknown(raw, 'REBOOTSTRAP_MARKER_JSON_INVALID');
+    // Older markers are a bare list of runtime ids with no time.
+    const list = Array.isArray(parsed) ? parsed : isRecord(parsed) && Array.isArray(parsed['ids']) ? parsed['ids'] : [];
+    const markedAt = isRecord(parsed) && typeof parsed['markedAt'] === 'number' ? parsed['markedAt'] : null;
+    return { ids: list.map(item => normalizeRuntimeId(String(item || ''))).filter(Boolean), markedAt };
+  } catch {
+    return empty;
+  }
+};
+
+export const hasRetiredTestnetRebootstrap = (runtimeId: string): boolean => {
+  const normalized = normalizeRuntimeId(runtimeId);
+  const marker = readRetiredTestnetRebootstrapMarker();
+  if (!normalized || !marker.ids.includes(normalized)) return false;
+  // Past the window the wallet is judged as restored state again, finished or not.
+  return marker.markedAt === null || Date.now() - marker.markedAt <= REBUILD_LENIENCY_MS;
+};
+
+export const clearRetiredTestnetRebootstrap = (runtimeId: string): void => {
+  if (typeof localStorage === 'undefined' || typeof localStorage.setItem !== 'function' || typeof localStorage.removeItem !== 'function') {
+    return;
+  }
+  const normalized = normalizeRuntimeId(runtimeId);
+  if (!normalized) return;
+  const marker = readRetiredTestnetRebootstrapMarker();
+  const remaining = marker.ids.filter(id => id !== normalized);
+  if (remaining.length === 0) localStorage.removeItem(RETIRED_TESTNET_REBOOTSTRAP_KEY);
+  else localStorage.setItem(RETIRED_TESTNET_REBOOTSTRAP_KEY, JSON.stringify({ ids: remaining, markedAt: marker.markedAt }));
 };

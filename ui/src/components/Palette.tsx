@@ -16,8 +16,6 @@ export function Palette() {
 	const entityId = useApp(s => s.activeEntityId);
 	const theme = useApp(s => s.theme);
 	const setTheme = useApp(s => s.setTheme);
-	const density = useApp(s => s.density);
-	const setDensity = useApp(s => s.setDensity);
 	const setTour = useApp(s => s.setTour);
 	const wallet = useWallet(entityId);
 	const [open, setOpen] = useState(false);
@@ -53,7 +51,6 @@ export function Palette() {
 			{ id: 'swap', title: 'Swap', hint: 'book at the hub', icon: 'swap', run: go('/swap') },
 			{ id: 'move', title: 'Move', hint: 'wallet ↔ reserve ↔ account', icon: 'arrow', run: go('/move') },
 			{ id: 'home', title: 'Home', icon: 'home', run: go('/') },
-			{ id: 'desk', title: 'Desk', hint: 'dense console', icon: 'accounts', run: go('/desk') },
 			{ id: 'activity', title: 'Activity', icon: 'activity', run: go('/activity') },
 			{ id: 'manage', title: 'Manage', hint: 'batch, attention, doors', icon: 'accounts', run: go('/manage') },
 			{ id: 'sovereignty', title: 'Security and recovery', hint: 'keys, proofs, exposure', icon: 'shield', run: go('/sovereignty') },
@@ -63,7 +60,6 @@ export function Palette() {
 			{ id: 'settings', title: 'Settings', icon: 'settings', run: go('/settings') },
 			{ id: 'tour', title: 'Guided tour', hint: 'five minutes on the live network', icon: 'bolt', run: () => setTour({ active: true, index: 0 }), keywords: 'learn tutorial help' },
 			{ id: 'theme', title: theme === 'dark' ? 'Light theme' : 'Dark theme', icon: theme === 'dark' ? 'sun' : 'moon', run: () => setTheme(theme === 'dark' ? 'light' : 'dark'), keywords: 'theme appearance' },
-			{ id: 'density', title: density === 'desk' ? 'Comfort layout' : 'Desk layout', icon: 'filter', run: () => setDensity(density === 'desk' ? 'comfort' : 'desk'), keywords: 'layout density' },
 		];
 		// Every entity this runtime serves, so a second one is reachable without leaving the keyboard.
 		for (const entity of entities) {
@@ -93,7 +89,7 @@ export function Palette() {
 			list.push({ id: `pay-${account.counterpartyId}`, title: `Pay ${account.label}`, icon: 'pay', run: go(`/pay?to=${account.counterpartyId}`), keywords: 'send' });
 		}
 		return list;
-	}, [navigate, theme, setTheme, density, setDensity, setTour, wallet.accounts, entities, entityId]);
+	}, [navigate, theme, setTheme, setTour, wallet.accounts, entities, entityId]);
 
 	const matches = useMemo(() => {
 		const needle = query.trim().toLowerCase();

@@ -18,13 +18,29 @@ import type {
 } from '@xln/core/api/public/runtime-module';
 import type { RuntimeRecoverySignerV1 } from '@xln/core/storage/recovery/bundle/types';
 import { withRuntimeCommittedRead } from '@xln/core/runtime/frame/lifecycle/writer-lock';
+import {
+  ensureDefaultTowerProtection,
+  resolveDefaultTowerUrls,
+} from '@xln/frontend/lib/everyday/everyday-recovery';
 import { Wallet } from 'ethers';
+import { resolveEffectivePosture } from './everyday';
 import { derivePrivateKey, walletSignerIndex } from './keys';
 import { requireBackupCapacity, requireBackupTransportCapacity } from './backup-size';
 
 /** `tower`: an encrypted copy leaves this device. `local`: nothing does. */
 export type RecoveryMode = 'tower' | 'local';
 export type RecoveryConfig = { mode: RecoveryMode; towers: string[] };
+export type RecoveryShieldStatus = {
+  mode: RecoveryMode;
+  towers: string[];
+  lastBackupHeight: number;
+  lastBackupAt: number | null;
+  backupError: string | null;
+  protectionReceiptsCount: number;
+  automaticResponseEnabled: boolean;
+  protectionError: string | null;
+  unsupportedChains: string[];
+};
 
 /** What the tower says about itself before we trust it with anything. */
 export type TowerHealth = {
@@ -50,6 +66,8 @@ export type TowerCoverage = {
 
 const STORAGE_KEY = 'xln-ui-recovery';
 const EMPTY: RecoveryConfig = { mode: 'local', towers: [] };
+const shieldStatusByVault = new Map<string, RecoveryShieldStatus>();
+const shieldListeners = new Set<() => void>();
 
 function validateRecovery(value: unknown): RecoveryConfig {
   if (
@@ -74,14 +92,45 @@ const readAll = (): Record<string, RecoveryConfig> => {
   return Object.fromEntries(Object.entries(parsed).map(([id, value]) => [id, validateRecovery(value)]));
 };
 
+export function readExplicitRecovery(vaultId: string | null): RecoveryConfig | null {
+  return vaultId ? (readAll()[vaultId] ?? null) : null;
+}
+
 export function readRecovery(vaultId: string | null): RecoveryConfig {
-  return vaultId ? (readAll()[vaultId] ?? EMPTY) : EMPTY;
+  return readExplicitRecovery(vaultId) ?? EMPTY;
 }
 
 export function saveRecovery(vaultId: string, config: RecoveryConfig): RecoveryConfig {
   const next = validateRecovery(config);
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...readAll(), [vaultId]: next }));
   return next;
+}
+
+export function readRecoveryShieldStatus(vaultId: string | null): RecoveryShieldStatus | null {
+  return vaultId ? (shieldStatusByVault.get(vaultId) ?? null) : null;
+}
+
+export function subscribeRecoveryShieldStatus(listener: () => void): () => void {
+  shieldListeners.add(listener);
+  if (typeof window === 'undefined') {
+    return () => {
+      shieldListeners.delete(listener);
+    };
+  }
+  const onEvent = (): void => listener();
+  window.addEventListener('xln-recovery-updated', onEvent);
+  return () => {
+    shieldListeners.delete(listener);
+    window.removeEventListener('xln-recovery-updated', onEvent);
+  };
+}
+
+export function writeRecoveryShieldStatus(vaultId: string, status: RecoveryShieldStatus): void {
+  shieldStatusByVault.set(vaultId, status);
+  for (const listener of shieldListeners) listener();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('xln-recovery-updated'));
+  }
 }
 
 export function normalizeTowerUrl(value: string): string {
@@ -94,13 +143,40 @@ export function normalizeTowerUrl(value: string): string {
 }
 
 /**
- * The tower this network offers by default. A public host serves its own tower;
- * on a local stack there is no always-on tower to assume, so the person names
- * one (the dev stand runs its own on 127.0.0.1:9100).
+ * The towers this network offers by default. Uses global/local/env overrides when
+ * provided (preserving all configured URLs); otherwise a public host serves its own
+ * tower while localhost stays empty.
  */
+export function defaultTowerUrls(): string[] {
+  if (typeof window === 'undefined') return [];
+  const w = window as Window & { __XLN_WATCHTOWERS__?: unknown };
+  let localUrls: string | null = null;
+  try {
+    localUrls = localStorage.getItem('xln-watchtower-urls');
+  } catch {
+    // Recovery should not fail when local preferences are unreadable.
+  }
+  return resolveDefaultTowerUrls({
+    hostname: window.location.hostname,
+    origin: window.location.origin,
+    globalUrls: w.__XLN_WATCHTOWERS__,
+    localUrls,
+    envUrls: import.meta.env?.['VITE_XLN_WATCHTOWER_URL'],
+  });
+}
+
 export function defaultTowerUrl(): string {
-  const hostname = window.location.hostname.toLowerCase();
-  return ['localhost', '127.0.0.1', '[::1]'].includes(hostname) ? '' : window.location.origin;
+  return defaultTowerUrls()[0] ?? '';
+}
+
+export function ensureReactDefaultTowerProtection(vaultId: string): RecoveryConfig | null {
+  return ensureDefaultTowerProtection({
+    posture: resolveEffectivePosture(),
+    vaultId,
+    readExplicitConfig: readExplicitRecovery,
+    saveConfig: saveRecovery,
+    resolveUrls: defaultTowerUrls,
+  });
 }
 
 /**
@@ -258,7 +334,7 @@ async function buildBackupAppointment(
   };
 }
 
-export type BackupResult = { url: string; receipt: TowerReceiptV1 | null; error: string | null };
+export type BackupResult = { url: string; receipt: TowerReceiptV1 | null; error: string | null; sweepEnabled?: boolean };
 
 /**
  * Send the latest committed recovery snapshot to each tower. Returns one row per
@@ -298,7 +374,7 @@ export async function backupToTowers(
           throw new Error(String(payload['error'] || `HTTP_${response.status}`));
         const receipt = payload['receipt'];
         if (!receipt) throw new Error('TOWER_RECEIPT_MISSING');
-        return { url, receipt: receipt as TowerReceiptV1, error: null };
+        return { url, receipt: receipt as TowerReceiptV1, error: null, sweepEnabled: health.sweepEnabled };
       } catch (error) {
         return { url, receipt: null, error: error instanceof Error ? error.message : String(error) };
       }

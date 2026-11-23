@@ -28,6 +28,7 @@ import { deserializeTaggedJson, serializeTaggedJson } from '@xln/core/protocol/s
 import { normalizeRuntimeTimelineIndex, type RuntimeTimelineIndex } from './runtimeGraphTimeline';
 import { isUnknownRecord, rejectExtraKeys } from '#lib/utils/boundary/index.ts';
 import { decodeNetworkMachineCue, type NetworkMachineCue } from '../networkMachine';
+import { normalizeId } from '../../utils/primitives';
 
 const INDEX_PAGE_SIZE = 250;
 const INDEX_SCAN_LIMIT = 2_000;
@@ -55,7 +56,6 @@ export type NetworkTrail = {
   cues?: NetworkMachineCue[];
 };
 
-const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 const requireHeight = (height: number, label: string): number => {
   const normalized = Math.floor(Number(height));

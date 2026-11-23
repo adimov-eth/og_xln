@@ -1,3 +1,4 @@
+import { UINT256_MAX } from '../../protocol/boundary/integer-ranges';
 import { normalizeSubmitId } from '../command/submit-identity';
 import { keccak256, toUtf8Bytes } from 'ethers';
 
@@ -33,7 +34,6 @@ export const isEntityProviderActionJTx = (jTx: JTx): jTx is ActionJTx =>
   jTx.type === 'entityProviderReleaseControlShares' ||
   jTx.type === 'entityProviderCancelAction';
 
-const MAX_UINT256 = (1n << 256n) - 1n;
 
 
 export type EntityProviderActionAttemptIdentity = {
@@ -59,7 +59,7 @@ export const buildEntityProviderActionAttemptId = (
   if (!/^0x[0-9a-f]{64}$/.test(actionHash)) {
     throw new Error(`ENTITY_PROVIDER_ACTION_ATTEMPT_HASH_INVALID:${actionHash || 'missing'}`);
   }
-  if (identity.actionNonce <= 0n || identity.actionNonce > MAX_UINT256) {
+  if (identity.actionNonce <= 0n || identity.actionNonce > UINT256_MAX) {
     throw new Error('ENTITY_PROVIDER_ACTION_ATTEMPT_NONCE_INVALID');
   }
   if (!Number.isSafeInteger(identity.generation) || identity.generation <= 0) {

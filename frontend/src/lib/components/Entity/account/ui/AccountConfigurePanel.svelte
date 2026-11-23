@@ -212,7 +212,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     padding: 14px;
     border-radius: 10px;
     border: 1px solid #27272a;
-    background: #101114;
+    background: var(--theme-surface, #121418);
   }
 
   .danger-card {
@@ -239,8 +239,8 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     padding: 0 10px;
     border: 1px solid #2f333b;
     border-radius: 10px;
-    background: #111315;
-    color: #f5f5f5;
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-primary, #f5f5f5);
   }
 
   .btn-add-token,
@@ -250,7 +250,7 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
     border-radius: 10px;
     border: 1px solid rgba(251, 191, 36, 0.28);
     background: rgba(251, 191, 36, 0.14);
-    color: #fde68a;
+    color: var(--theme-accent, #c5cfde);
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
@@ -270,14 +270,14 @@ import type { EntityReadView } from '#lib/components/Entity/core/entity-panel-ty
 
   .section-head {
     margin: 0 0 12px;
-    color: #f5f5f5;
+    color: var(--theme-text-primary, #f5f5f5);
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.01em;
   }
 
   .muted {
-    color: #52525b;
+    color: var(--theme-text-muted, #52525b);
     line-height: 1.5;
     margin: 0 0 12px;
   }

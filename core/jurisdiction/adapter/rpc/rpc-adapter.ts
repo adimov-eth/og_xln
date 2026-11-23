@@ -14,7 +14,7 @@ import { readAndAssertRpcChainId } from './rpc-network';
 import {
   isTransientRpcUnavailableError,
 } from '../rpc-public';
-import { ReceiptAvailabilityError } from '../receipt-root';
+import { ReceiptAvailabilityError } from '../receipt/reader';
 import { DisputeEvidenceUnavailableError, isRpcTransportUnavailable } from '../kernel/failure';
 import { createRpcReadMethods } from './rpc-reads';
 import { createRpcReceiptReaders } from './rpc-receipts';

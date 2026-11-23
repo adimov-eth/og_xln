@@ -118,7 +118,7 @@ describe('cross-jurisdiction security invariants', () => {
     const route = buildRoute('cross-local-stack-name-collision', 'cross-local-stack-name-collision', eth);
     const state = makeState(route.source.entityId, addr('31'), wrongLocal, route.source.counterpartyEntityId);
 
-    const error = validateCrossJurisdictionLocalBinding(env, state, route);
+    const error = validateCrossJurisdictionLocalBinding(state, route);
 
     expect(error).toContain('does not match local jurisdiction');
   });

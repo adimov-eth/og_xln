@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { enterStack } from '../stack';
+import { enterStack, gotoProWallet } from '../stack';
 import { readBankOwnerConnection } from './bank-policy';
 import { readAccount } from './financial-evidence';
 import { submitLoanRequest } from './loan-request';
@@ -30,7 +30,7 @@ test(
     page.on('pageerror', cause => errors.push(cause.message));
     officer.on('pageerror', cause => errors.push(cause.message));
     try {
-      await officer.goto(new URL('/', page.url()).href);
+      await gotoProWallet(officer, new URL('/', page.url()).href);
       await officer.getByText('Advanced connection', { exact: true }).click();
       await officer.getByRole('button', { name: 'Connect a remote runtime', exact: true }).click();
       await officer.getByLabel('Runtime endpoint', { exact: true }).fill(entry.wsUrl);

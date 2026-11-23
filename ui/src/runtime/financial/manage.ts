@@ -8,6 +8,9 @@ import type { EntityTx, JBatch, RuntimeAdapterViewFrame } from '@xln/core/api/pu
 import type { SettlementOp } from '@xln/core/types/account';
 import { effectiveRebalanceTerms } from '@xln/core/account/config/term-notice';
 import type { BilateralRebalanceFeePolicy } from '@xln/core/types/finance/rebalance';
+import { newCreditRequestId } from '@xln/frontend/lib/components/Entity/account/entity-action-txs';
+import { resolveAccountDisputePhase, type EverydayDisputePhase } from '@xln/frontend/lib/everyday/everyday-recovery';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
 
 /** One account as the view-frame carries it (native maps instead of persistent collections). */
 export type AccountDoc = NonNullable<RuntimeAdapterViewFrame['activeEntity']>['accounts']['items'][number];
@@ -47,25 +50,8 @@ export function buildRequestCollateralTx(counterpartyEntityId: string, tokenId: 
 	};
 }
 
-/** Adds a token lane with zero credit; "Extend credit" sets the line afterwards. */
-export function buildAddTokenTx(counterpartyEntityId: string, tokenId: number): EntityTx {
-	return { type: 'extendCredit', data: { counterpartyEntityId, tokenId, amount: 0n } };
-}
-
-export function buildPrepareDisputeTx(counterpartyEntityId: string, description = 'dispute-prepare-from-configure'): EntityTx {
-	return { type: 'prepareDispute', data: { counterpartyEntityId, description } };
-}
-
-export function buildDisputeFinalizeTx(counterpartyEntityId: string, description = 'dispute-finalize-from-configure'): EntityTx {
-	return { type: 'disputeFinalize', data: { counterpartyEntityId, description } };
-}
-
-export function buildSettleApproveTx(counterpartyEntityId: string, workspaceHash: string): EntityTx {
-	return { type: 'settle_approve', data: { counterpartyEntityId, workspaceHash } };
-}
-
 /** Only an observed DisputeStarted opens the response window; a local placeholder still needs submission. */
-export type DisputePhase = 'none' | 'preparing' | 'queued' | 'sent' | 'active' | 'closed';
+export type DisputePhase = EverydayDisputePhase;
 
 export type DisputeView = {
 	phase: DisputePhase;
@@ -79,30 +65,17 @@ export type DisputeView = {
 };
 
 export function disputeView(doc: DisputeAccountDoc | null | undefined, isLeft: boolean, draftBatch?: DisputeBatch | null): DisputeView {
-	const active = doc?.activeDispute;
-	if (active?.observedOnChain === true) {
-		return {
-			phase: 'active',
-			startedByUs: active.startedByLeft === isLeft,
-			timeout: Number(active.disputeTimeout || 0),
-			observedOnChain: active.observedOnChain === true,
-			finalizeQueued: active.finalizeQueued === true,
-			reason: String(doc?.disputePrepare?.reason || ''),
-		};
-	}
-	if (active) {
-		const counterpartyId = isLeft ? doc?.state.rightEntity : doc?.state.leftEntity;
-		const queued = draftBatch?.disputeStarts.some(start => start.counterentity === counterpartyId) ?? false;
-		return { phase: queued ? 'queued' : 'sent', startedByUs: true, timeout: 0, observedOnChain: false, finalizeQueued: false, reason: String(doc?.disputePrepare?.reason || '') };
-	}
-	if (String(doc?.status || '') === 'dispute_preparing' || doc?.disputePrepare) {
-		return { phase: 'preparing', startedByUs: true, timeout: 0, observedOnChain: false, finalizeQueued: false, reason: String(doc?.disputePrepare?.reason || '') };
-	}
-	// Account J-finality clears activeDispute but retains disputed status: the account is permanently closed.
-	if (doc?.status === 'disputed') {
-		return { phase: 'closed', startedByUs: false, timeout: 0, observedOnChain: false, finalizeQueued: false, reason: '' };
-	}
-	return { phase: 'none', startedByUs: false, timeout: 0, observedOnChain: false, finalizeQueued: false, reason: '' };
+	if (!doc) return { phase: 'none', startedByUs: false, timeout: 0, observedOnChain: false, finalizeQueued: false, reason: '' };
+	const counterpartyId = normalizeId(isLeft ? doc.state.rightEntity : doc.state.leftEntity);
+	const { phase, startedByUs, timeout } = resolveAccountDisputePhase(doc, isLeft, counterpartyId, draftBatch);
+	return {
+		phase,
+		startedByUs,
+		timeout,
+		observedOnChain: phase === 'active',
+		finalizeQueued: phase === 'active' && doc.activeDispute?.finalizeQueued === true,
+		reason: phase === 'none' || phase === 'closed' ? '' : String(doc.disputePrepare?.reason || ''),
+	};
 }
 
 export type SettlementPhase = 'none' | 'awaiting_you' | 'awaiting_them' | 'ready' | 'submitted' | 'draft';
@@ -180,13 +153,6 @@ export function describeSettlementOp(op: SettlementOp, money: (tokenId: number, 
 		default:
 			return 'settlement operation';
 	}
-}
-
-/** 'credit-<16 hex>': the Account replay id of one credit request. */
-export function newCreditRequestId(): string {
-	const bytes = new Uint8Array(8);
-	crypto.getRandomValues(bytes);
-	return `credit-${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
 export function buildRequestCreditTx(counterpartyEntityId: string, tokenId: number, amount: bigint): EntityTx {

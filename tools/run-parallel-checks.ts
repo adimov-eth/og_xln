@@ -14,7 +14,7 @@ if (gateNames.length === 0 || gateNames.some(name => !/^[a-z0-9:-]+$/.test(name)
 // The measured broad source inventory exceeds the aggregate verification
 // budget in three lanes. Four bounded lanes keep its long tail independent
 // of the full lint; smaller nested groups retain two lanes.
-const MAX_CONCURRENT_GATES = gateNames.length > 10 ? 4 : 2;
+const MAX_CONCURRENT_GATES = gateNames.length > 8 ? 4 : 2;
 const active = new Set<ReturnType<typeof Bun.spawn>>();
 let stopped = false;
 

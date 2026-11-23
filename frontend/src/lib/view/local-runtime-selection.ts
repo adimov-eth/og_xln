@@ -1,3 +1,4 @@
+import { normalizeId } from '../utils/primitives';
 type LocalReplicaIdentity = {
   entityId?: string;
   signerId?: string;
@@ -8,7 +9,6 @@ type LocalSignerIdentity = {
   address?: string;
 };
 
-const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 export const resolveActiveLocalReplica = <T extends LocalReplicaIdentity>(
   replicas: Map<string, T> | null | undefined,

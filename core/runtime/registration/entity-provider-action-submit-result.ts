@@ -1,3 +1,4 @@
+import { UINT256_MAX } from '../../protocol/boundary/integer-ranges';
 import { normalizeSubmitId, truncateSubmitFailureMessage } from '../command/submit-identity';
 import { safeStringify } from '../../protocol/serialization';
 import type { EntityReplica } from '../../entity/types';
@@ -15,7 +16,6 @@ type RecordActionResultTx = Extract<RuntimeTx, { type: 'recordEntityProviderActi
 type PendingActionAttempt = { jurisdictionName: string; jTx: ActionJTx };
 
 const ENTITY_PROVIDER_ACTION_RESULT_FINGERPRINT_LIMIT = 256;
-const MAX_UINT256 = (1n << 256n) - 1n;
 
 const assertValidAdapterFailure = (data: RecordActionResultTx['data']): void => {
   const failure = data.adapterFailure;
@@ -41,7 +41,7 @@ const assertValidActionResult = (data: RecordActionResultTx['data']): void => {
   if (!/^0x[0-9a-f]{64}$/.test(normalizeSubmitId(data.actionHash))) {
     throw new Error('ENTITY_PROVIDER_ACTION_RESULT_HASH_INVALID');
   }
-  if (data.actionNonce <= 0n || data.actionNonce > MAX_UINT256) {
+  if (data.actionNonce <= 0n || data.actionNonce > UINT256_MAX) {
     throw new Error('ENTITY_PROVIDER_ACTION_RESULT_NONCE_INVALID');
   }
   if (!Number.isSafeInteger(data.generation) || data.generation <= 0) {

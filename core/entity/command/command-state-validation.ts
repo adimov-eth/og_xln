@@ -1,3 +1,4 @@
+import { UINT256_MAX } from '../../protocol/boundary/integer-ranges';
 import { LIMITS } from '../../config/constants';
 import {
   FinancialDataCorruptionError,
@@ -7,7 +8,6 @@ import {
 import type { ConsensusConfig } from '../types';
 import { assertEntityProviderActionIntent } from '../entity-provider-action';
 
-const MAX_UINT256 = (1n << 256n) - 1n;
 
 const validateCommandNonces = (value: unknown, context: string): void => {
   if (value === undefined) return;
@@ -67,7 +67,7 @@ export const validateEntityCommandState = (
     state['version'] !== 1 ||
     typeof state['confirmedNonce'] !== 'bigint' ||
     state['confirmedNonce'] < 0n ||
-    state['confirmedNonce'] > MAX_UINT256 ||
+    state['confirmedNonce'] > UINT256_MAX ||
     !Number.isSafeInteger(state['generation']) ||
     Number(state['generation']) < 0
   ) {

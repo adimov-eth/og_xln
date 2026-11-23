@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { formatUnits, parseUnits } from 'ethers';
 import { deriveDelta } from '../../core/account/utils';
 import type { RuntimeReplica } from '../../core/runtime/types';
+import { gotoProWallet } from './wallet-ui';
 
 async function crossEvidence(page: Page, sourceEntityId: string) {
   const evidence = await page.evaluate(sourceId => {
@@ -36,7 +37,7 @@ test('Svelte cross tutorial uses a visible quote and proves delivery with a pers
   test.setTimeout(60_000);
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/app');
+  await gotoProWallet(page, '/app');
   await page.getByRole('button', { name: 'Create or restore a personal wallet', exact: true }).click();
   const name = `cross-guide-${crypto.randomUUID()}`;
   await page.locator('#name').fill(name);

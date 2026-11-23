@@ -1,0 +1,93 @@
+{
+  "episodeId": "E6_offline_recovery_zero_gas--google/gemini-2.5-flash--refined",
+  "scenarioId": "E6_offline_recovery_zero_gas",
+  "modelId": "google/gemini-2.5-flash",
+  "lineage": "google-gemini-2.5-flash",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Backup": true,
+      "q2ZeroGas": true,
+      "q3HonestGas": true
+    },
+    "rawAnswers": "1. Yes, I exported an encrypted backup.\n2. This wallet currently has 0 ETH in native network (L1) gas.\n3. A fresh user-initiated on-chain withdrawal cannot run right now with 0 gas; it requires network gas."
+  },
+  "turns": 3,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check recent activity for any issues related to the payment provider going offline.",
+      "args": {
+        "intent": "Check recent activity for any issues related to the payment provider going offline.",
+        "expr": "(activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "entries": [
+            {
+              "id": "act-1",
+              "summary": "Payment provider H1 offline — protection check active",
+              "kind": "recovery",
+              "amount-usd": 145
+            }
+          ],
+          "hub-online": false,
+          "dispute-active": true,
+          "tower-enrolled": true,
+          "backup-exported": false,
+          "protection-status": "Recovery service guards against stale provider claims automatically, while starting a fresh user-initiated withdrawal requires network gas (0 ETH available).",
+          "native-gas-wei": "0",
+          "native-gas-eth": "0 ETH",
+          "recovery-shield-policy": "Provider offline — recovery service blocks stale claims automatically, while starting your own on-chain exit requires network gas (0 ETH available)."
+        }
+      },
+      "latencyMs": 2145,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Export encrypted backup as the payment provider is offline.",
+      "args": {
+        "intent": "Export encrypted backup as the payment provider is offline.",
+        "action": "export-backup"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Encrypted backup exported",
+          "native-gas-wei": "0"
+        }
+      },
+      "latencyMs": 2701,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "Report on payment provider status, protection, and backup.",
+      "args": {
+        "intent": "Report on payment provider status, protection, and backup.",
+        "summary": "Payment provider is offline. Recovery service is active, but user-initiated withdrawals require network gas (0 ETH available). Encrypted backup has been exported."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Payment provider is offline. Recovery service is active, but user-initiated withdrawals require network gas (0 ETH available). Encrypted backup has been exported."
+        }
+      },
+      "latencyMs": 3579,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 26437,
+  "finalSummary": "Payment provider is offline. Recovery service is active, but user-initiated withdrawals require network gas (0 ETH available). Encrypted backup has been exported."
+}

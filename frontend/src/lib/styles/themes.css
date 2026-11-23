@@ -1,0 +1,326 @@
+:root {
+  /* No reserved scrollbar gutter: the browser fills it with a flat colour that cannot match a page lit
+     from above, which leaves a band on every screen. A quiet silver thumb on a transparent track instead. */
+  scrollbar-color: color-mix(in srgb, var(--theme-text-muted, #80889a) 45%, transparent) transparent;
+  /* One layout and one money scale for both wallets (mirrors ui/src/styles/tokens.css): the same role gets the same size everywhere.
+     Hero = the total balance; lg = amount inputs; md = breakdown figures; sm = row amounts. */
+  --content-max: 680px;
+  --content-pad: clamp(16px, 4vw, 28px);
+  --money-hero: clamp(44px, 8vw, 64px);
+  --money-hero-weight: 650;
+  --money-hero-track: -0.035em;
+  --money-lg: 30px;
+  --money-md: 20px;
+  --money-sm: 14px;
+  /* The one primary on a screen: machined metal in the theme accent. */
+  --theme-primary-metal: linear-gradient(154deg, var(--theme-accent-hover, #f5f7fa) 0%, color-mix(in srgb, var(--theme-accent, #c5cfde) 55%, var(--theme-accent-hover, #f5f7fa)) 52%, var(--theme-accent, #c5cfde) 100%);
+}
+
+/* Obsidian & Silver: the same ground, ink ladder and sterling accent as the React wallet (ui/src/styles/tokens.css).
+   Pending is ice blue, never amber. Input borders hold 3:1. */
+[data-theme='dark'] {
+  --theme-background: #07080b;
+  --theme-bg-gradient: linear-gradient(180deg, #14181f 0%, #080a0e 46%, #030406 100%);
+  --theme-entity: #007acc;
+  --theme-entity-emissive: #003d66;
+  --theme-connection: #00ccff;
+  --theme-credit: #4ade80;
+  --theme-debit: #f43f5e;
+  --theme-collateral: #10b981;
+  --theme-text-primary: #e6ebf2;
+  --theme-text-secondary: #9aa3b2;
+  --theme-text-muted: #80889a;
+  --theme-accent: #c5cfde;
+  --theme-accent-hover: #f5f7fa;
+  --theme-accent-contrast: #050608;
+  --theme-border: #262a31;
+  --theme-glass-bg: rgba(18, 20, 24, 0.82);
+  --theme-glass-border: rgba(226, 232, 240, 0.08);
+  --theme-surface: #121418;
+  --theme-surface-hover: #1b1e24;
+  --theme-surface-border: #262a31;
+  --theme-input-bg: #07080b;
+  --theme-input-border: #5f656e;
+  --theme-input-focus: #c5cfde;
+  --theme-btn-primary: #2563eb;
+  --theme-btn-primary-hover: #3b82f6;
+  --theme-badge-synced: #4ade80;
+  --theme-badge-synced-bg: rgba(74, 222, 128, 0.1);
+  --theme-badge-pending: #8cc8ff;
+  --theme-badge-pending-bg: rgba(140, 200, 255, 0.1);
+  /* Money held in a lock: pale violet, matching the React wallet's hold. */
+  --theme-hold: #c4b5fd;
+  /* Warnings keep amber (design-science grammar); light gets a deeper amber for 4.5:1. */
+  --theme-warning: #f59e0b;
+  --theme-bar-credit: #5d636c;
+  --theme-bar-collateral: #10b981;
+  --theme-bar-debt: #f43f5e;
+  --theme-bar-bg: #262a31;
+  --theme-card-bg: #121418;
+  --theme-card-border: #262a31;
+  --theme-card-hover-border: #3a3f48;
+  --theme-header-bg: #0b0c0f;
+  --theme-scrollbar-thumb: #262a31;
+}
+
+[data-theme='editor'] {
+  --theme-background: #1e1e2e;
+  --theme-bg-gradient: linear-gradient(180deg, #1e1e2e 0%, #181825 100%);
+  --theme-entity: #89b4fa;
+  --theme-entity-emissive: #1e66f5;
+  --theme-connection: #74c7ec;
+  --theme-credit: #a6e3a1;
+  --theme-debit: #f38ba8;
+  --theme-collateral: #94e2d5;
+  --theme-text-primary: #cdd6f4;
+  --theme-text-secondary: #a6adc8;
+  --theme-text-muted: #6c7086;
+  --theme-accent: #89b4fa;
+  --theme-accent-hover: #b4d0fb;
+  --theme-accent-contrast: #11111b;
+  --theme-border: #313145;
+  --theme-glass-bg: rgba(30, 30, 46, 0.9);
+  --theme-glass-border: rgba(137, 180, 250, 0.08);
+  --theme-surface: #252536;
+  --theme-surface-hover: #2a2a3c;
+  --theme-surface-border: #313145;
+  --theme-input-bg: #181825;
+  --theme-input-border: #313145;
+  --theme-input-focus: #89b4fa;
+  --theme-btn-primary: #89b4fa;
+  --theme-btn-primary-hover: #b4d0fb;
+  --theme-badge-synced: #a6e3a1;
+  --theme-badge-synced-bg: rgba(166, 227, 161, 0.1);
+  --theme-badge-pending: #f9e2af;
+  --theme-badge-pending-bg: rgba(249, 226, 175, 0.1);
+  --theme-hold: #cba6f7;
+  --theme-warning: #fab387;
+  --theme-bar-credit: #585b70;
+  --theme-bar-collateral: #94e2d5;
+  --theme-bar-debt: #f38ba8;
+  --theme-bar-bg: #313145;
+  --theme-card-bg: #252536;
+  --theme-card-border: #313145;
+  --theme-card-hover-border: #45475a;
+  --theme-header-bg: #1e1e2e;
+  --theme-scrollbar-thumb: #45475a;
+}
+
+/* Porcelain & graphite: the light counterpart of obsidian & silver (ui/src/styles/tokens.css).
+   Graphite accent, ice-blue pending, input borders hold 3:1. */
+[data-theme='light'] {
+  --theme-background: #f2f4f8;
+  --theme-bg-gradient: linear-gradient(180deg, #fbfcfd 0%, #f2f4f8 46%, #e5e9f0 100%);
+  --theme-entity: #2563eb;
+  --theme-entity-emissive: #1d4ed8;
+  --theme-connection: #3b82f6;
+  --theme-credit: #16a34a;
+  --theme-debit: #dc2626;
+  --theme-collateral: #0d9488;
+  --theme-text-primary: #0f172a;
+  --theme-text-secondary: #475569;
+  --theme-text-muted: #5f6877;
+  --theme-accent: #2b313c;
+  --theme-accent-hover: #11151d;
+  --theme-accent-contrast: #f8fafc;
+  --theme-border: #dde1e8;
+  --theme-glass-bg: rgba(255, 255, 255, 0.86);
+  --theme-glass-border: rgba(0, 0, 0, 0.06);
+  --theme-surface: #ffffff;
+  --theme-surface-hover: #f5f6f8;
+  --theme-surface-border: #dde1e8;
+  --theme-input-bg: #ffffff;
+  --theme-input-border: #7b8390;
+  --theme-input-focus: #2b313c;
+  --theme-btn-primary: #2563eb;
+  --theme-btn-primary-hover: #1d4ed8;
+  --theme-badge-synced: #16a34a;
+  --theme-badge-synced-bg: rgba(22, 163, 74, 0.08);
+  --theme-badge-pending: #0369a1;
+  --theme-badge-pending-bg: rgba(3, 105, 161, 0.08);
+  /* Money held in a lock: pale violet, matching the React wallet's hold. */
+  --theme-hold: #7c3aed;
+  /* Warnings keep amber (design-science grammar); light gets a deeper amber for 4.5:1. */
+  --theme-warning: #b45309;
+  --theme-bar-credit: #94a3b8;
+  --theme-bar-collateral: #0d9488;
+  --theme-bar-debt: #dc2626;
+  --theme-bar-bg: #dde1e8;
+  --theme-card-bg: #ffffff;
+  --theme-card-border: #dde1e8;
+  --theme-card-hover-border: #c9cfd8;
+  --theme-header-bg: #f8f9fb;
+  --theme-scrollbar-thumb: #c9cfd8;
+}
+
+[data-theme='merchant'] {
+  --theme-background: #f2ede5;
+  --theme-bg-gradient: linear-gradient(180deg, #fbf8f3 0%, #f2ede5 58%, #ece3d6 100%);
+  --theme-entity: #0c4a6e;
+  --theme-entity-emissive: #075985;
+  --theme-connection: #0284c7;
+  --theme-credit: #15803d;
+  --theme-debit: #b91c1c;
+  --theme-collateral: #0f766e;
+  --theme-text-primary: #1c1917;
+  --theme-text-secondary: #57534e;
+  --theme-text-muted: #a8a29e;
+  --theme-accent: #0c4a6e;
+  --theme-accent-hover: #0369a1;
+  --theme-accent-contrast: #ffffff;
+  --theme-border: #ddd5ca;
+  --theme-glass-bg: rgba(255, 253, 250, 0.9);
+  --theme-glass-border: rgba(0, 0, 0, 0.05);
+  --theme-surface: #fffdfa;
+  --theme-surface-hover: #f8f3ec;
+  --theme-surface-border: #ddd5ca;
+  --theme-input-bg: #f7f1e9;
+  --theme-input-border: #d4ccc0;
+  --theme-input-focus: #0c4a6e;
+  --theme-btn-primary: #0c4a6e;
+  --theme-btn-primary-hover: #0369a1;
+  --theme-badge-synced: #15803d;
+  --theme-badge-synced-bg: rgba(21, 128, 61, 0.06);
+  --theme-badge-pending: #b45309;
+  --theme-badge-pending-bg: rgba(180, 83, 9, 0.06);
+  --theme-hold: #6d28d9;
+  --theme-warning: #92400e;
+  --theme-bar-credit: #a8a29e;
+  --theme-bar-collateral: #0f766e;
+  --theme-bar-debt: #b91c1c;
+  --theme-bar-bg: #ddd5ca;
+  --theme-card-bg: #fffdfa;
+  --theme-card-border: #ddd5ca;
+  --theme-card-hover-border: #d4ccc0;
+  --theme-header-bg: #f8f3ec;
+  --theme-scrollbar-thumb: #d4ccc0;
+}
+
+[data-theme='gold-luxe'] {
+  --theme-background: #1a1410;
+  --theme-bg-gradient: linear-gradient(135deg, #1a1410 0%, #2a2218 50%, #1f1814 100%);
+  --theme-entity: #ffd700;
+  --theme-entity-emissive: #b8860b;
+  --theme-connection: #ffaa00;
+  --theme-credit: #32cd32;
+  --theme-debit: #dc143c;
+  --theme-collateral: #daa520;
+  --theme-text-primary: #f5e6d3;
+  --theme-text-secondary: #b8a992;
+  --theme-text-muted: #8a7a66;
+  --theme-accent: #ffd700;
+  --theme-accent-hover: #ffe44d;
+  --theme-accent-contrast: #1a1410;
+  --theme-border: rgba(255, 215, 0, 0.12);
+  --theme-glass-bg: rgba(42, 34, 24, 0.85);
+  --theme-glass-border: rgba(255, 215, 0, 0.1);
+  --theme-surface: #2a2218;
+  --theme-surface-hover: #342c20;
+  --theme-surface-border: rgba(255, 215, 0, 0.12);
+  --theme-input-bg: #1a1410;
+  --theme-input-border: rgba(255, 215, 0, 0.12);
+  --theme-input-focus: #ffd700;
+  --theme-btn-primary: #b8860b;
+  --theme-btn-primary-hover: #daa520;
+  --theme-badge-synced: #32cd32;
+  --theme-badge-synced-bg: rgba(74, 222, 128, 0.1);
+  --theme-badge-pending: #fbbf24;
+  --theme-badge-pending-bg: rgba(251, 191, 36, 0.1);
+  --theme-hold: #c4b5fd;
+  --theme-warning: #f59e0b;
+  --theme-bar-credit: #8a7a66;
+  --theme-bar-collateral: #daa520;
+  --theme-bar-debt: #dc143c;
+  --theme-bar-bg: rgba(255, 215, 0, 0.06);
+  --theme-card-bg: #2a2218;
+  --theme-card-border: rgba(255, 215, 0, 0.12);
+  --theme-card-hover-border: rgba(255, 215, 0, 0.25);
+  --theme-header-bg: #221c14;
+  --theme-scrollbar-thumb: rgba(255, 215, 0, 0.15);
+}
+
+[data-theme='matrix'] {
+  --theme-background: #000000;
+  --theme-bg-gradient: linear-gradient(135deg, #000000 0%, #001a00 50%, #000000 100%);
+  --theme-entity: #00ff00;
+  --theme-entity-emissive: #003300;
+  --theme-connection: #00ff41;
+  --theme-credit: #39ff14;
+  --theme-debit: #ff0033;
+  --theme-collateral: #00ff88;
+  --theme-text-primary: #00ff41;
+  --theme-text-secondary: #008f11;
+  --theme-text-muted: #005500;
+  --theme-accent: #00ff00;
+  --theme-accent-hover: #33ff33;
+  --theme-accent-contrast: #001a00;
+  --theme-border: rgba(0, 255, 65, 0.12);
+  --theme-glass-bg: rgba(0, 20, 0, 0.85);
+  --theme-glass-border: rgba(0, 255, 65, 0.1);
+  --theme-surface: #0a1a0a;
+  --theme-surface-hover: #0f240f;
+  --theme-surface-border: rgba(0, 255, 65, 0.12);
+  --theme-input-bg: #000a00;
+  --theme-input-border: rgba(0, 255, 65, 0.12);
+  --theme-input-focus: #00ff00;
+  --theme-btn-primary: #006600;
+  --theme-btn-primary-hover: #008800;
+  --theme-badge-synced: #39ff14;
+  --theme-badge-synced-bg: rgba(74, 222, 128, 0.1);
+  --theme-badge-pending: #fbbf24;
+  --theme-badge-pending-bg: rgba(251, 191, 36, 0.1);
+  --theme-hold: #a3ffa3;
+  --theme-warning: #d9f99d;
+  --theme-bar-credit: #005500;
+  --theme-bar-collateral: #00ff88;
+  --theme-bar-debt: #ff0033;
+  --theme-bar-bg: rgba(0, 255, 65, 0.06);
+  --theme-card-bg: #0a1a0a;
+  --theme-card-border: rgba(0, 255, 65, 0.12);
+  --theme-card-hover-border: rgba(0, 255, 65, 0.25);
+  --theme-header-bg: #001200;
+  --theme-scrollbar-thumb: rgba(0, 255, 65, 0.15);
+}
+
+[data-theme='arctic'] {
+  --theme-background: #0d1117;
+  --theme-bg-gradient: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #0d1117 100%);
+  --theme-entity: #58a6ff;
+  --theme-entity-emissive: #1f6feb;
+  --theme-connection: #79c0ff;
+  --theme-credit: #56d364;
+  --theme-debit: #f85149;
+  --theme-collateral: #3fb950;
+  --theme-text-primary: #c9d1d9;
+  --theme-text-secondary: #8b949e;
+  --theme-text-muted: #484f58;
+  --theme-accent: #58a6ff;
+  --theme-accent-hover: #79c0ff;
+  --theme-accent-contrast: #0d1117;
+  --theme-border: #30363d;
+  --theme-glass-bg: rgba(22, 27, 34, 0.85);
+  --theme-glass-border: rgba(88, 166, 255, 0.08);
+  --theme-surface: #161b22;
+  --theme-surface-hover: #1c2129;
+  --theme-surface-border: #30363d;
+  --theme-input-bg: #0d1117;
+  --theme-input-border: #30363d;
+  --theme-input-focus: #58a6ff;
+  --theme-btn-primary: #238636;
+  --theme-btn-primary-hover: #2ea043;
+  --theme-badge-synced: #56d364;
+  --theme-badge-synced-bg: rgba(74, 222, 128, 0.1);
+  --theme-badge-pending: #fbbf24;
+  --theme-badge-pending-bg: rgba(251, 191, 36, 0.1);
+  --theme-hold: #c4b5fd;
+  --theme-warning: #d29922;
+  --theme-bar-credit: #484f58;
+  --theme-bar-collateral: #3fb950;
+  --theme-bar-debt: #f85149;
+  --theme-bar-bg: #30363d;
+  --theme-card-bg: #161b22;
+  --theme-card-border: #30363d;
+  --theme-card-hover-border: #484f58;
+  --theme-header-bg: #161b22;
+  --theme-scrollbar-thumb: #30363d;
+}

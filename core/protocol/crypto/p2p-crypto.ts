@@ -7,6 +7,7 @@
  * Wire format: ephemeralPub (32) + nonce (12) + ciphertext (data + 16 tag)
  */
 
+import { bytesToHex } from '../../support/bytes/hex-bytes';
 import { x25519PublicKey, x25519RandomSecretKey, x25519SharedSecret } from './fast/fast-x25519';
 export { x25519SharedSecret } from './fast/fast-x25519';
 import { aead } from './fast/fast-aead';
@@ -162,7 +163,7 @@ export function decryptSessionPayload(ciphertext: Uint8Array, key: Uint8Array, s
  * Convert public key to hex string (for profile sharing)
  */
 export function pubKeyToHex(pubKey: Uint8Array): string {
-  return '0x' + Array.from(pubKey).map(b => b.toString(16).padStart(2, '0')).join('');
+  return bytesToHex(pubKey);
 }
 
 /**

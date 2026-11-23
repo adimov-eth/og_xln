@@ -1,0 +1,15 @@
+{
+  "cellId": "H2-p2-verb-swap",
+  "hypothesis": "H2",
+  "perspective": "p2-verb-dispatch",
+  "sheetId": "sheet-spend",
+  "expectedDecision": "REJECT",
+  "runner": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7",
+  "matchesExpected": true,
+  "decision": "REJECT",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: 1005 USDT",
+  "q3Fee": "FEE: 0.00 USDC",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: The 1,000 USDC payment is final and the 1,005 USDT is only an unbacked claim, so the collateral is gone and the claim is uncollectable.",
+  "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: 1005 USDT\n3. FEE: 0.00 USDC\n4. IF_COUNTERPARTY_VANISHES: The 1,000 USDC payment is final and the 1,005 USDT is only an unbacked claim, so the collateral is gone and the claim is uncollectable."
+}

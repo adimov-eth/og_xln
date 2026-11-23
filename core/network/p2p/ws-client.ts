@@ -12,7 +12,7 @@ import {
   type RuntimeWsSessionKeys,
 } from './ws-protocol';
 import { signDigest } from '../../account/crypto';
-import { countOp, recordOpEvent } from '../../support/performance/op-counters';
+import { countOp } from '../../support/performance/op-counters';
 import {
   decryptPayload,
   decryptSessionPayload,
@@ -25,7 +25,7 @@ import {
   type P2PKeyPair,
 } from '../../protocol/crypto/p2p-crypto';
 import { asFailFastPayload, failfastAssert } from './failfast';
-import { isRuntimeId, normalizeRuntimeId } from './auth/runtime-id';
+import { isRuntimeId, normalizeRuntimeId } from '../../protocol/identity/runtime-id';
 import { createStructuredLogger } from '../../support/logger';
 import { decodeRuntimeEntityInputsEnvelope } from './auth/entity-input-envelope';
 import { verifyRuntimeWsFrameAuth } from './auth/hello-auth';
@@ -34,10 +34,10 @@ import { traceAccountDeliveryHop } from '../../support/performance/account-deliv
 
 const wsLog = createStructuredLogger('runtime.wsClient');
 
-// Separate interfaces for browser and Node.js WebSocket implementations
 interface BrowserWebSocket {
   binaryType: string;
   readyState: number;
+  bufferedAmount?: number;
   send(data: string | ArrayBuffer | ArrayBufferView | Blob): void;
   close(): void;
   onopen: ((this: WebSocket, ev: Event) => void) | null;
@@ -46,26 +46,10 @@ interface BrowserWebSocket {
   onerror: ((this: WebSocket, ev: Event) => void) | null;
 }
 
-interface NodeWebSocket {
-  binaryType?: string;
-  readyState?: number;
-  bufferedAmount?: number;
-  send(data: string | Buffer | Uint8Array, cb?: (error?: Error) => void): void;
-  close(): void;
-  on(event: 'open', cb: () => void): void;
-  on(event: 'message', cb: (data: Buffer) => void): void;
-  on(event: 'close', cb: (code: number, reason: Buffer) => void): void;
-  on(event: 'error', cb: (err: Error) => void): void;
-}
-
-type WebSocketLike = BrowserWebSocket | NodeWebSocket;
-
-function isNodeWebSocket(ws: WebSocketLike): ws is NodeWebSocket {
-  return 'on' in ws && typeof (ws as NodeWebSocket).on === 'function';
-}
+type WebSocketLike = BrowserWebSocket;
 
 const readSocketReadyState = (ws: WebSocketLike): number => {
-  const readyState = 'readyState' in ws && typeof ws.readyState === 'number' ? ws.readyState : undefined;
+  const readyState = typeof ws.readyState === 'number' ? ws.readyState : undefined;
   if (readyState === undefined) throw new Error('WS_CLOSE_STATE_UNAVAILABLE');
   return readyState;
 };
@@ -99,31 +83,18 @@ const waitForSocketClose = async (ws: WebSocketLike | null, timeoutMs = 1_000): 
       timeoutMs,
     );
 
-    if (isNodeWebSocket(ws)) {
-      ws.on('close', finish);
+    const prevOnClose = ws.onclose;
+    ws.onclose = event => {
       try {
-        const readyState = readSocketReadyState(ws);
-        if (readyState === 3) finish();
-        else if (readyState !== 2) ws.close();
-      } catch (error) {
-        fail(error instanceof Error ? error : new Error(String(error)));
-      }
-      return;
-    }
-
-    const browserWs = ws as BrowserWebSocket;
-    const prevOnClose = browserWs.onclose;
-    browserWs.onclose = event => {
-      try {
-        prevOnClose?.call(browserWs as WebSocket, event);
+        prevOnClose?.call(ws as WebSocket, event);
       } finally {
         finish();
       }
     };
     try {
-      const readyState = readSocketReadyState(browserWs);
+      const readyState = readSocketReadyState(ws);
       if (readyState === 3) finish();
-      else if (readyState !== 2) browserWs.close();
+      else if (readyState !== 2) ws.close();
     } catch (error) {
       fail(error instanceof Error ? error : new Error(String(error)));
     }
@@ -167,31 +138,16 @@ export type RuntimeWsClientOptions = {
 /** Bounded like the server route: only a recent committed output can be rejected. */
 const MAX_OUTSTANDING_ENTITY_INPUT_IDS = 4096;
 
-const isBrowser = typeof window !== 'undefined' && typeof WebSocket !== 'undefined';
-let nodeWebSocketConstructor: Promise<typeof import('ws')['default']> | null = null;
-
-const loadNodeWebSocketConstructor = (): Promise<typeof import('ws')['default']> => {
-  nodeWebSocketConstructor ??= import('ws').then(module => module.default);
-  return nodeWebSocketConstructor;
-};
-
 const createWs = async (
   url: string,
   shouldCreate: () => boolean,
   onCreated: (socket: WebSocketLike) => void,
 ): Promise<WebSocketLike | null> => {
   if (!shouldCreate()) return null;
-  if (isBrowser) {
-    const ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
-    onCreated(ws as BrowserWebSocket);
-    return ws as BrowserWebSocket;
-  }
-  const NodeWebSocket = await loadNodeWebSocketConstructor();
-  if (!shouldCreate()) return null;
-  const instance = new NodeWebSocket(url);
-  onCreated(instance as NodeWebSocket);
-  return instance as NodeWebSocket;
+  const ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+  onCreated(ws);
+  return ws;
 };
 
 const readRecoveryLookupKey = (payload: unknown): string => {
@@ -333,8 +289,7 @@ export class RuntimeWsClient {
       return;
     }
     if (this.ws !== socket) throw new Error('WS_CONNECT_SOCKET_OWNERSHIP_LOST');
-    if (isNodeWebSocket(socket)) this.bindNodeSocket(socket, generation);
-    else this.bindBrowserSocket(socket, generation);
+    this.bindBrowserSocket(socket, generation);
   }
 
   private handleSocketOpen(generation: number): void {
@@ -360,7 +315,7 @@ export class RuntimeWsClient {
       `WS_UNEXPECTED_CLOSE:runtime=${this.options.runtimeId}:url=${this.options.url}:` +
       `generation=${generation}:code=${code}:reason=${reason || 'n/a'}${cleanSuffix}:` +
       `helloAcknowledged=${this.helloAcknowledged ? 1 : 0}:readyState=${this.ws ? readSocketReadyState(this.ws) : -1}:` +
-      `buffered=${Number(this.ws && isNodeWebSocket(this.ws) ? this.ws.bufferedAmount ?? 0 : 0)}`;
+      `buffered=${Number(this.ws?.bufferedAmount ?? 0)}`;
     this.helloAcknowledged = false;
     this.sessionKeys = null;
     this.inboundEncSeq = 0;
@@ -384,7 +339,7 @@ export class RuntimeWsClient {
       `WS_UNEXPECTED_ERROR:runtime=${this.options.runtimeId}:url=${this.options.url}:` +
       `generation=${generation}:helloAcknowledged=${this.helloAcknowledged ? 1 : 0}:` +
       `readyState=${this.ws ? readSocketReadyState(this.ws) : -1}:` +
-      `buffered=${Number(this.ws && isNodeWebSocket(this.ws) ? this.ws.bufferedAmount ?? 0 : 0)}:` +
+      `buffered=${Number(this.ws?.bufferedAmount ?? 0)}:` +
       `error=${error.message}`,
       { cause: error },
     );
@@ -394,34 +349,6 @@ export class RuntimeWsClient {
     }
     console.error(`[WS] ${fatal.message}`);
     this.options.onError?.(fatal);
-  }
-
-  private bindNodeSocket(socket: NodeWebSocket, generation: number): void {
-    socket.on('open', () => this.handleSocketOpen(generation));
-    socket.on('message', data => this.dispatchMessage(data, generation));
-    socket.on('close', (code, reasonBuffer) => {
-      wsLog.debug('socket.closed', {
-        code,
-        currentGeneration: this.lifecycleGeneration,
-        generation,
-        readyState: readSocketReadyState(socket),
-        runtimeId: this.options.runtimeId,
-        url: this.options.url,
-      });
-      const reason = Buffer.isBuffer(reasonBuffer) ? reasonBuffer.toString('utf8') : String(reasonBuffer || '');
-      this.handleSocketClose(generation, code, reason);
-    });
-    socket.on('error', error => {
-      wsLog.debug('socket.error', {
-        currentGeneration: this.lifecycleGeneration,
-        error: error.message,
-        generation,
-        readyState: readSocketReadyState(socket),
-        runtimeId: this.options.runtimeId,
-        url: this.options.url,
-      });
-      this.handleSocketError(generation, error);
-    });
   }
 
   private bindBrowserSocket(socket: BrowserWebSocket, generation: number): void {
@@ -1179,12 +1106,6 @@ export class RuntimeWsClient {
     const payload = serializeWsMessage(outboundMsg);
     const transport = this.options.url.includes('/relay') ? 'relay' : 'direct';
     countOp(`socket.${transport}.out.${outboundMsg.type}`, payload.length);
-    recordOpEvent(`socket.${transport}.out.wire`, {
-      type: outboundMsg.type,
-      fromRuntimeId: this.options.runtimeId,
-      toRuntimeId: String(outboundMsg.to ?? ''),
-      bytes: payload.length,
-    });
     if (accountEnvelope) {
       traceAccountDeliveryHop('ws-send-start', accountEnvelope, {
         runtimeId: this.options.runtimeId,
@@ -1193,48 +1114,20 @@ export class RuntimeWsClient {
         generation: this.lifecycleGeneration,
         bytes: payload.length,
         readyState: this.ws ? readSocketReadyState(this.ws) : -1,
-        bufferedAmount: Number(this.ws && isNodeWebSocket(this.ws) ? this.ws.bufferedAmount ?? 0 : 0),
+        bufferedAmount: Number(this.ws?.bufferedAmount ?? 0),
       });
     }
     try {
-      if (isNodeWebSocket(this.ws)) {
-        const socket = this.ws;
-        const messageId = String(outboundMsg.id || '');
-        const messageType = String(outboundMsg.type || '');
-        const targetRuntimeId = String(outboundMsg.to || '');
-        socket.send(payload, error => {
-          if (!error) {
-            if (accountEnvelope) {
-              traceAccountDeliveryHop('ws-send-flushed', accountEnvelope, {
-                runtimeId: this.options.runtimeId,
-                targetRuntimeId,
-                messageId,
-                generation: this.lifecycleGeneration,
-                bytes: payload.length,
-                bufferedAmount: Number(socket.bufferedAmount ?? 0),
-              });
-            }
-            return;
-          }
-          this.options.onError?.(new Error(
-            `WS_ASYNC_SEND_FAILED:type=${messageType}:id=${messageId}:to=${targetRuntimeId}:` +
-            `bytes=${payload.length}:buffered=${Number(socket.bufferedAmount ?? 0)}:` +
-            `error=${error.message}:envelope=${accountEnvelope ? safeStringify(accountEnvelope) : '<non-financial>'}`,
-            { cause: error },
-          ));
+      this.ws.send(payload);
+      if (accountEnvelope) {
+        traceAccountDeliveryHop('ws-send-flushed', accountEnvelope, {
+          runtimeId: this.options.runtimeId,
+          targetRuntimeId: outboundMsg.to,
+          messageId: outboundMsg.id,
+          generation: this.lifecycleGeneration,
+          bytes: payload.length,
+          browserSendReturned: true,
         });
-      } else {
-        this.ws.send(payload);
-        if (accountEnvelope) {
-          traceAccountDeliveryHop('ws-send-flushed', accountEnvelope, {
-            runtimeId: this.options.runtimeId,
-            targetRuntimeId: outboundMsg.to,
-            messageId: outboundMsg.id,
-            generation: this.lifecycleGeneration,
-            bytes: payload.length,
-            browserSendReturned: true,
-          });
-        }
       }
       return true;
     } catch (error) {

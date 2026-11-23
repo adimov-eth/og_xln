@@ -1,26 +1,11 @@
-<script lang="ts" context="module">
-  import { writable } from 'svelte/store';
-
-  // Global: only one dropdown open at a time
-  export const activeDropdownId = writable<string | null>(null);
-
-  let idCounter = 0;
-  export function generateDropdownId(): string {
-    return `dropdown-${++idCounter}`;
-  }
-</script>
-
 <script lang="ts">
-  import { tick, createEventDispatcher, onDestroy } from 'svelte';
+  import { tick, createEventDispatcher } from 'svelte';
 
   // Props
   export let open = false;
-  export let id = generateDropdownId();
   export let minWidth = 200;
   export let maxWidth = 420;
   export let disabled = false;
-  export let allowMultiple = false; // Allow multiple dropdowns open simultaneously
-  export let local = false;
   export let ariaLabel: string | null = null;
   export let triggerTestId: string | null = null;
   export let triggerRuntimeId: string | null = null;
@@ -39,20 +24,17 @@
   let left = 0;
   let width = minWidth;
 
-  // Subscribe to global active dropdown - close if another opens (unless allowMultiple)
-  $: if (!allowMultiple && $activeDropdownId && $activeDropdownId !== id && open) {
-    open = false;
-  }
+  $: if (triggerEl && menuEl) triggerEl.popoverTargetElement = menuEl;
 
-  // Clear active id when closed via bind:open or external updates
-  $: if (!open && $activeDropdownId === id) {
-    activeDropdownId.set(null);
-  }
-
-  // When opening, set as active and position
-  $: if (open) {
-    activeDropdownId.set(id);
-    tick().then(updatePosition);
+  // Parent-driven open/close reaches the popover here; user-driven changes arrive via handleToggle.
+  $: if (menuEl) {
+    const shown = menuEl.matches(':popover-open');
+    if (open && !shown) {
+      menuEl.showPopover();
+      tick().then(updatePosition);
+    } else if (!open && shown) {
+      menuEl.hidePopover();
+    }
   }
 
   function updatePosition() {
@@ -62,11 +44,6 @@
     const configuredCap = maxWidth > 0 ? Math.max(minWidth, maxWidth) : viewportWidth;
     const cap = Math.max(minWidth, Math.min(configuredCap, viewportWidth));
     width = Math.min(Math.max(rect.width, minWidth), cap);
-    if (local) {
-      top = rect.height + 4;
-      left = 0;
-      return;
-    }
     top = rect.bottom + 4;
     left = rect.left;
 
@@ -89,54 +66,21 @@
     });
   }
 
-  export function toggle() {
-    open = !open;
+  function handleToggle(e: ToggleEvent) {
+    const next = e.newState === 'open';
+    if (next === open) return;
+    open = next;
     dispatch('toggle', { open });
+    if (!next) dispatch('close');
   }
-
-  export function close() {
-    open = false;
-    activeDropdownId.set(null);
-    dispatch('close');
-  }
-
-  function handleTriggerClick(e: MouseEvent) {
-    e.stopPropagation();
-    if (disabled) return;
-    toggle();
-  }
-
-  function handleClickOutside(e: MouseEvent) {
-    if (!open) return;
-    const target = e.target as HTMLElement;
-    if (triggerEl?.contains(target)) return;
-    if (menuEl?.contains(target)) return;
-    close();
-  }
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && open) {
-      e.preventDefault();
-      close();
-      triggerEl?.focus();
-    }
-  }
-
-  onDestroy(() => {
-    if ($activeDropdownId === id) {
-      activeDropdownId.set(null);
-    }
-  });
 </script>
-
-<svelte:window on:click={handleClickOutside} on:keydown={handleKeydown} />
 
 <div class="dropdown-wrapper">
   <!-- Trigger button -->
   <button
     bind:this={triggerEl}
     class="dropdown-trigger"
-    on:click={handleTriggerClick}
+    type="button"
     aria-expanded={open}
     aria-haspopup="true"
     aria-label={ariaLabel || undefined}
@@ -154,22 +98,22 @@
     {/if}
   </button>
 
-  <!-- Menu (fixed position) -->
-  {#if open}
-    <div
-      bind:this={menuEl}
-      class="dropdown-menu"
-      class:local-menu={local}
-      style="
-        {local ? '' : `top: ${top}px; left: ${left}px;`}
-        width: {width}px;
-        max-width: calc(100vw - 16px);
-      "
-      role="menu"
-    >
+  <div
+    bind:this={menuEl}
+    popover="auto"
+    class="dropdown-menu"
+    style="
+      top: {top}px; left: {left}px;
+      width: {width}px;
+      max-width: calc(100vw - 16px);
+    "
+    role="menu"
+    on:toggle={handleToggle}
+  >
+    {#if open}
       <slot name="menu" />
-    </div>
-  {/if}
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -223,6 +167,10 @@
 
   .dropdown-menu {
     position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: 0;
+    color: inherit;
     z-index: 9999;
     background: var(--dropdown-menu-bg, rgba(12, 18, 28, 0.95));
     border: 1px solid var(--dropdown-border, var(--glass-border, rgba(255, 255, 255, 0.125)));
@@ -234,12 +182,6 @@
     overflow-y: auto;
     animation: dropdown-fade 0.05s ease-out;
     backdrop-filter: blur(var(--blur-sm, 16px));
-  }
-
-  .dropdown-menu.local-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
   }
 
   @keyframes dropdown-fade {

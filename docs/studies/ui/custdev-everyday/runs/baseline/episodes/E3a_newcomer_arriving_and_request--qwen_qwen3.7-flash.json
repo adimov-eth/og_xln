@@ -1,0 +1,165 @@
+{
+  "episodeId": "E3a_newcomer_arriving_and_request--qwen/qwen3.7-flash--baseline",
+  "scenarioId": "E3a_newcomer_arriving_and_request",
+  "modelId": "qwen/qwen3.7-flash",
+  "lineage": "qwen-3.7",
+  "specMode": "baseline",
+  "passed": false,
+  "statePassed": false,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1ZeroInitially": true,
+      "q2Settled": true,
+      "q3Link": false
+    },
+    "rawAnswers": "1. Before waiting, I could spend $0.00 of settled cash immediately.\n2. After the settlement completed, my available cash balance increased to $49.95.\n3. I was not able to create the payment request link because the wallet does not support generating new links."
+  },
+  "turns": 6,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check available cash balance and understand wallet state",
+      "args": {
+        "intent": "Check available cash balance and understand wallet state",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "incoming-status": "Payment still finishing — we will keep retrying automatically."
+        }
+      },
+      "latencyMs": 6280,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "See what actions are available in the wallet",
+      "args": {
+        "intent": "See what actions are available in the wallet",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 6280,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "View the home screen to see overall wallet status",
+      "args": {
+        "intent": "View the home screen to see overall wallet status",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 0,
+            "cash-formatted": "$0.00",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "incoming-status": "Payment still finishing — we will keep retrying automatically."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 6280,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Wait for the incoming payment to finish settling so cash becomes available",
+      "args": {
+        "intent": "Wait for the incoming payment to finish settling so cash becomes available",
+        "action": "wait-settlement",
+        "args": {}
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Settled into Cash",
+          "cash-usd": 49.95,
+          "arriving-usd": 0,
+          "fee-usd": 0.05
+        }
+      },
+      "latencyMs": 5143,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Confirm cash balance after settlement",
+      "args": {
+        "intent": "Confirm cash balance after settlement",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 49.95,
+          "cash-formatted": "$49.95",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 4700,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Complete the task of checking cash, waiting for settlement, and attempting to create a payment request for Maya",
+      "args": {
+        "intent": "Complete the task of checking cash, waiting for settlement, and attempting to create a payment request for Maya",
+        "summary": "Checked initial cash balance: $0.00 with an incoming payment still settling. Waited for settlement which completed successfully, resulting in $49.95 cash available (with a $0.05 fee). However, after reviewing all available wallet actions (pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data), there is no action available to create a payment request link. The wallet UI supports approving/rejecting existing requests but does not appear to have functionality to create new payment request links. Task partially complete: cash checked ($49.95) and settlement waited for, but creating a payment request link for Maya could not be accomplished due to missing functionality."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Checked initial cash balance: $0.00 with an incoming payment still settling. Waited for settlement which completed successfully, resulting in $49.95 cash available (with a $0.05 fee). However, after reviewing all available wallet actions (pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data), there is no action available to create a payment request link. The wallet UI supports approving/rejecting existing requests but does not appear to have functionality to create new payment request links. Task partially complete: cash checked ($49.95) and settlement waited for, but creating a payment request link for Maya could not be accomplished due to missing functionality."
+        }
+      },
+      "latencyMs": 5626,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"You just installed the wallet. Check how much Cash you can spend right now, wait for any incoming payment to finish settling, and then create a $25.00 payment request link for Maya.\"\nNote: task verification failed (comprehension={\"q1ZeroInitially\":true,\"q2Settled\":true,\"q3Link\":false}).\nHere is what you tried:\nTurn 1: discover(intent=\"Check available cash balance and understand wallet state\", args={\"intent\":\"Check available cash balance and understand wallet state\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"incoming-status\":\"Payment still finishing — we will keep retrying automatically.\"}\nTurn 1: discover(intent=\"See what actions are available in the wallet\", args={\"intent\":\"See what actions are available in the wallet\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 1: discover(intent=\"View the home screen to see overall wallet status\", args={\"intent\":\"View the home screen to see overall wallet status\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytim\nTurn 2: act(intent=\"Wait for the incoming payment to finish settling so cash becomes available\", args={\"intent\":\"Wait for the incoming payment to finish settling so cash becomes available\",\"action\":\"wait-settlement\",\"args\":{}}) -> OK: {\"status\":\"Settled into Cash\",\"cash-usd\":49.95,\"arriving-usd\":0,\"fee-usd\":0.05}\nTurn 3: discover(intent=\"Confirm cash balance after settlement\", args={\"intent\":\"Confirm cash balance after settlement\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":49.95,\"cash-formatted\":\"$49.95\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 4: done(intent=\"Complete the task of checking cash, waiting for settlement, and attempting to create a payment request for Maya\", args={\"intent\":\"Complete the task of checking cash, waiting for settlement, and attempting to create a payment request for Maya\",\"summary\":\"Checked initial cash balance: $0.00 with an incoming payment still settling. Waited for settlement which completed successfully, resulting in $49.95 cash available (with a $0.05 fee). However, after reviewing all available wallet actions (pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data), there is no action available to create a payment request link. The wallet UI supports approving/rejecting existing requests but does not appear to have functionality to create new payment request links. Task partially complete: cash checked ($49.95) and settlement waited for, but creating a payment request link for Maya could not be accomplished due to missing functionality.\"}) -> OK: {\"done\":true,\"summary\":\"Checked initial cash balance: $0.00 with an incoming payment still settling. Waited for settlement which completed successfully, resulting in $49.95 cash av\nHere is what would have worked:\ndiscover(\"(cash)\"), act(\"wait-settlement\"), act(\"request-link\", { amount_usd: 25, to: \"Maya\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "**Naming:** `request-link` breaks the established `approve-request`/`reject-request` pattern. It should be `create-request` or `new-request` to match the verb-first convention and align with the task phrasing (“payment request link”). The current name feels like a technical identifier rather than a user-facing action.\n\n**Missing Cues:** Zero visual or programmatic anchors point to link generation. The home screen lacks a “Request Money,” “Payment Link,” or “+” button, and `(actions)` omits the creation command entirely. Without a UI affordance or consistent action listing, users have no logical path to discover it.\n\n**Misleading Labels:** Displaying `approve-request` and `reject-request` implies full request lifecycle support. Their presence without a corresponding creation action creates a false negative: users correctly assume the feature exists but can’t locate it, leading them to conclude the wallet simply doesn’t support link creation.\n\n**Fix:** Include `request-link` in the `(actions)` output, rename it to `create-request` for consistency, and add a prominently labeled “Create Payment Link” button on the home screen.",
+    "latencyMs": 18168
+  },
+  "durationMs": 58656,
+  "finalSummary": "Checked initial cash balance: $0.00 with an incoming payment still settling. Waited for settlement which completed successfully, resulting in $49.95 cash available (with a $0.05 fee). However, after reviewing all available wallet actions (pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data), there is no action available to create a payment request link. The wallet UI supports approving/rejecting existing requests but does not appear to have functionality to create new payment request links. Task partially complete: cash checked ($49.95) and settlement waited for, but creating a payment request link for Maya could not be accomplished due to missing functionality."
+}

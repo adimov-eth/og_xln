@@ -8,7 +8,6 @@
 
   import type { Writable } from 'svelte/store';
   import { get } from 'svelte/store';
-  import { onDestroy } from 'svelte';
   import { panelBridge } from '../utils/panelBridge';
   import ahbScenarioCode from '../../../../../core/scenarios/consensus/ahb.ts?raw';
   import { shortAddress } from '#lib/utils/format.ts';
@@ -159,7 +158,6 @@
       lastAction = 'No demo runtime state to reset';
       return false;
     }
-    stopFedPaymentLoop();
     $runtimeFrameEnv.state.eReplicas.clear();
     publishCurrentEnv([]);
     lastAction = message;
@@ -267,36 +265,6 @@
   $: entityIds = $runtimeFrameEnv?.state.eReplicas
     ? Array.from($runtimeFrameEnv.state.eReplicas.keys() as Iterable<string>).map((key: string) => key.split(':')[0] || key).filter((id: string, idx: number, arr: string[]) => arr.indexOf(id) === idx)
     : [];
-
-  // Listen for VR payment gestures
-  const handleVRPayment = async ({ from, to }: { from: string; to: string }) => {
-    r2rFromEntity = from;
-    r2rToEntity = to;
-    r2rAmount = '500000'; // Default $500K
-    await sendR2RTransaction();
-  };
-  const unsubVRPayment = panelBridge.on('vr:payment', handleVRPayment);
-
-  // Auto-demo mode (triggered when entering VR for Bernanke wow)
-  const handleAutoDemo = async () => {
-
-    // Step 1: Fund all entities if not already funded
-    if (entityIds.length > 0) {
-      await fundAllEntities();
-
-      // Step 2: Start payment loop after 2 seconds
-      setTimeout(() => {
-        startFedPaymentLoop();
-      }, 2000);
-    }
-  };
-  const unsubAutoDemo = panelBridge.on('auto-demo:start', handleAutoDemo);
-
-  // Clean up subscriptions on component destroy
-  onDestroy(() => {
-    unsubVRPayment();
-    unsubAutoDemo();
-  });
 
   /** Mint reserves to selected entity */
   async function mintReservesToEntity() {
@@ -994,155 +962,6 @@
     clearDemoRuntimeState('Demo reset complete - ready for new topology');
   }
 
-  let fedPaymentInterval: ReturnType<typeof setInterval> | null = null;
-  /** VR/topology payment loop. */
-  async function startFedPaymentLoop() {
-    if (!requireLiveMode('Fed payment loop')) return;
-    if (fedPaymentInterval) clearInterval(fedPaymentInterval);
-    const env = requireRuntimeEnv('Fed payment loop');
-
-    const bankEntityIds = entityIds.filter(id => {
-      const key = (Array.from(env.state.eReplicas.keys()) as string[]).find(k => k.startsWith(id + ':'));
-      const replica = key ? env.state.eReplicas.get(key) : null;
-      return replica?.signerId && !replica.signerId.includes('_fed');
-    });
-
-    const fedId = entityIds.find(id => {
-      const key = (Array.from(env.state.eReplicas.keys()) as string[]).find(k => k.startsWith(id + ':'));
-      const replica = key ? env.state.eReplicas.get(key) : null;
-      return replica?.signerId?.includes('_fed');
-    });
-
-    if (!fedId || bankEntityIds.length === 0) {
-      return;
-    }
-
-    let tick = 0;
-
-    fedPaymentInterval = setInterval(async () => {
-      try {
-        if (!requireLiveMode('Fed payment loop')) {
-          stopFedPaymentLoop();
-          return;
-        }
-        const currentEnv = requireRuntimeEnv('Fed payment loop');
-
-        tick++;
-        const action = tick % 4; // 4-step cycle
-
-        if (action === 0) {
-          // Fed lends to random bank
-          const bank = bankEntityIds[Math.floor(Math.random() * bankEntityIds.length)]!;
-          const amount = Math.floor(Math.random() * 500000) + 100000; // $100K-$600K
-
-          const fedKey = (Array.from(currentEnv.state.eReplicas.keys()) as string[]).find(k => k.startsWith(fedId + ':'));
-          const fedReplica = fedKey ? currentEnv.state.eReplicas.get(fedKey) : null;
-
-          if (fedReplica) {
-            await ingressRuntimeInput({ runtimeTxs: [], entityInputs: [{
-              entityId: fedId,
-              signerId: fedReplica.signerId,
-              entityTxs: [{
-                type: 'directPayment',
-                data: {
-                  targetEntityId: bank,
-                  tokenId: 1,
-                  amount: BigInt(amount),
-                  route: [fedId, bank],
-                  deliveryMode: 'direct',
-                  description: `Fed discount window lending`
-                }
-              }]
-            }] }, 'Fed payment loop');
-          }
-        } else if (action === 1) {
-          // Random bank borrows from Fed (reverse direction)
-          const bank = bankEntityIds[Math.floor(Math.random() * bankEntityIds.length)]!;
-          const amount = Math.floor(Math.random() * 300000) + 50000; // $50K-$350K
-
-          const bankKey = (Array.from(currentEnv.state.eReplicas.keys()) as string[]).find(k => k.startsWith(bank + ':'));
-          const bankReplica = bankKey ? currentEnv.state.eReplicas.get(bankKey) : null;
-
-          if (bankReplica) {
-            await ingressRuntimeInput({ runtimeTxs: [], entityInputs: [{
-              entityId: bank,
-              signerId: bankReplica.signerId,
-              entityTxs: [{
-                type: 'directPayment',
-                data: {
-                  targetEntityId: fedId,
-                  tokenId: 1,
-                  amount: BigInt(amount),
-                  route: [bank, fedId],
-                  deliveryMode: 'direct',
-                  description: `Bank repaying Fed loan`
-                }
-              }]
-            }] }, 'Fed payment loop');
-          }
-        } else {
-          // Interbank payment (Bank → Bank)
-          const from = bankEntityIds[Math.floor(Math.random() * bankEntityIds.length)]!;
-          let to = bankEntityIds[Math.floor(Math.random() * bankEntityIds.length)]!;
-          while (to === from && bankEntityIds.length > 1) {
-            to = bankEntityIds[Math.floor(Math.random() * bankEntityIds.length)]!;
-          }
-
-          const amount = Math.floor(Math.random() * 200000) + 25000; // $25K-$225K
-
-          const fromKey = (Array.from(currentEnv.state.eReplicas.keys()) as string[]).find(k => k.startsWith(from + ':'));
-          const fromReplica = fromKey ? currentEnv.state.eReplicas.get(fromKey) : null;
-
-          if (fromReplica) {
-            // Check if account exists
-            const hasAccount = fromReplica.state?.accounts?.has(to);
-
-            if (!hasAccount) {
-              // Open account first
-              await ingressRuntimeInput({ runtimeTxs: [], entityInputs: [{
-                entityId: from,
-                signerId: fromReplica.signerId,
-                entityTxs: [{
-                  type: 'openAccount',
-                  data: openAccountData(from, to)
-                }]
-              }] }, 'Fed payment loop');
-            }
-
-            // Send payment
-            await ingressRuntimeInput({ runtimeTxs: [], entityInputs: [{
-              entityId: from,
-              signerId: fromReplica.signerId,
-              entityTxs: [{
-                type: 'directPayment',
-                data: {
-                  targetEntityId: to,
-                  tokenId: 1,
-                  amount: BigInt(amount),
-                  route: [from, to],
-                  deliveryMode: 'direct',
-                  description: `Interbank settlement`
-                }
-              }]
-            }] }, 'Fed payment loop');
-          }
-        }
-
-        publishCurrentEnv();
-
-      } catch (err: unknown) {
-        console.error('[Fed Loop] Payment error:', err);
-      }
-    }, 5000); // Every 5 seconds (reduced for performance)
-  }
-
-  function stopFedPaymentLoop() {
-    if (fedPaymentInterval) {
-      clearInterval(fedPaymentInterval);
-      fedPaymentInterval = null;
-    }
-  }
-
   async function createNewXlnomy() {
     if (!requireLiveMode('create xlnomy')) return;
     if (!newXlnomyName.trim()) {
@@ -1449,14 +1268,6 @@
              Send R2R Transaction
           </button>
           <p class="help-text">Send reserve-to-reserve payment (shows broadcast ripple)</p>
-        </div>
-
-        <div class="action-section">
-          <h5>VR Mode</h5>
-          <button class="action-btn" on:click={() => panelBridge.emit('vr:toggle', {})}>
-             Enter VR
-          </button>
-          <p class="help-text">Quest 3 / WebXR headsets</p>
         </div>
 
         <div class="action-section">

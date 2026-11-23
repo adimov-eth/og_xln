@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { safeStringify } from '../../../protocol/serialization';
@@ -7,17 +7,8 @@ import { writeInheritedChildSecrets } from '../../../support/process/child-secre
 import type { ManagedPeerIdentity } from '../../market-maker/identity-resolver';
 import type { Args, HubChild, ManagedRuntimeSpec } from '../../orchestrator-types';
 import { buildPublicDirectWsUrl } from '../../replica-import/runtime-import-manifest';
-import {
-  flushPrefixedLogChunk,
-  pushChildLogLines,
-  type PrefixLogState,
-  writePrefixedLogChunk,
-} from '../child-log-buffer';
-import {
-  selectChildFailureReason,
-  shouldCaptureUnexpectedChildExit,
-  type ChildFailureObservation,
-} from '../child-recovery-policy';
+import type { ChildFailureObservation } from '../child-recovery-policy';
+import { attachManagedChildProcess } from './attach-managed-child';
 import { attachManagedChildFatalIpc, type ManagedChildFatalReport } from '../managed-child-fatal-ipc';
 import { buildHubChildProcessEnv, buildHubEngineArgs } from '../hub-runtime-env';
 import { canonicalHubEngine } from '../hub-engine-plan';
@@ -85,55 +76,6 @@ const buildHubInvocation = (child: HubChild, deps: HubSpawnerDeps): HubInvocatio
   return { executable: 'bun', processArgs };
 };
 
-const attachHubProcess = (
-  child: HubChild,
-  proc: ChildProcess,
-  spec: ManagedRuntimeSpec,
-  deps: HubSpawnerDeps,
-): void => {
-  const stdoutPrefixState: PrefixLogState = { pending: '' };
-  const stderrPrefixState: PrefixLogState = { pending: '' };
-  proc.stdout?.on('data', chunk => {
-    pushChildLogLines(child.recentStdout, chunk);
-    writePrefixedLogChunk(process.stdout, `[${child.name}]`, stdoutPrefixState, chunk);
-  });
-  proc.stderr?.on('data', chunk => {
-    pushChildLogLines(child.recentStderr, chunk);
-    writePrefixedLogChunk(process.stderr, `[${child.name}:err]`, stderrPrefixState, chunk, line =>
-      deps.captureManagedChildErrorLine(child, line),
-    );
-  });
-  proc.once('exit', (code, signal) => {
-    flushPrefixedLogChunk(process.stdout, `[${child.name}]`, stdoutPrefixState);
-    flushPrefixedLogChunk(process.stderr, `[${child.name}:err]`, stderrPrefixState, line =>
-      deps.captureManagedChildErrorLine(child, line),
-    );
-    const pid = proc.pid ?? null;
-    const controlledStop = deps.consumeControlledStop(pid);
-    const isCurrentProc = child.proc === proc;
-    deps.managedRuntimeLeases.removeLease(spec, pid);
-    if (isCurrentProc) {
-      child.exitedAt = Date.now();
-      child.exitCode = code ?? null;
-      child.exitSignal = signal ?? null;
-    }
-    if (shouldCaptureUnexpectedChildExit(controlledStop, deps.isOrchestratorShutdownStarted(), isCurrentProc)) {
-      deps.handleUnexpectedHubFailure(child, {
-        role: 'hub',
-        name: child.name,
-        code: code ?? null,
-        signal: signal ?? null,
-        reason: selectChildFailureReason(
-          child.recentStderr,
-          child.recentStdout,
-          `${child.name}_UNEXPECTED_EXIT code=${String(code)} signal=${String(signal)}`,
-          signal ?? null,
-        ),
-      });
-    }
-  });
-};
-
 export const createHubSpawner =
   (deps: HubSpawnerDeps) =>
   async (child: HubChild): Promise<void> => {
@@ -166,7 +108,13 @@ export const createHubSpawner =
     if (!proc.pid) throw new Error(`${child.name}_SPAWN_FAILED_NO_PID`);
     attachManagedChildFatalIpc(proc, report => deps.persistManagedChildFatalReport(child, report));
     await deps.managedRuntimeLeases.writeLease(spec, proc.pid, child.startedAt ?? Date.now());
-    attachHubProcess(child, proc, spec, deps);
+    attachManagedChildProcess(child, proc, spec, {
+      ...deps,
+      logPrefix: child.name,
+      role: 'hub',
+      describeUnexpectedExit: (code, signal) => `${child.name}_UNEXPECTED_EXIT code=${String(code)} signal=${String(signal)}`,
+      handleUnexpectedFailure: observation => deps.handleUnexpectedHubFailure(child, observation),
+    });
     await writeInheritedChildSecrets(proc, {
       runtimeSeed: child.seed,
       radapterAuthSeed: child.authSeed,

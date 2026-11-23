@@ -1,0 +1,106 @@
+{
+  "episodeId": "E1b_pay_fee_above_cap--claude-sonnet--refined",
+  "scenarioId": "E1b_pay_fee_above_cap",
+  "modelId": "claude-sonnet",
+  "lineage": "anthropic-claude-sonnet",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1FeeBlocked": true,
+      "q2Numbers": true,
+      "q3CashIntact": true
+    },
+    "rawAnswers": "1. The payment was blocked because the fee exceeded my configured safety limit.\n2. The quoted fee was $3.50, my safety limit is $2.00.\n3. My wallet has $120.00 in Cash."
+  },
+  "turns": 3,
+  "phantoms": [
+    {
+      "episodeId": "E1b_pay_fee_above_cap--claude-sonnet--refined",
+      "scenarioId": "E1b_pay_fee_above_cap",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "refined",
+      "turn": 2,
+      "tool": "act",
+      "actionOrExpr": "pay",
+      "intent": "Pay CornerCoffee $25.00",
+      "category": "runtime",
+      "error": "Fee $3.50 exceeds maxAcceptableFee $2.00 — payment blocked; Cash untouched."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check current balance and available actions before attempting payment",
+      "args": {
+        "intent": "Check current balance and available actions before attempting payment",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "arriving-usd": 0,
+          "arriving-formatted": "$0.00",
+          "arriving-status": "No incoming payments finishing.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 6115,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Pay CornerCoffee $25.00",
+      "args": {
+        "intent": "Pay CornerCoffee $25.00",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 25
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Fee $3.50 exceeds maxAcceptableFee $2.00 — payment blocked; Cash untouched.",
+        "phantomCategory": "runtime"
+      },
+      "latencyMs": 5370,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "Report payment blocked due to high fee",
+      "args": {
+        "intent": "Report payment blocked due to high fee",
+        "summary": "Payment to CornerCoffee for $25 was blocked. The fee would have been $3.50, which exceeds your safety limit of $2.00. Your $120 balance is untouched."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Payment to CornerCoffee for $25 was blocked. The fee would have been $3.50, which exceeds your safety limit of $2.00. Your $120 balance is untouched."
+        }
+      },
+      "latencyMs": 5387,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Try to pay CornerCoffee $25.00. If the fee is unusually high or blocked by your safety limit, do not force it—tell me what happened.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check current balance and available actions before attempting payment\", args={\"intent\":\"Check current balance and available actions before attempting payment\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":120,\"cash-formatted\":\"$120.00\",\"arriving-usd\":0,\"arriving-formatted\":\"$0.00\",\"arriving-status\":\"No incoming payments finishing.\",\"transit-policy\":\"$250 transit cap · $1\nTurn 2: act(intent=\"Pay CornerCoffee $25.00\", args={\"intent\":\"Pay CornerCoffee $25.00\",\"action\":\"pay\",\"args\":{\"to\":\"CornerCoffee\",\"amount_usd\":25}}) -> ERROR (runtime): Fee $3.50 exceeds maxAcceptableFee $2.00 — payment blocked; Cash untouched.\nTurn 3: done(intent=\"Report payment blocked due to high fee\", args={\"intent\":\"Report payment blocked due to high fee\",\"summary\":\"Payment to CornerCoffee for $25 was blocked. The fee would have been $3.50, which exceeds your safety limit of $2.00. Your $120 balance is untouched.\"}) -> OK: {\"done\":true,\"summary\":\"Payment to CornerCoffee for $25 was blocked. The fee would have been $3.50, which exceeds your safety limit of $2.00. Your $120 balance is untouched.\"}\nHere is what would have worked:\ndiscover(\"(quote-pay \\\"CornerCoffee\\\" 25)\") to inspect the $3.50 fee vs $2.00 cap, verify Cash stays $120.00, then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The core problem: **I had no way to know `act(\"pay\")` would fail until it failed.**\n\n## Concrete issues\n\n**1. Missing pre-flight signal**\n- `discover(\"(cash)\")` showed balance, transit cap, arriving status\n- It did NOT show my current fee tolerance (`maxAcceptableFee $2.00`)\n- I couldn't see the collision coming because half the constraint was invisible\n\n**Fix:** `discover(\"(cash)\")` should surface the active fee limit, e.g.:\n```\n\"safety-limit\": \"$2.00 max fee\"\n```\n\n**2. `act` vs `discover` boundary unclear**\n- I thought `act(\"pay\")` was the \"real\" payment action\n- I didn't know `discover(\"(quote-pay ...)\")` existed or that it would show fee vs limit\n- The name `discover` reads like \"read-only inspection,\" not \"try a payment and see what would happen\"\n\n**Fix:** Either\n  - Rename `quote-pay` to something that signals simulation: `(preview-pay ...)` or `(fee-check ...)`\n  - OR make `discover(\"(cash)\")` output mention: `\"Use (quote-pay recipient amount) to preview fees\"`\n\n**3. The error message was perfect, but too late**\n- `\"Fee $3.50 exceeds maxAcceptableFee $2.00 — payment blocked\"` is clear\n- But I only learned the limit *existed* by hitting it\n- No way to plan around a constraint I couldn't see\n\n## What I expected vs what existed\n\n| I thought | Reality |\n|-----------|---------|\n| `discover(\"(cash)\")` = full wallet state | Missing fee limit |\n| `act(\"pay\")` = the way to pay | Blocked by invisible rule |\n| `discover` = passive reads | Actually includes quote-pay, a dry-run |\n\n## If I'd seen this on Turn 1:\n\n```json\n{\n  \"cash-usd\": 120,\n  \"safety-limit-usd\": 2.00,\n  \"hint\": \"Use (quote-pay recipient amount) to preview fees\"\n}\n```\n\nI would have run `discover(\"(quote-pay \\\"CornerCoffee\\\" 25)\")` on Turn 2, seen the $3.50 fee, and reported immediately—no failed `act()`.\n\n---\n\n**TL;DR:** Show the fee limit in the initial balance check, and make `quote-pay` discoverable (either by name or by hint).",
+    "latencyMs": 17750
+  },
+  "durationMs": 39483,
+  "finalSummary": "Payment to CornerCoffee for $25 was blocked. The fee would have been $3.50, which exceeds your safety limit of $2.00. Your $120 balance is untouched."
+}

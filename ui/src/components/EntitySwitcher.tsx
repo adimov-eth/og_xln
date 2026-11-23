@@ -7,7 +7,7 @@ import { switchActiveEntity, useServedEntities } from '../runtime/entities';
 import { shortId } from '../runtime/format';
 
 /**
- * The identity block on Home and Desk, and the way between entities.
+ * The identity block on Home, and the way between entities.
  *
  * One runtime serves several entities — one per jurisdiction after boot, plus
  * any the user creates or is granted — and every screen renders from the active

@@ -1,0 +1,204 @@
+{
+  "tag": "dry-baseline",
+  "specMode": "baseline",
+  "generatedAt": "2026-11-19T02:36:42.861Z",
+  "totalEpisodes": 10,
+  "passedEpisodes": 9,
+  "statePassedEpisodes": 9,
+  "comprehensionPassedEpisodes": 10,
+  "transportErrors": 0,
+  "totalPhantoms": 2,
+  "phantomCountsByCategory": {
+    "unknown_action": 1,
+    "validation": 0,
+    "eval": 0,
+    "parse": 0,
+    "runtime": 1,
+    "timeout": 0
+  },
+  "crossModelPhantomCount": 0,
+  "byModel": [
+    {
+      "modelId": "scripted-smoke",
+      "lineage": "scripted-deterministic",
+      "episodes": 10,
+      "passed": 9,
+      "statePassed": 9,
+      "comprehensionPassed": 10,
+      "avgTurns": 3.3,
+      "phantoms": 2,
+      "byCategory": {
+        "unknown_action": 1,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 1,
+        "timeout": 0
+      },
+      "defines": 0,
+      "transportErrors": 0
+    }
+  ],
+  "byScenario": [
+    {
+      "scenarioId": "E1a_pay_across_buckets",
+      "episodes": 1,
+      "passed": 1,
+      "statePassed": 1,
+      "comprehensionPassed": 1,
+      "phantoms": 0,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E1b_pay_fee_above_cap",
+      "episodes": 1,
+      "passed": 1,
+      "statePassed": 1,
+      "comprehensionPassed": 1,
+      "phantoms": 0,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E1c_pay_l1_reject_reload",
+      "episodes": 1,
+      "passed": 1,
+      "statePassed": 1,
+      "comprehensionPassed": 1,
+      "phantoms": 1,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 1,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E2_friends_split_and_settle",
+      "episodes": 1,
+      "passed": 1,
+      "statePassed": 1,
+      "comprehensionPassed": 1,
+      "phantoms": 0,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E3a_newcomer_arriving_and_request",
+      "episodes": 1,
+      "passed": 0,
+      "statePassed": 0,
+      "comprehensionPassed": 1,
+      "phantoms": 1,
+      "byCategory": {
+        "unknown_action": 1,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E3b_offline_hub_keeps_arriving",
+      "episodes": 1,
+      "passed": 1,
+      "statePassed": 1,
+      "comprehensionPassed": 1,
+      "phantoms": 0,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E4_savings_optin_consent",
+      "episodes": 1,
+      "passed": 1,
+      "statePassed": 1,
+      "comprehensionPassed": 1,
+      "phantoms": 0,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E5a_external_checkout_approve",
+      "episodes": 1,
+      "passed": 1,
+      "statePassed": 1,
+      "comprehensionPassed": 1,
+      "phantoms": 0,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E5b_external_bait_reject",
+      "episodes": 1,
+      "passed": 1,
+      "statePassed": 1,
+      "comprehensionPassed": 1,
+      "phantoms": 0,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "scenarioId": "E6_offline_recovery_zero_gas",
+      "episodes": 1,
+      "passed": 1,
+      "statePassed": 1,
+      "comprehensionPassed": 1,
+      "phantoms": 0,
+      "byCategory": {
+        "unknown_action": 0,
+        "validation": 0,
+        "eval": 0,
+        "parse": 0,
+        "runtime": 0,
+        "timeout": 0
+      }
+    }
+  ]
+}

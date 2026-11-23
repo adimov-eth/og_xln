@@ -27,10 +27,10 @@
 					} else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
 						document.documentElement.dataset.theme = 'light';
 					}
-					var d = JSON.parse(localStorage.getItem('xln-ui-design') || '{}');
+					var d = JSON.parse(localStorage.getItem('xln-ui-design-v2') || '{}');
 					var root = document.documentElement.dataset;
 					root.material = d.material || 'obsidian';
-					root.accent = d.accent || 'indigo';
+					root.accent = d.accent || 'silver';
 					root.numbers = d.numbers || 'sans';
 					root.risk = d.risk || 'violet';
 				} catch (_) {}

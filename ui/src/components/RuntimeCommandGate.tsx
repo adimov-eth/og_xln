@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { loadRuntimeIncident, type IncidentLookup } from '@xln/frontend/lib/debug/runtime-incident';
 import { useApp } from '../runtime/store';
+import { useWalletPosture } from '../runtime/use-everyday-wallet';
 import './runtime-command-gate.css';
 
 /** A new outage/target mounts fresh evidence; an earlier incident cannot look current. */
@@ -48,7 +49,20 @@ export function RuntimeCommandGate() {
   const reason = useApp(s => s.commandReadyReason);
   const entityId = useApp(s => s.activeEntityId);
   const runtimeId = useApp(s => s.operatorRuntimeId);
+  const { posture } = useWalletPosture();
   if (!entityId || ready) return null;
+  if (posture === 'everyday') {
+    // One plain sentence; the machine reason stays on the element for support, not on screen.
+    return (
+      <aside className="runtime-command-gate" data-testid="runtime-command-gate" data-reason={reason || 'unknown'} role="status">
+        <span>
+          {reason === 'j-catchup'
+            ? 'Catching up with the network. Paying and cashing out resume in a moment.'
+            : 'Reconnecting. Paying and cashing out are paused until your wallet is back in sync.'}
+        </span>
+      </aside>
+    );
+  }
   return (
     <aside className="runtime-command-gate" data-testid="runtime-command-gate" role="status">
       <strong>Runtime paused · financial actions disabled</strong>

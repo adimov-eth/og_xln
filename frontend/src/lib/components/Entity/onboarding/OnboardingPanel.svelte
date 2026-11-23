@@ -5,10 +5,11 @@
   belongs here. Do not derive, rehydrate, or create wallet state in this component.
 -->
 <script lang="ts">
+  import { sleep } from '../../../utils/primitives';
 import { asTokenId } from "@xln/core/protocol/units";
   import { onMount } from 'svelte';
   import { createEventDispatcher } from 'svelte';
-  import { resolveConfiguredApiBase, submitRuntimeInput, xlnFunctions } from '../../../stores/xlnStore';
+  import { resolveConfiguredApiBase, runtimeHaltMessage, submitRuntimeInput, xlnFunctions } from '../../../stores/xlnStore';
   import {
     activeRuntime,
     buildRuntimeRecoveryConfigForMode,
@@ -59,6 +60,8 @@ import { asTokenId } from "@xln/core/protocol/units";
     type OnboardingRuntimeProjection,
   } from './onboarding-runtime-input';
   import { hubDiscoveryJurisdictionKey } from './hub-discovery-profile';
+  import { readWalletPosture } from '../../../everyday/wallet-posture';
+  import { resolvePolicyForPosture } from '../../../everyday/everyday-policy';
   import { readJsonUnknown, rejectExtraKeys, requireFiniteNumber, requireString, requireUnknownRecord } from '#lib/utils/boundary/index.ts';
   import type {
     AccountRoleEvidence,
@@ -70,15 +73,17 @@ import { asTokenId } from "@xln/core/protocol/units";
   export let daemonCustody: boolean = false;
 
   const dispatch = createEventDispatcher();
+  const initialPosture = readWalletPosture();
+  const initialPolicy = resolvePolicyForPosture(initialPosture);
 
   let termsAccepted = true;
   let displayName = '';
-  let softLimitUsd = 500;
-  let hardLimitUsd = 10_000;
-  let maxFeeUsd = 15;
-  let defaultSoftLimitUsd = 500;
-  let defaultHardLimitUsd = 10_000;
-  let defaultMaxFeeUsd = 15;
+  let softLimitUsd = initialPolicy.softLimitUsd;
+  let hardLimitUsd = initialPolicy.hardLimitUsd;
+  let maxFeeUsd = initialPolicy.maxFeeUsd;
+  let defaultSoftLimitUsd = initialPolicy.softLimitUsd;
+  let defaultHardLimitUsd = initialPolicy.hardLimitUsd;
+  let defaultMaxFeeUsd = initialPolicy.maxFeeUsd;
   let autoJoinHubs: HubJoinPreference = '1';
   let submitting = false;
   let error = '';
@@ -120,7 +125,6 @@ import { asTokenId } from "@xln/core/protocol/units";
   const parseJoinCount = (pref: HubJoinPreference): number =>
     pref === 'manual' ? 0 : Number(pref);
 
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   type PublicHubResponse = {
     ok: true;
@@ -741,7 +745,7 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   async function finish() {
-    if (!canFinish || submitting) return;
+    if (!canFinish || submitting || $runtimeHaltMessage) return;
     submitting = true;
     error = '';
 
@@ -855,6 +859,7 @@ import { asTokenId } from "@xln/core/protocol/units";
       </div>
     </section>
 
+    {#if initialPosture === 'pro'}
     <section class="setup-section">
       <div class="section-headline">
         <h3>Default limits</h3>
@@ -908,6 +913,7 @@ import { asTokenId } from "@xln/core/protocol/units";
         </div>
       {/if}
     </section>
+    {/if}
 
     <details class="setup-advanced">
       <summary>
@@ -1089,11 +1095,13 @@ import { asTokenId } from "@xln/core/protocol/units";
           <input type="checkbox" bind:checked={termsAccepted} />
           <span>I understand this is testnet software and I accept the associated risks.</span>
         </label>
-        <button class="btn-primary" disabled={!canFinish || submitting} on:click={finish}>
+        <button class="btn-primary" disabled={!canFinish || submitting || Boolean($runtimeHaltMessage)} on:click={finish}>
           {submitting ? 'Starting...' : 'Start'}
         </button>
       </div>
-      {#if error}
+      {#if $runtimeHaltMessage}
+        <div class="error-msg" role="alert">{$runtimeHaltMessage}</div>
+      {:else if error}
         <div class="error-msg">{error}</div>
       {/if}
     </section>
@@ -1109,7 +1117,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
-    color: #e7e5e4;
+    color: var(--theme-text-primary, #e7e5e4);
   }
 
   .setup-card {
@@ -1124,7 +1132,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .setup-header h2 {
     margin: 0 0 6px;
-    color: rgba(255, 255, 255, 0.94);
+    color: var(--theme-text-primary, rgba(255, 255, 255, 0.94));
     font-size: 24px;
     line-height: 1.15;
     letter-spacing: 0;
@@ -1132,7 +1140,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .setup-header p {
     margin: 0;
-    color: rgba(255, 255, 255, 0.58);
+    color: var(--theme-text-secondary, rgba(255, 255, 255, 0.58));
     font-size: 13px;
     line-height: 1.45;
   }
@@ -1159,13 +1167,13 @@ import { asTokenId } from "@xln/core/protocol/units";
     display: flex;
     flex-direction: column;
     gap: 2px;
-    color: #d6d3d1;
+    color: var(--theme-text-secondary, #d6d3d1);
     font-size: 12px;
     line-height: 1.35;
   }
 
   .recovery-check-copy small {
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 11px;
   }
 
@@ -1181,8 +1189,8 @@ import { asTokenId } from "@xln/core/protocol/units";
     padding: 0 12px;
     border-radius: 9px;
     border: 1px solid #322821;
-    background: #0f0b09;
-    color: #e7e5e4;
+    background: var(--theme-background, #07080b);
+    color: var(--theme-text-primary, #e7e5e4);
     font-size: 12px;
     font-weight: 700;
     text-align: center;
@@ -1213,8 +1221,8 @@ import { asTokenId } from "@xln/core/protocol/units";
     padding: 12px;
     border: 1px solid #322821;
     border-radius: 12px;
-    background: #0f0b09;
-    color: #e7e5e4;
+    background: var(--theme-background, #07080b);
+    color: var(--theme-text-primary, #e7e5e4);
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -1224,8 +1232,8 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   .recovery-mode-option.selected {
-    border-color: rgba(251, 191, 36, 0.65);
-    background: rgba(251, 191, 36, 0.08);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 65%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 8%, transparent);
   }
 
   .recovery-mode-option:disabled {
@@ -1234,13 +1242,13 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   .recovery-mode-title {
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
     font-size: 13px;
     font-weight: 800;
   }
 
   .recovery-mode-copy {
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 12px;
     line-height: 1.35;
   }
@@ -1255,12 +1263,12 @@ import { asTokenId } from "@xln/core/protocol/units";
   .recovery-service-row {
     border: 1px solid #322821;
     border-radius: 12px;
-    background: #0f0b09;
+    background: var(--theme-background, #07080b);
     padding: 12px;
   }
 
   .empty-recovery-card {
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
     font-size: 13px;
   }
 
@@ -1279,7 +1287,7 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   .recovery-service-main strong {
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
     font-size: 13px;
   }
 
@@ -1293,8 +1301,8 @@ import { asTokenId } from "@xln/core/protocol/units";
     min-height: 34px;
     border: 1px solid #322821;
     border-radius: 9px;
-    background: #080605;
-    color: #e7e5e4;
+    background: var(--theme-background, #07080b);
+    color: var(--theme-text-primary, #e7e5e4);
     padding: 0 10px;
     color-scheme: dark;
   }
@@ -1310,7 +1318,7 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   .manual-recovery-details summary {
-    color: #fbbf24;
+    color: var(--theme-accent, #c5cfde);
     cursor: pointer;
     font-size: 13px;
     font-weight: 700;
@@ -1330,10 +1338,10 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .recovery-note {
     padding: 10px 14px;
-    border: 1px solid rgba(251, 191, 36, 0.2);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 20%, transparent);
     border-radius: 10px;
-    color: #fbbf24;
-    background: rgba(251, 191, 36, 0.06);
+    color: var(--theme-accent, #c5cfde);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 6%, transparent);
     font-size: 12px;
   }
 
@@ -1356,7 +1364,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    background: linear-gradient(135deg, var(--theme-accent-hover, #f5f7fa), var(--theme-accent, #c5cfde));
     color: #09090b;
     font-weight: 700;
   }
@@ -1367,7 +1375,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .section-headline p {
     margin: 0;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
     font-size: 14px;
     line-height: 1.55;
   }
@@ -1378,7 +1386,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     overflow-wrap: anywhere;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
-    color: #f5f5f4;
+    color: var(--theme-text-primary, #f5f5f4);
   }
 
   .form-label {
@@ -1386,7 +1394,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     margin-bottom: 6px;
     font-size: 11px;
     font-weight: 600;
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
@@ -1397,24 +1405,24 @@ import { asTokenId } from "@xln/core/protocol/units";
     box-sizing: border-box;
     min-height: 48px;
     padding: 12px 14px;
-    background: #0f0b09;
+    background: var(--theme-background, #07080b);
     border: 1px solid #322821;
     border-radius: 10px;
-    color: #e7e5e4;
+    color: var(--theme-text-primary, #e7e5e4);
     font-size: 15px;
     color-scheme: dark;
   }
 
   .hub-join-select option {
-    background: #0f0b09;
-    color: #e7e5e4;
+    background: var(--theme-background, #07080b);
+    color: var(--theme-text-primary, #e7e5e4);
   }
 
   .form-input:focus,
   .hub-join-select:focus {
     outline: none;
-    border-color: #fbbf24;
-    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.08);
+    border-color: var(--theme-accent, #c5cfde);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accent, #c5cfde) 8%, transparent);
   }
 
   .profile-preview-card {
@@ -1424,7 +1432,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     gap: 14px;
     padding: 14px;
     border-radius: 12px;
-    background: #11100f;
+    background: var(--theme-surface, #121418);
     border: 1px solid #27272a;
   }
 
@@ -1437,7 +1445,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .profile-preview-copy strong {
     font-size: 17px;
-    color: #fafaf9;
+    color: var(--theme-text-primary, #fafaf9);
   }
 
   .jurisdiction-toggle-grid {
@@ -1449,9 +1457,9 @@ import { asTokenId } from "@xln/core/protocol/units";
   .jurisdiction-toggle {
     min-height: 72px;
     padding: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid color-mix(in srgb, var(--theme-text-primary, white) 8%, transparent);
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.035);
+    background: color-mix(in srgb, var(--theme-text-primary, white) 3.5%, transparent);
     display: grid;
     grid-template-columns: 20px minmax(0, 1fr);
     gap: 10px;
@@ -1480,12 +1488,12 @@ import { asTokenId } from "@xln/core/protocol/units";
   }
 
   .jurisdiction-toggle-copy strong {
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--theme-text-primary, rgba(255, 255, 255, 0.9));
     font-size: 13px;
   }
 
   .jurisdiction-toggle-copy code {
-    color: rgba(255, 255, 255, 0.48);
+    color: var(--theme-text-muted, rgba(255, 255, 255, 0.48));
     font-size: 11px;
     overflow-wrap: anywhere;
   }
@@ -1527,11 +1535,11 @@ import { asTokenId } from "@xln/core/protocol/units";
     margin: 10px 0 0;
     font-size: 12px;
     line-height: 1.5;
-    color: #78716c;
+    color: var(--theme-text-muted, #78716c);
   }
 
   .form-hint strong {
-    color: #fbbf24;
+    color: var(--theme-accent, #c5cfde);
   }
 
   .form-hint.compact {
@@ -1563,7 +1571,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .setup-advanced > summary::-webkit-details-marker { display: none; }
   .setup-advanced > summary span:first-child { display: grid; gap: 3px; }
-  .setup-advanced > summary small { color: #78716c; font-size: 12px; }
+  .setup-advanced > summary small { color: var(--theme-text-muted, #78716c); font-size: 12px; }
   .setup-advanced[open] > summary { border-bottom: 1px solid #27211c; }
   .setup-advanced > .setup-section { margin: 14px; }
 
@@ -1574,7 +1582,7 @@ import { asTokenId } from "@xln/core/protocol/units";
     cursor: pointer;
     font-size: 14px;
     line-height: 1.5;
-    color: #a8a29e;
+    color: var(--theme-text-secondary, #a8a29e);
   }
 
   .checkbox-row input[type='checkbox'] {
@@ -1605,7 +1613,7 @@ import { asTokenId } from "@xln/core/protocol/units";
 
   .btn-primary {
     padding: 13px 24px;
-    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    background: linear-gradient(135deg, var(--theme-accent-hover, #f5f7fa), var(--theme-accent, #c5cfde));
     border: none;
     border-radius: 10px;
     color: #09090b;

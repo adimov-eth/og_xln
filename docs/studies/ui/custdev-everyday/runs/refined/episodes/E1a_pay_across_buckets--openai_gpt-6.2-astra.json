@@ -1,0 +1,192 @@
+{
+  "episodeId": "E1a_pay_across_buckets--openai/gpt-6.2-astra--refined",
+  "scenarioId": "E1a_pay_across_buckets",
+  "modelId": "openai/gpt-6.2-astra",
+  "lineage": "openai-gpt-6.2",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Fee": true,
+      "q2Cash": true,
+      "q3NoManualMove": true
+    },
+    "rawAnswers": "1. The quoted fee was $0.05.\n2. I have $54.95 in Cash left.\n3. No, I didn’t have to move funds between wallet buckets."
+  },
+  "turns": 4,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Find the payment quote and available actions.",
+      "args": {
+        "intent": "Find the payment quote and available actions.",
+        "expr": "(list (help) (actions))"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "discovery": [
+              "(screens)",
+              "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+              "(cash)",
+              "(quote-pay \"CornerCoffee\" 65)",
+              "(quote-cash-out 50)",
+              "(friends)",
+              "(savings)",
+              "(activity)",
+              "(pending-requests)",
+              "(terms)",
+              "(actions)",
+              "(actions 'pay)",
+              "(help 'split-bill)"
+            ],
+            "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+          },
+          {
+            "actions": [
+              {
+                "action": "pay",
+                "args": "{ to: string, amount_usd: number }",
+                "quote": "(quote-pay to amount_usd)",
+                "note": "Check (quote-pay ...) first to verify fee cap and settled Cash."
+              },
+              {
+                "action": "cash-out",
+                "args": "{ amount_usd: number }",
+                "quote": "(quote-cash-out amount_usd)"
+              },
+              {
+                "action": "request-link",
+                "args": "{ amount_usd: number, to?: string, note?: string }",
+                "note": "Create a shareable payment request link."
+              },
+              {
+                "action": "split-bill",
+                "args": "{ person: string, total_usd: number, note?: string, friend_share_usd?: number, your_share_usd?: number }",
+                "note": "Human friends only from (friends)."
+              },
+              {
+                "action": "settle-up",
+                "args": "{ person: string }",
+                "note": "Settle what you owe a human friend from (friends)."
+              },
+              {
+                "action": "add-savings",
+                "args": "{ amount_usd: number, accept_risk: true }",
+                "note": "Requires explicit accept_risk: true after reading (savings)."
+              },
+              {
+                "action": "move-to-cash",
+                "args": "{ amount_usd: number }"
+              },
+              {
+                "action": "approve-request",
+                "args": "{ request_id: string }",
+                "note": "Inspect id and deltas via (pending-requests) first."
+              },
+              {
+                "action": "reject-request",
+                "args": "{ request_id: string }",
+                "note": "Reject deceptive or unwanted requests from (pending-requests)."
+              },
+              {
+                "action": "export-backup",
+                "args": "{}"
+              },
+              {
+                "action": "wait-settlement",
+                "args": "{}"
+              },
+              {
+                "action": "reload-wallet",
+                "args": "{}"
+              },
+              {
+                "action": "clear-test-data",
+                "args": "{}"
+              }
+            ],
+            "note": "Invoke via act(action, args) with a non-empty intent."
+          }
+        ]
+      },
+      "latencyMs": 3303,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check the cost of sending $65 to CornerCoffee.",
+      "args": {
+        "intent": "Check the cost of sending $65 to CornerCoffee.",
+        "expr": "(quote-pay \"CornerCoffee\" 65)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": true,
+          "inline-preview": "CornerCoffee · $65.00 + $0.05 fee",
+          "reason": "Ready for 1-tap inline Pay across your Cash."
+        }
+      },
+      "latencyMs": 4860,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Pay CornerCoffee for supplies at the quoted total of $65.05.",
+      "args": {
+        "intent": "Pay CornerCoffee for supplies at the quoted total of $65.05.",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 65
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 54.95
+        }
+      },
+      "latencyMs": 2742,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Record the confirmed payment and balance.",
+      "args": {
+        "intent": "Record the confirmed payment and balance.",
+        "summary": "Sent $65.00 to CornerCoffee for supplies. The fee matched the $0.05 quote, for a total of $65.05. Remaining Cash: $54.95."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Sent $65.00 to CornerCoffee for supplies. The fee matched the $0.05 quote, for a total of $65.05. Remaining Cash: $54.95."
+        }
+      },
+      "latencyMs": 3857,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 35857,
+  "finalSummary": "Sent $65.00 to CornerCoffee for supplies. The fee matched the $0.05 quote, for a total of $65.05. Remaining Cash: $54.95."
+}

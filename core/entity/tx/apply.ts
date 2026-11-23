@@ -494,9 +494,8 @@ const entityTxDispatchers = {
       tx as Extract<EntityTx, { type: 'materializeCrossJurisdictionSwap' }>,
       options,
     ),
-  registerCrossJurisdictionSwap: (env, state, tx, options) =>
+  registerCrossJurisdictionSwap: (_env, state, tx, options) =>
     handleRegisterCrossJurisdictionSwapEntityTx(
-      env,
       state,
       tx as Extract<EntityTx, { type: 'registerCrossJurisdictionSwap' }>,
       options,

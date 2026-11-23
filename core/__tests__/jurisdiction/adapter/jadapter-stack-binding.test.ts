@@ -11,10 +11,11 @@ import {
   HankoVerifier__factory,
   ERC721Mock__factory,
   SupplyLivenessHarness__factory,
+  type EntityProvider,
 } from '../../../../jurisdictions/typechain-types/index.ts';
 import { createJAdapter, createXlnJsonRpcProvider, type JAdapter } from '../../../jurisdiction/adapter';
 import { DEFAULT_PRIVATE_KEY } from '../../../jurisdiction/adapter/kernel/factory';
-import { foundationRegisterExternalToken } from '../../../jurisdiction/adapter/operations/foundation-token-listing';
+import { buildSingleSignerHanko } from '../../../hanko/batch';
 import { createEmptyEnv } from '../../../runtime';
 import { createTokenCatalogController } from '../../../api/server/catalog/tokens';
 import type { JReplica } from '../../../types/jurisdiction-runtime';
@@ -27,6 +28,36 @@ import { computeRuntimePostStateComponentDigests } from '../../../storage/hashes
 import { spawnTestAnvil, stopTestAnvil } from '../../helpers/process/test-anvil';
 
 const CHAIN_ID = 31_337;
+const FOUNDATION_ENTITY_ID = ethers.zeroPadValue(ethers.toBeHex(1), 32) as `0x${string}`;
+
+const foundationRegisterExternalToken = async (
+  entityProvider: EntityProvider,
+  listing: { depository: string; tokenType: number; contractAddress: string; externalTokenId: bigint },
+  foundationSignerPrivateKey: string | Uint8Array,
+): Promise<ethers.TransactionReceipt> => {
+  const actionNonce = (await entityProvider.entityActionNonces(FOUNDATION_ENTITY_ID)) + 1n;
+  const actionHash = await entityProvider.computeFoundationActionHash(
+    await entityProvider.FOUNDATION_REGISTER_TOKEN(),
+    ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+      ['address', 'uint8', 'address', 'uint256'],
+      [listing.depository, listing.tokenType, listing.contractAddress, listing.externalTokenId],
+    )),
+    actionNonce,
+  );
+  const tx = await entityProvider.foundationRegisterExternalToken(
+    listing.depository,
+    listing.tokenType,
+    listing.contractAddress,
+    listing.externalTokenId,
+    buildSingleSignerHanko(FOUNDATION_ENTITY_ID, actionHash, foundationSignerPrivateKey),
+    actionNonce,
+  );
+  const receipt = await tx.wait();
+  if (!receipt || receipt.status !== 1) {
+    throw new Error(`FOUNDATION_TOKEN_LISTING_RECEIPT_INVALID:${listing.contractAddress}`);
+  }
+  return receipt;
+};
 
 const deployEntityProvider = async (signer: ethers.Signer) => {
   const verifier = await new HankoVerifier__factory(signer).deploy({ gasLimit: 15_000_000n });

@@ -1,4 +1,4 @@
-const normalizeId = (value: string | null | undefined): string => String(value || '').trim().toLowerCase();
+import { normalizeId } from '../../../utils/primitives';
 
 export const runtimeProjectionMatchesRuntime = (
   projectionRuntimeId: string | null | undefined,

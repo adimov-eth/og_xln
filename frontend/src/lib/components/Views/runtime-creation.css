@@ -44,9 +44,9 @@
   }
 
   .back-to-create:hover {
-    border-color: rgba(255, 200, 100, 0.24);
-    color: rgba(255, 200, 100, 0.95);
-    background: rgba(255, 200, 100, 0.08);
+    border-color: rgba(226, 232, 240, 0.28);
+    color: rgba(248, 250, 252, 0.96);
+    background: rgba(226, 232, 240, 0.08);
   }
 
   .back-to-create {
@@ -115,7 +115,7 @@
     height: 18px;
     border-radius: 999px;
     border: 2px solid rgba(255, 255, 255, 0.2);
-    border-top-color: rgba(255, 200, 100, 0.9);
+    border-top-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 90%, transparent);
     animation: spin 0.9s linear infinite;
     flex: 0 0 auto;
   }
@@ -146,8 +146,8 @@
   }
 
   .recovery-candidate.selected {
-    border-color: rgba(255, 200, 100, 0.42);
-    background: rgba(255, 200, 100, 0.08);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 42%, transparent);
+    background: color-mix(in srgb, var(--rc-accent, #c5cfde) 8%, transparent);
   }
 
   .candidate-main,
@@ -190,8 +190,8 @@
   }
 
   .backup-upload-btn:hover {
-    border-color: rgba(255, 200, 100, 0.28);
-    color: rgba(255, 200, 100, 0.95);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 28%, transparent);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 95%, transparent);
   }
 
   .backup-file-input {
@@ -232,9 +232,9 @@
   }
 
   .input-mode-tabs button.selected {
-    border-color: rgba(255, 200, 100, 0.28);
-    background: rgba(255, 200, 100, 0.1);
-    color: rgba(255, 218, 150, 0.96);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 28%, transparent);
+    background: color-mix(in srgb, var(--rc-accent, #c5cfde) 10%, transparent);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 96%, transparent);
   }
 
   .input-mode-tabs button:disabled {
@@ -247,7 +247,7 @@
   .live-connect-btn:focus-visible,
   .generate-mnemonic-btn:focus-visible,
   .testnet-reset-btn:focus-visible {
-    outline: 2px solid rgba(255, 214, 150, 0.9);
+    outline: 2px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 90%, transparent);
     outline-offset: 2px;
   }
 
@@ -331,7 +331,7 @@
     text-underline-offset: 2px;
   }
 
-  .tradeoff-list a:hover { color: #bae6fd; }
+  .tradeoff-list a:hover { color: var(--theme-text-primary, #e6ebf2); }
 
   .benefit-list > div > span {
     color: #86efac;
@@ -458,7 +458,7 @@
   }
 
   .section-eyebrow {
-    color: rgba(208, 168, 98, 0.8);
+    color: rgba(203, 213, 225, 0.78);
     font-size: 10px;
     font-weight: 750;
     letter-spacing: 0.12em;
@@ -515,14 +515,14 @@
     align-items: center;
     gap: 12px;
     padding: 12px 14px;
-    border: 1px solid rgba(251, 191, 36, 0.18);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 18%, transparent);
     border-radius: 9px;
-    background: rgba(251, 191, 36, 0.055);
+    background: color-mix(in srgb, var(--rc-accent, #c5cfde) 5.5%, transparent);
   }
 
   .testnet-banner > span {
     flex: 0 0 auto;
-    color: rgba(253, 215, 150, 0.92);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 92%, transparent);
     font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.1em;
@@ -635,16 +635,16 @@
     border-color: rgba(255, 255, 255, 0.18);
     color: rgba(255, 255, 255, 0.98);
   }
-  /* Hubs = amber (routing infrastructure) */
+  /* Hubs = the accent metal (routing infrastructure); never amber. */
   .quick-login-btn.role-hub {
-    background: rgba(251, 191, 36, 0.08);
-    border-color: rgba(251, 191, 36, 0.28);
-    color: rgba(253, 215, 150, 0.95);
+    background: color-mix(in srgb, var(--rc-accent, #c5cfde) 8%, transparent);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 28%, transparent);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 95%, transparent);
   }
   .quick-login-btn.role-hub:hover {
-    background: rgba(251, 191, 36, 0.16);
-    border-color: rgba(251, 191, 36, 0.5);
-    color: rgba(255, 224, 168, 1);
+    background: color-mix(in srgb, var(--rc-accent, #c5cfde) 16%, transparent);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 50%, transparent);
+    color: var(--rc-accent, #c5cfde);
   }
   /* App entities = teal (custody app / MM user) */
   .quick-login-btn.role-app {
@@ -684,7 +684,7 @@
   }
   .advanced-toggle:hover {
     background: rgba(255, 255, 255, 0.045);
-    border-color: rgba(255, 200, 100, 0.2);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 20%, transparent);
   }
   .advanced-toggle-main {
     display: flex;
@@ -697,7 +697,7 @@
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: rgba(180, 140, 80, 0.85);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 85%, transparent);
   }
   .advanced-toggle-summary {
     font-size: 12px;
@@ -745,7 +745,7 @@
   }
 
   .work-estimate strong {
-    color: rgba(255, 218, 150, 0.94);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 94%, transparent);
     font-family: 'SF Mono', monospace;
     font-size: 14px;
     overflow-wrap: anywhere;
@@ -776,7 +776,7 @@
     width: 17px;
     height: 17px;
     margin: 0;
-    accent-color: #d6a85f;
+    accent-color: var(--rc-accent, #c5cfde);
   }
 
   .rehearsal-option > span {
@@ -869,8 +869,8 @@
     transition: color 0.15s ease, border-color 0.15s ease;
   }
   .live-refresh:hover:not(:disabled) {
-    color: rgba(255, 200, 100, 0.95);
-    border-color: rgba(255, 200, 100, 0.24);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 95%, transparent);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 24%, transparent);
   }
   .live-refresh:disabled { cursor: default; opacity: 0.6; }
   .live-refresh .spinning { animation: spin 0.9s linear infinite; }
@@ -892,16 +892,16 @@
   }
   .live-runtime-select:focus {
     outline: none;
-    border-color: rgba(255, 200, 100, 0.4);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 40%, transparent);
   }
   .live-connect-btn {
     flex: 0 0 auto;
     min-height: 44px;
     padding: 8px 14px;
-    background: rgba(255, 200, 100, 0.1);
-    border: 1px solid rgba(255, 200, 100, 0.3);
+    background: color-mix(in srgb, var(--rc-accent, #c5cfde) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 30%, transparent);
     border-radius: 7px;
-    color: rgba(255, 218, 150, 0.96);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 96%, transparent);
     font-size: 13px;
     font-weight: 650;
     cursor: pointer;
@@ -909,8 +909,8 @@
     white-space: nowrap;
   }
   .live-connect-btn:hover:not(:disabled) {
-    background: rgba(255, 200, 100, 0.18);
-    border-color: rgba(255, 200, 100, 0.5);
+    background: color-mix(in srgb, var(--rc-accent, #c5cfde) 18%, transparent);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 50%, transparent);
   }
   .live-connect-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .live-runtime-hint {
@@ -926,6 +926,12 @@
   }
 
   .brainvault-wrapper {
+    /* The entry is self-contained: its scheme (xln-auth-scheme) is independent of the app theme, so it owns
+       its metal and its inks, and the light scheme below overrides both. */
+    --rc-accent: #c5cfde;
+    --theme-text-primary: #e6ebf2;
+    --theme-text-secondary: #9aa3b2;
+    --theme-text-muted: #80889a;
     width: 100%;
     height: 100%;
     min-height: 100vh;
@@ -944,11 +950,11 @@
     flex: 1;
     width: 100%;
     padding: 28px 20px 48px;
-    background: #000;
+    background: #030406;
     background-image:
-      radial-gradient(ellipse at 50% 0%, rgba(180, 140, 80, 0.08) 0%, transparent 50%),
-      radial-gradient(ellipse at 50% 20%, rgba(120, 90, 50, 0.05) 0%, transparent 40%),
-      linear-gradient(180deg, #0a0806 0%, #000 100%);
+      radial-gradient(ellipse 84% 48% at 54% -12%, rgba(248, 250, 255, 0.22) 0%, rgba(202, 212, 226, 0.09) 34%, transparent 74%),
+      linear-gradient(128deg, rgba(248, 250, 252, 0.07) 0%, transparent 48%, rgba(235, 240, 248, 0.08) 100%),
+      linear-gradient(180deg, #151920 0%, #080a0e 44%, #030406 100%);
     position: relative;
     overflow-y: auto;
     overflow-x: hidden;
@@ -971,8 +977,8 @@
     display: block;
     width: 92px;
     height: auto;
-    opacity: 0.92;
-    filter: drop-shadow(0 0 18px rgba(218, 176, 104, 0.18));
+    opacity: 0.94;
+    filter: drop-shadow(0 0 18px rgba(226, 232, 240, 0.2));
     animation: auth-mark-arrive 0.7s ease-out both;
   }
 
@@ -997,7 +1003,7 @@
 
     .derivation-orbit {
       animation: none;
-      border-color: rgba(255, 214, 150, 0.55);
+      border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 55%, transparent);
     }
   }
 
@@ -1076,15 +1082,15 @@
     color: rgba(196, 181, 161, 0.7);
   }
 
-  /* Glass Card - Sacred Chamber */
+  /* Glass Card */
   .glass-card {
-    background: rgba(10, 8, 6, 0.97);
-    border: 1px solid rgba(180, 140, 80, 0.15);
-    border-radius: 2px;
+    background: rgba(9, 11, 15, 0.88);
+    border: 1px solid rgba(226, 232, 240, 0.14);
+    border-radius: 8px;
     padding: 30px;
     box-shadow:
-      0 0 80px rgba(180, 140, 80, 0.05),
-      inset 0 1px 0 rgba(180, 140, 80, 0.1);
+      0 18px 56px rgba(0, 0, 0, 0.52),
+      inset 0 1px 0 rgba(235, 240, 248, 0.12);
     position: relative;
     box-sizing: border-box;
   }
@@ -1102,7 +1108,7 @@
     width: 100%;
     padding: 12px 16px;
     background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 200, 100, 0.15);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 15%, transparent);
     border-radius: 8px;
     color: rgba(255, 255, 255, 0.9);
     font-size: 14px;
@@ -1116,9 +1122,9 @@
 
   .input-wrapper textarea:focus {
     outline: none;
-    border-color: rgba(255, 200, 100, 0.4);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 40%, transparent);
     background: rgba(255, 255, 255, 0.04);
-    box-shadow: 0 0 0 3px rgba(255, 200, 100, 0.08);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-accent, #c5cfde) 8%, transparent);
   }
 
   .input-wrapper textarea::placeholder {
@@ -1145,16 +1151,16 @@
 
   .generate-mnemonic-btn:hover {
     background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 200, 100, 0.24);
-    color: rgba(255, 200, 100, 0.95);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 24%, transparent);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 95%, transparent);
   }
 
   .warning-box {
     padding: 12px 14px;
-    border: 1px solid rgba(251, 191, 36, 0.2);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 20%, transparent);
     border-radius: 9px;
-    background: rgba(251, 191, 36, 0.06);
-    color: rgba(253, 215, 150, 0.82);
+    background: color-mix(in srgb, var(--rc-accent, #c5cfde) 6%, transparent);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 82%, transparent);
   }
 
   .warning-box p {
@@ -1166,7 +1172,7 @@
   .input-progress {
     margin-top: 10px;
     padding-top: 10px;
-    border-top: 1px solid rgba(255, 200, 100, 0.12);
+    border-top: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 12%, transparent);
   }
 
   .input-progress .clean-progress-container {
@@ -1211,8 +1217,8 @@
   .derivation-orbit {
     width: 42px;
     height: 42px;
-    border: 1px solid rgba(255, 200, 100, 0.18);
-    border-top-color: rgba(255, 214, 150, 0.92);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 18%, transparent);
+    border-top-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 92%, transparent);
     border-radius: 50%;
     animation: spin 0.9s linear infinite;
   }
@@ -1235,7 +1241,7 @@
     transform: translateX(-50%);
     width: 60%;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(180, 140, 80, 0.4), transparent);
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--rc-accent, #c5cfde) 40%, transparent), transparent);
   }
 
   /* Input Groups - Sacred inscriptions */
@@ -1247,7 +1253,7 @@
     display: block;
     font-size: 11px;
     font-weight: 400;
-    color: rgba(180, 140, 80, 0.8);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 80%, transparent);
     margin-bottom: 6px;
     letter-spacing: 0.15em;
     text-transform: uppercase;
@@ -1269,7 +1275,7 @@
     width: 100%;
     padding: 16px 18px;
     background: rgba(0, 0, 0, 0.6);
-    border: 1px solid rgba(180, 140, 80, 0.2);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 20%, transparent);
     border-radius: 2px;
     font-size: 16px;
     color: rgba(255, 255, 255, 0.9);
@@ -1280,9 +1286,9 @@
 
   .input-wrapper input:focus {
     outline: none;
-    border-color: rgba(180, 140, 80, 0.5);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 50%, transparent);
     background: rgba(0, 0, 0, 0.7);
-    box-shadow: 0 0 30px rgba(180, 140, 80, 0.1);
+    box-shadow: 0 0 30px color-mix(in srgb, var(--rc-accent, #c5cfde) 10%, transparent);
   }
 
   .input-wrapper input::placeholder {
@@ -1300,7 +1306,7 @@
     border: none;
     padding: 4px;
     cursor: pointer;
-    color: rgba(180, 140, 80, 0.4);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 40%, transparent);
     transition: color 0.3s;
     display: flex;
     align-items: center;
@@ -1308,7 +1314,7 @@
   }
 
   .input-wrapper .toggle-visibility:hover {
-    color: rgba(180, 140, 80, 0.9);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 90%, transparent);
   }
 
   .input-wrapper .suggest-btn {
@@ -1320,7 +1326,7 @@
     border: none;
     padding: 4px;
     cursor: pointer;
-    color: rgba(180, 140, 80, 0.4);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 40%, transparent);
     transition: color 0.3s;
     display: flex;
     align-items: center;
@@ -1328,7 +1334,7 @@
   }
 
   .input-wrapper .suggest-btn:hover {
-    color: rgba(180, 140, 80, 0.9);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 90%, transparent);
   }
 
   .input-wrapper:has(.toggle-visibility) input {
@@ -1366,20 +1372,20 @@
 
   .factor-btn:hover {
     background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 200, 100, 0.2);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 20%, transparent);
   }
 
   .factor-btn.selected {
-    background: rgba(255, 200, 100, 0.13);
-    border-color: rgba(255, 200, 100, 0.52);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 0 0 1px rgba(255, 200, 100, 0.08);
+    background: color-mix(in srgb, var(--rc-accent, #c5cfde) 13%, transparent);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 52%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 0 0 1px color-mix(in srgb, var(--rc-accent, #c5cfde) 8%, transparent);
     transform: translateY(-1px);
   }
 
   .factor-num {
     font-size: 16px;
     font-weight: 600;
-    color: rgba(255, 200, 100, 0.9);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 90%, transparent);
     line-height: 1;
   }
 
@@ -1393,7 +1399,7 @@
   }
 
   .factor-btn.selected .factor-tier {
-    color: rgba(255, 200, 100, 0.8);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 80%, transparent);
   }
 
   .custom-btn .factor-num {
@@ -1411,7 +1417,7 @@
     flex: 1;
     padding: 10px 14px;
     background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 200, 100, 0.2);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 20%, transparent);
     border-radius: 6px;
     color: white;
     font-size: 16px;
@@ -1420,7 +1426,7 @@
 
   .custom-shard-input input:focus {
     outline: none;
-    border-color: rgba(255, 200, 100, 0.4);
+    border-color: color-mix(in srgb, var(--rc-accent, #c5cfde) 40%, transparent);
   }
 
   .custom-label {
@@ -1464,9 +1470,9 @@
     width: 100%;
     min-height: 38px;
     padding: 0 10px;
-    color: rgba(245, 215, 160, 0.96);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 96%, transparent);
     background: rgba(10, 10, 12, 0.9);
-    border: 1px solid rgba(180, 140, 80, 0.35);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 35%, transparent);
     border-radius: 4px;
   }
 
@@ -1476,20 +1482,21 @@
     line-height: 1.4;
   }
 
-  /* Derive Button - Sacred Gate */
+  /* Primary entry CTA - machined sterling silver */
   .derive-btn {
     width: 100%;
-    padding: 18px;
-    background: rgba(180, 140, 80, 0.12);
-    border: 1px solid rgba(180, 140, 80, 0.5);
-    border-radius: 2px;
+    padding: 16px 18px;
+    background: linear-gradient(154deg, #ffffff 0%, #e7ecf4 52%, #c5cfde 100%);
+    border: 1px solid #ffffff;
+    border-radius: 8px;
     font-size: 13px;
-    font-weight: 400;
-    letter-spacing: 0.2em;
+    font-weight: 650;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: rgba(245, 215, 160, 0.96);
+    color: #050608;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78), 0 1px 3px rgba(0, 0, 0, 0.36);
     cursor: pointer;
-    transition: all 0.4s ease;
+    transition: opacity 0.2s ease, transform 0.2s ease;
     position: relative;
     overflow: hidden;
   }
@@ -1501,7 +1508,7 @@
     left: -100%;
     width: 100%;
     height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(180, 140, 80, 0.1), transparent);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
     transition: left 0.5s ease;
   }
 
@@ -1521,14 +1528,11 @@
     transition: color 0.15s ease;
   }
   .reset-link:hover {
-    color: #f43f5e;
+    color: color-mix(in srgb, var(--theme-debit, #ef4444) 70%, var(--theme-text-primary, #e6ebf2));
   }
 
   .derive-btn:hover:not(:disabled) {
-    background: rgba(180, 140, 80, 0.1);
-    border-color: rgba(180, 140, 80, 0.6);
-    box-shadow: 0 0 40px rgba(180, 140, 80, 0.15);
-    color: rgba(180, 140, 80, 1);
+    opacity: 0.92;
   }
 
   .derive-btn:disabled {
@@ -1539,12 +1543,12 @@
   .pyramid-progress-text {
     font-size: 64px;
     font-weight: 200;
-    color: rgb(255, 220, 140);
+    color: var(--rc-accent, #c5cfde);
     letter-spacing: 4px;
     font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
     text-shadow:
-      0 0 20px rgba(255, 200, 100, 0.6),
-      0 0 40px rgba(255, 180, 80, 0.4);
+      0 0 20px color-mix(in srgb, var(--rc-accent, #c5cfde) 60%, transparent),
+      0 0 40px color-mix(in srgb, var(--rc-accent, #c5cfde) 30%, transparent);
   }
 
   .pyramid-progress-bar {
@@ -1571,7 +1575,7 @@
     padding: 12px 16px;
     background: rgba(0, 0, 0, 0.3);
     border-radius: 10px;
-    border: 1px solid rgba(255, 200, 100, 0.15);
+    border: 1px solid color-mix(in srgb, var(--rc-accent, #c5cfde) 15%, transparent);
   }
 
   .speed-header {
@@ -1583,16 +1587,16 @@
   .speed-label {
     font-size: 11px;
     letter-spacing: 2px;
-    color: rgba(255, 200, 100, 0.7);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 70%, transparent);
     text-transform: uppercase;
     font-weight: 600;
   }
 
   .speed-eta {
     font-size: 14px;
-    color: #f5d78e;
+    color: var(--theme-text-primary, #e6ebf2);
     font-weight: 600;
-    text-shadow: 0 0 10px rgba(245, 215, 142, 0.3);
+    text-shadow: 0 0 10px color-mix(in srgb, var(--rc-accent, #c5cfde) 30%, transparent);
   }
 
   .speed-slider-wrapper {
@@ -1616,7 +1620,7 @@
     display: flex;
     justify-content: space-between;
     font-size: 10px;
-    color: rgba(255, 200, 100, 0.5);
+    color: color-mix(in srgb, var(--rc-accent, #c5cfde) 50%, transparent);
     letter-spacing: 0.5px;
   }
 
@@ -1667,9 +1671,31 @@
   }
 
   .matrix-status.error {
-    color: rgba(255, 145, 120, 0.95);
-    border: 1px solid rgba(220, 100, 60, 0.35);
-    background: rgba(220, 100, 60, 0.08);
+    white-space: pre-line;
+    color: color-mix(in srgb, var(--theme-debit, #f43f5e) 70%, var(--theme-text-primary, #e6ebf2));
+    border: 1px solid color-mix(in srgb, var(--theme-debit, #f43f5e) 30%, transparent);
+    background: color-mix(in srgb, var(--theme-debit, #f43f5e) 6%, transparent);
+  }
+
+  /* Plain sentence first; the diagnostic stays visible beneath it, quiet and copyable. */
+  .test-wallet-failure {
+    display: grid;
+    gap: 6px;
+    padding: 12px 14px;
+    text-align: left;
+  }
+  .test-wallet-failure .failure-lead {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .test-wallet-failure .failure-diagnostic {
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--theme-text-muted, #80889a);
+    overflow-wrap: anywhere;
+    user-select: text;
   }
 
   /* Desktop - wider layout */
@@ -1842,8 +1868,8 @@
   }
 
   .scheme-toggle button.active {
-    background: rgba(255, 200, 100, 0.16);
-    color: rgba(255, 214, 150, 0.96);
+    background: color-mix(in srgb, var(--rc-accent, #c5cfde) 16%, transparent);
+    color: var(--rc-accent, #c5cfde);
   }
 
   /* ============================================================
@@ -1851,31 +1877,59 @@
      Tokens scoped to the auth root so the dark default is untouched.
      ============================================================ */
   .brainvault-wrapper.scheme-light {
-    --l-bg-1: #f7f9fc;
-    --l-bg-2: #eef1f7;
+    --l-bg-1: #fbfcfd;
+    --l-bg-2: #eef1f5;
     --l-card: #ffffff;
     --l-border: rgba(15, 23, 42, 0.08);
     --l-border-strong: rgba(15, 23, 42, 0.14);
     --l-text: #0f172a;
     --l-text-2: #475569;
-    --l-text-3: #94a3b8;
-    --l-accent: #4f46e5;
-    --l-accent-hover: #4338ca;
-    --l-accent-soft: rgba(79, 70, 229, 0.08);
-    --l-accent-ring: rgba(79, 70, 229, 0.16);
+    --l-text-3: #5f6877;
+    /* Porcelain & graphite: the light counterpart of the obsidian entry; never indigo, never gold. */
+    --l-accent: #11151d;
+    --l-accent-hover: #2b313c;
+    --l-accent-soft: rgba(17, 21, 29, 0.06);
+    --l-accent-ring: rgba(17, 21, 29, 0.14);
+    --rc-accent: var(--l-accent);
     --l-field: #f8fafc;
     --l-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 32px rgba(15, 23, 42, 0.07);
     --theme-input-bg: var(--l-field);
-    --theme-input-border: var(--l-border-strong);
+    /* An empty field is identified by its edge alone: 3:1 on white. */
+    --theme-input-border: #7b8390;
     --theme-input-text: var(--l-text);
     --theme-text-primary: var(--l-text);
+    --theme-text-secondary: var(--l-text-2);
+    --theme-text-muted: var(--l-text-3);
+    /* The porcelain ground fills the whole wrapper, not just the card's column. */
+    background: linear-gradient(180deg, var(--l-bg-1) 0%, var(--l-bg-2) 100%);
+  }
+
+  /* The page under an embedded entry follows the entry's scheme, never the app theme. */
+  body:has(.brainvault-wrapper.scheme-light) {
+    background: #eef1f5;
+  }
+
+  body:has(.brainvault-wrapper:not(.scheme-light)) {
+    background: linear-gradient(180deg, #14181f 0%, #080a0e 46%, #030406 100%);
+  }
+
+  /* The root paints the canvas and, on desktops with classic scrollbars, the scrollbar; it follows the
+     entry's own scheme so a light page never gets a dark edge or a dark scrollbar. */
+  :root:has(.brainvault-wrapper.scheme-light) {
+    color-scheme: light;
+    background: #eef1f5;
+  }
+
+  :root:has(.brainvault-wrapper:not(.scheme-light)) {
+    color-scheme: dark;
+    background: #07080b linear-gradient(180deg, #14181f 0%, #080a0e 46%, #030406 100%);
   }
 
   /* Page + card surfaces */
   .scheme-light .brainvault-container {
     background: var(--l-bg-2);
     background-image:
-      radial-gradient(ellipse at 50% -10%, rgba(79, 70, 229, 0.06) 0%, transparent 55%),
+      radial-gradient(ellipse at 50% -10%, rgba(255, 255, 255, 0.9) 0%, transparent 55%),
       linear-gradient(180deg, var(--l-bg-1) 0%, var(--l-bg-2) 100%);
   }
 
@@ -1894,7 +1948,7 @@
   }
 
   .scheme-light .auth-brand img {
-    filter: invert(1) drop-shadow(0 0 16px rgba(79, 70, 229, 0.12));
+    filter: invert(1) drop-shadow(0 0 16px rgba(17, 21, 29, 0.12));
     opacity: 0.82;
   }
 
@@ -1903,7 +1957,7 @@
   .brainvault-wrapper.embedded.scheme-light .brainvault-container {
     background: var(--l-bg-2);
     background-image:
-      radial-gradient(ellipse at 50% -10%, rgba(79, 70, 229, 0.06) 0%, transparent 55%),
+      radial-gradient(ellipse at 50% -10%, rgba(255, 255, 255, 0.9) 0%, transparent 55%),
       linear-gradient(180deg, var(--l-bg-1) 0%, var(--l-bg-2) 100%);
   }
   .brainvault-wrapper.embedded.scheme-light .glass-card {
@@ -1917,7 +1971,7 @@
     background: rgba(15, 23, 42, 0.08);
   }
   .brainvault-wrapper.embedded.scheme-light .pyramid-progress-fill {
-    background: linear-gradient(90deg, var(--l-accent), #818cf8);
+    background: linear-gradient(90deg, var(--l-accent), var(--l-accent-hover));
   }
 
   /* Titles + copy */
@@ -2035,17 +2089,6 @@
     border-color: var(--l-border-strong);
     color: var(--l-text);
   }
-  /* Hubs = amber */
-  .scheme-light .quick-login-btn.role-hub {
-    background: rgba(217, 119, 6, 0.08);
-    border-color: rgba(217, 119, 6, 0.28);
-    color: #b45309;
-  }
-  .scheme-light .quick-login-btn.role-hub:hover {
-    background: rgba(217, 119, 6, 0.14);
-    border-color: rgba(217, 119, 6, 0.45);
-    color: #92400e;
-  }
   /* App entities = teal */
   .scheme-light .quick-login-btn.role-app {
     background: rgba(13, 148, 136, 0.08);
@@ -2100,7 +2143,7 @@
     background: var(--l-accent);
     border-color: transparent;
     color: #ffffff;
-    box-shadow: 0 2px 6px rgba(79, 70, 229, 0.22);
+    box-shadow: 0 2px 6px rgba(17, 21, 29, 0.22);
   }
   .scheme-light .live-connect-btn:hover:not(:disabled) {
     background: var(--l-accent-hover);
@@ -2163,21 +2206,22 @@
 
   /* Primary CTA — solid filled indigo (Stripe/Apple pattern) */
   .scheme-light .derive-btn {
-    background: var(--l-accent);
+    /* Machined obsidian: the light theme's one piece of metal. */
+    background: linear-gradient(154deg, #242a36 0%, #11151d 52%, #050608 100%);
     border: 1px solid transparent;
     border-radius: 12px;
-    color: #ffffff;
+    color: #f8fafc;
     letter-spacing: 0.08em;
-    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.28);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 6px 16px rgba(17, 21, 29, 0.22);
   }
   .scheme-light .derive-btn::before {
     background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22), transparent);
   }
   .scheme-light .derive-btn:hover:not(:disabled) {
-    background: var(--l-accent-hover);
+    background: linear-gradient(154deg, #2b313c 0%, #161a22 52%, #07080b 100%);
     border-color: transparent;
-    box-shadow: 0 8px 22px rgba(79, 70, 229, 0.36);
-    color: #ffffff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 8px 22px rgba(17, 21, 29, 0.28);
+    color: #f8fafc;
   }
   .scheme-light .derive-btn:disabled {
     opacity: 1;
@@ -2202,7 +2246,7 @@
     color: var(--l-accent);
   }
   .scheme-light .reset-link { color: var(--l-text-3); }
-  .scheme-light .reset-link:hover { color: #dc2626; }
+  .scheme-light .reset-link:hover { color: color-mix(in srgb, #dc2626 70%, var(--l-text)); }
 
   .scheme-light .warning-box {
     background: rgba(217, 119, 6, 0.07);
@@ -2238,7 +2282,7 @@
   .scheme-light .derivation-status strong { color: var(--l-text); }
   .scheme-light .derivation-status p { color: var(--l-text-2); }
   .scheme-light .derivation-orbit {
-    border-color: rgba(79, 70, 229, 0.14);
+    border-color: rgba(17, 21, 29, 0.14);
     border-top-color: var(--l-accent);
   }
   .scheme-light .pyramid-progress-text {
@@ -2247,7 +2291,7 @@
   }
   .scheme-light .pyramid-progress-bar { background: rgba(15, 23, 42, 0.08); }
   .scheme-light .pyramid-progress-fill {
-    background: linear-gradient(90deg, var(--l-accent) 0%, #818cf8 100%);
+    background: linear-gradient(90deg, var(--l-accent) 0%, var(--l-accent-hover) 100%);
     box-shadow: none;
   }
   .scheme-light .speed-control {
@@ -2267,6 +2311,9 @@
   }
   .scheme-light .matrix-status {
     background: rgba(15, 23, 42, 0.03);
+    color: var(--l-text-2);
+  }
+  .scheme-light .test-wallet-failure .failure-diagnostic {
     color: var(--l-text-2);
   }
   .scheme-light .matrix-status.error {

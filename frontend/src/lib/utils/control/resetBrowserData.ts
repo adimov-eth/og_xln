@@ -1,5 +1,7 @@
+import { sleep } from '../primitives';
 export const RESET_CONFIRMATION = 'DELETE XLN DATA';
 export const RESET_WARNING = `This permanently deletes all local XLN data, including encrypted vaults and recovery keys. Make sure you have a working backup. Type ${RESET_CONFIRMATION} to continue.`;
+export const RETIRED_TESTNET_REBOOTSTRAP_KEY = 'xln-retired-testnet-rebootstrap';
 
 // Only these two application databases and the named canonical Runtime stores
 // belong to this reset. BrowserLevel adds "level-js-" to runtime-db-path names.
@@ -49,6 +51,8 @@ const STORAGE_KEYS = new Set([
   'xln-ui-scale-mode',
   'xln-ui-places',
   'xln-ui-design',
+  'xln-wallet-posture',
+  RETIRED_TESTNET_REBOOTSTRAP_KEY,
 ]);
 const STORAGE_PREFIXES = [
   'xln-password-vault:',
@@ -70,7 +74,6 @@ const RETIRED_DEPLOYMENT_STORAGE_KEYS = new Set([
   'xln-jmachines',
   'xln-time-state',
   'xln-push-wake-registrations-v1',
-  'xln-ui-recovery',
 ]);
 const RETIRED_DEPLOYMENT_STORAGE_PREFIXES = [
   'xln-onboarding-complete:',
@@ -115,4 +118,35 @@ export async function clearBrowserRuntimeData(confirmation: string): Promise<voi
   if (confirmation !== RESET_CONFIRMATION) throw new Error('RESET_CONFIRMATION_REQUIRED');
   await deleteOwnedDatabases(name => DATABASE_NAMES.has(name) || RUNTIME_DATABASE.test(name));
   for (const storage of [localStorage, sessionStorage]) clearStorageKeys(storage, STORAGE_KEYS, STORAGE_PREFIXES);
+}
+
+const RESET_TAB_SETTLE_MS = 300;
+
+export async function runRetiredTestnetReset(options: {
+  redirectPath?: string;
+  stopRuntime: () => Promise<void>;
+  broadcastReset: () => void;
+  afterClear?: () => void;
+}): Promise<void> {
+  await options.stopRuntime();
+  options.broadcastReset();
+  await sleep(RESET_TAB_SETTLE_MS);
+  await clearRetiredTestnetState();
+  options.afterClear?.();
+  window.location.replace(options.redirectPath ?? '/app');
+}
+
+/** The full reset for a deployment that is not disposable: vaults and keys go too, so it takes the typed phrase. */
+export async function runLocalDataReset(options: {
+  confirmation: string;
+  redirectPath?: string;
+  stopRuntime: () => Promise<void>;
+  broadcastReset: () => void;
+}): Promise<void> {
+  if (options.confirmation !== RESET_CONFIRMATION) throw new Error('RESET_CONFIRMATION_REQUIRED');
+  await options.stopRuntime();
+  options.broadcastReset();
+  await sleep(RESET_TAB_SETTLE_MS);
+  await clearBrowserRuntimeData(options.confirmation);
+  window.location.replace(options.redirectPath ?? '/app');
 }

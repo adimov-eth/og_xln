@@ -10,17 +10,15 @@ import {
 	type PaymentTerminalReceiptPage,
 } from '@xln/frontend/lib/stores/network/paymentTerminalMonitor';
 import { getAdapter } from '../adapter';
+import { resolveEffectivePosture } from '../everyday';
 import { useApp } from '../store';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
 
 /**
  * A settled payment surfaces as a receipt the moment its terminal frame log is
  * durable. Same monitor, same event names and the same durable cursor as the
  * SvelteKit View: no polling of live state, no optimistic toasts.
  */
-const normalizeId = (value: unknown): string =>
-	String(value || '')
-		.trim()
-		.toLowerCase();
 
 async function readReceipts(request: PaymentTerminalReadRequest): Promise<PaymentTerminalReceiptPage> {
 	const adapter = getAdapter();
@@ -57,6 +55,7 @@ export function startPaymentTerminal(): () => void {
 				useApp.getState().toast(reason ? `Payment failed: ${reason}` : 'Payment failed', 'danger');
 				return;
 			}
+			if (resolveEffectivePosture() !== 'pro') return;
 			useReceipts.getState().show(event);
 		},
 		onError: error => {

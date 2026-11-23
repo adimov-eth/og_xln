@@ -1,3 +1,4 @@
+import { bytesToHex } from '../../../support/bytes/hex-bytes';
 import type { RuntimeTx } from '../../types';
 import { sha512 } from '@noble/hashes/sha2.js';
 
@@ -8,7 +9,7 @@ export const canonicalEntitySeed = (seed: Uint8Array | string): string => {
   if (typeof seed === 'string' && /^0x[0-9a-f]{128}$/i.test(seed)) return seed.toLowerCase();
   const bytes = typeof seed === 'string' ? sha512(new TextEncoder().encode(seed)) : seed;
   if (bytes.length !== 64) throw new Error('ENTITY_IMPORT_SEED_LENGTH');
-  return `0x${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+  return bytesToHex(bytes);
 };
 
 /**

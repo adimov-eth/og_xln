@@ -124,7 +124,7 @@ const createBrowserAdapter = async (config: JAdapterConfig, privateKey: string |
 };
 
 const createNetworkAdapter = async (config: JAdapterConfig, privateKey: string | undefined): Promise<JAdapter> => {
-  if (!config.rpcUrl) throw new Error('rpcUrl required for anvil/rpc/tron mode');
+  if (!config.rpcUrl) throw new Error('rpcUrl required for rpc/tron mode');
 
   // Native authority attests the configured endpoint identity. Rewriting its
   // host here disconnects the observed receipt source from the committed J RPC.

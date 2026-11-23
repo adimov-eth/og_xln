@@ -1,4 +1,4 @@
-import { Mnemonic, getBytes } from 'ethers';
+import { Mnemonic } from 'ethers';
 import {
   deriveRuntimeSignerAddress,
   deriveRuntimeSignerPrivateKey,
@@ -10,9 +10,6 @@ export function deriveAddress(seed: string, index: number): string {
 }
 export function derivePrivateKey(seed: string, index: number): string {
   return deriveRuntimeSignerPrivateKey(seed, index);
-}
-export function derivePrivateKeyBytes(seed: string, index: number): Uint8Array {
-  return getBytes(derivePrivateKey(seed, index));
 }
 
 /** Prove this wallet's current HD path against the actual EOA before granting a key. */

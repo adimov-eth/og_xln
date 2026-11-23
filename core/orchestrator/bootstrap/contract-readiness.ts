@@ -96,22 +96,16 @@ const fetchRpcBatch = async (
   requests: Array<{ jsonrpc: '2.0'; id: number; method: string; params: unknown[] }>,
   timeoutMs: number,
 ): Promise<Map<number, RpcCodeResponse>> => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(requests),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`RPC_CONTRACT_CODE_HTTP_${response.status}`);
-    const payload = await response.json() as RpcCodeResponse[];
-    if (!Array.isArray(payload)) throw new Error('RPC_CONTRACT_CODE_BATCH_INVALID');
-    return new Map(payload.map((entry) => [Number(entry.id), entry]));
-  } finally {
-    clearTimeout(timeout);
-  }
+  const response = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(requests),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) throw new Error(`RPC_CONTRACT_CODE_HTTP_${response.status}`);
+  const payload = await response.json() as RpcCodeResponse[];
+  if (!Array.isArray(payload)) throw new Error('RPC_CONTRACT_CODE_BATCH_INVALID');
+  return new Map(payload.map((entry) => [Number(entry.id), entry]));
 };
 
 const readRpcContractCodes = async (

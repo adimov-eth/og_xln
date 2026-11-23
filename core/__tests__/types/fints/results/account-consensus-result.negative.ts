@@ -6,6 +6,7 @@ import type {
 export const illegalAccountInputSuccessWithError: HandleAccountInputResult = {
   ok: true,
   events: [],
+  // @ts-expect-error
   error: 'ACCOUNT_INPUT_VALIDATION',
 };
 
@@ -14,6 +15,7 @@ export const illegalAccountInputRejectedWithResponse: HandleAccountInputResult =
   disposition: 'rejected',
   rejection: { kind: 'validation', message: 'ACCOUNT_INPUT_PARTY_MISMATCH' },
   events: [],
+  // @ts-expect-error
   response: { kind: 'ack', fromEntityId: '0x1', toEntityId: '0x2' },
 };
 
@@ -22,6 +24,7 @@ export const illegalProposeIdleWithError: ProposeAccountFrameResult = {
   outcome: 'idle',
   message: 'deferred',
   events: [],
+  // @ts-expect-error
   error: 'deferred',
 };
 
@@ -29,5 +32,6 @@ export const illegalProposeRejectedWithAccountInput: ProposeAccountFrameResult =
   ok: false,
   rejection: { message: 'No transactions to propose' },
   events: [],
+  // @ts-expect-error
   accountInput: { kind: 'ack', fromEntityId: '0x1', toEntityId: '0x2' },
 };

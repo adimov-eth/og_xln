@@ -10,8 +10,15 @@ const explanations: Array<[string, string]> = [
   ['FAUCET_WALLET_TOKEN_UNDERFUNDED', 'The test-money service does not have enough of this token. Its operator must refill it before this request can succeed.'],
   ['PUSH_TOKEN_PROVIDER_UNAVAILABLE', 'This browser cannot register push notifications. Keep the wallet online or use a supported device.'],
   ['TOWER_BUNDLE_NOT_FOUND', 'No encrypted backup was found on this tower. Check the tower address or import your saved backup.'],
+  ['LOCAL_RUNTIME_INPUT_COMMIT_STALLED', 'The wallet has not saved this change and stopped waiting for it. Reload the page and check before trying again, so nothing happens twice.'],
+  ['Strict restore failed', 'Saved wallet data on this device is incomplete, so the wallet stopped instead of guessing. Nothing was changed or deleted. Retry first.'],
   ['Failed to fetch', 'The service could not be reached. Check your connection and whether the local stack is running.'],
 ];
+
+/** The plain sentence for a known failure, for screens that show the raw diagnostic separately beneath it. */
+export function walletErrorLead(message: string): string | null {
+  return explanations.find(([code]) => message.includes(code))?.[1] ?? null;
+}
 
 /** Keep the complete diagnostic visible; never replace it with a generic success or hide it in a disclosure. */
 export function explainWalletError(message: string): string {

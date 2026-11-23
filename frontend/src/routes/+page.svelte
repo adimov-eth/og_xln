@@ -8,7 +8,6 @@
   function handleUnlock() {
     // Open the existing test wallet without an invitation code.
     if (browser) {
-      localStorage.setItem('open', 'true');
       goto('/app');
     }
   }

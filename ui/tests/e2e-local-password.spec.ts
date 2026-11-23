@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { enterStack, LOCAL_PASSWORD } from './stack';
+import { enterStack, gotoProWallet, LOCAL_PASSWORD } from './stack';
 
 test(
   'Lock stops the runtime; only the local password opens the same wallet',
@@ -44,7 +44,7 @@ test(
 test('BrainVault reuses the original password without a second enrollment form', { tag: '@functional' }, async ({ page }) => {
   test.setTimeout(55_000);
   page.on('console', message => { if (message.text().startsWith('[hosted] chain scan')) console.log(message.text()); });
-  await page.goto('/');
+  await gotoProWallet(page, '/');
   await page.getByRole('button', { name: /Create a wallet/ }).click();
   await page.getByLabel('Vault name', { exact: true }).fill(`Original ${Date.now()}`);
   await page.getByLabel('Passphrase', { exact: true }).fill('original-wallet-secret');

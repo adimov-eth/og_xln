@@ -1,5 +1,5 @@
 import { emptyDisputeReferences, referencesThrough } from '../../events/dispute/reference-state';
-import { readAuthenticatedReceiptRange } from '../../receipt-root';
+import { readAuthenticatedReceiptRange } from '../../receipt/reader';
 import { rebuildWatcherDisputeReferences } from './rpc-watcher-reference-recovery';
 import { compareStableText } from '../../../../protocol/serialization';
 import { getEntityCertifiedJAnchor, getValidatorJExpectedBlockHash } from '../../../machine/local-history';
@@ -212,8 +212,9 @@ export const runWatcherPoll = async (request: PollRequest): Promise<void> => {
     // Only active starts referenced by committed Entity state need eager recovery.
     // Fresh storage anchors have none: zero receipt reads regardless of chain age.
     // Worst case: N = max(0, target - max(durable+1, earliestStart) + 1),
-    // P = ceil(N/256): <= 2(N+P) header reads + all transactions' receipts
-    // in those N blocks. Chain age before the earliest start adds no reads.
+    // P = ceil(N/256): <= N+2P Ethereum header reads (<= 2(N+P) on TRON) + all
+    // transactions' receipts in those N blocks. Chain age before the earliest
+    // start adds no reads.
     // Deployment-floor lookup belongs exclusively to lazy, hash-bound refill.
     let fromBlock = target + 1;
     for (const replica of session.env.state.eReplicas.values()) {

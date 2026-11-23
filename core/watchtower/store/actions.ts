@@ -21,21 +21,10 @@ import type {
   WatchtowerStoreStats,
 } from './types';
 
-const complaintKey = (context: WatchtowerStoreContext): string => `complaint:${context.now()}:${randomUUID()}`;
-
 const actionReceiptPrefix = (lookupKey: string): string => `action:${normalizeLookupKey(lookupKey)}:`;
 
 const actionReceiptKey = (context: WatchtowerStoreContext, lookupKey: string): string =>
   `${actionReceiptPrefix(lookupKey)}${context.now()}:${randomUUID()}`;
-
-export const appendComplaint = async (
-  context: WatchtowerStoreContext,
-  payload: Record<string, unknown>,
-): Promise<void> => {
-  await ensureWatchtowerStoreOpen(context);
-  await context.db.put(complaintKey(context), serializeTaggedJson({ ts: context.now(), ...payload }));
-  invalidateWatchtowerStats(context);
-};
 
 const readLatestActionReceipt = async (
   context: WatchtowerStoreContext,
@@ -126,11 +115,7 @@ const collectExpiredKeys = async (context: WatchtowerStoreContext, cutoff: numbe
   const keys: string[] = [];
   for await (const [key] of context.db.iterator()) {
     const parts = String(key).split(':');
-    const timestamp = key.startsWith('action:')
-      ? Number(parts[2] || 0)
-      : key.startsWith('complaint:')
-        ? Number(parts[1] || 0)
-        : 0;
+    const timestamp = key.startsWith('action:') ? Number(parts[2] || 0) : 0;
     if (Number.isFinite(timestamp) && timestamp > 0 && timestamp < cutoff) {
       keys.push(key);
     }

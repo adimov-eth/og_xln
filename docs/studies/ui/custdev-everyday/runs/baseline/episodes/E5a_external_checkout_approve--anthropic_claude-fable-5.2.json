@@ -1,0 +1,257 @@
+{
+  "episodeId": "E5a_external_checkout_approve--anthropic/claude-fable-5.2--baseline",
+  "scenarioId": "E5a_external_checkout_approve",
+  "modelId": "anthropic/claude-fable-5.2",
+  "lineage": "anthropic-claude-fable-5.2",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1OriginFee": true,
+      "q2Approved": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. The request came from checkout.cornercoffee.nyc (counterparty CornerCoffee-NYC) with a $0.05 fee on the $25.00 payment.\n2. I approved it.\n3. My remaining Cash is $94.95."
+  },
+  "turns": 9,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "List available symbols",
+      "args": {
+        "intent": "List available symbols",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 4748,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "List available actions",
+      "args": {
+        "intent": "List available actions",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 4748,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "View home screen",
+      "args": {
+        "intent": "View home screen",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 120,
+            "cash-formatted": "$120.00",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 1
+        }
+      },
+      "latencyMs": 4748,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check cash balance",
+      "args": {
+        "intent": "Check cash balance",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 120,
+          "cash-formatted": "$120.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 4748,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Review the pending request sheet",
+      "args": {
+        "intent": "Review the pending request sheet",
+        "expr": "(pending-requests)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "req_cornercoffee",
+            "delivery": "interrupt-sheet",
+            "origin": "checkout.cornercoffee.nyc",
+            "app-claim": "Pay CornerCoffee $25.00 for espresso beans",
+            "counterparty": "CornerCoffee-NYC",
+            "amount-usd": 25,
+            "fee-usd": 0.05,
+            "credit-limit-delta-usd": 0,
+            "unbacked-delta-usd": 0,
+            "expiry": "60 seconds",
+            "survival": "Completed payments are final; shared tabs stay between you and the person you named.",
+            "warns": [
+              "Only open a tab with someone you actually know and trust."
+            ]
+          }
+        ]
+      },
+      "latencyMs": 4095,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check recent activity for context",
+      "args": {
+        "intent": "Check recent activity for context",
+        "expr": "(activity)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "entries": [],
+          "hub-online": true,
+          "dispute-active": false,
+          "tower-enrolled": true,
+          "backup-exported": false,
+          "protection-status": "Protected · automatic backup & watchtower ready"
+        }
+      },
+      "latencyMs": 4095,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Read terms",
+      "args": {
+        "intent": "Read terms",
+        "expr": "(terms)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash": {
+            "text": "Cash",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "noteWhen": "always"
+          },
+          "people": {
+            "text": "Friends & tabs",
+            "note": "Shared bills and tabs with people you know.",
+            "noteWhen": "non-zero"
+          },
+          "owed": {
+            "text": "You owe",
+            "note": "Settle up in one tap whenever you are ready.",
+            "noteWhen": "non-zero"
+          },
+          "savings": {
+            "text": "Savings",
+            "note": "Earning interest separately from your Cash.",
+            "noteWhen": "non-zero"
+          }
+        }
+      },
+      "latencyMs": 4095,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Approve the CornerCoffee $25 request; terms match the claim, with no credit or unbacked exposure",
+      "args": {
+        "intent": "Approve the CornerCoffee $25 request; terms match the claim, with no credit or unbacked exposure",
+        "action": "approve-request",
+        "args": {
+          "id": "req_cornercoffee"
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Approved",
+          "request_id": "req_cornercoffee",
+          "remaining-cash-usd": 94.95
+        }
+      },
+      "latencyMs": 6365,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "done",
+      "intent": "Finish after approving the request",
+      "args": {
+        "intent": "Finish after approving the request",
+        "summary": "Reviewed the pending CornerCoffee request and approved it: $25.00 for espresso beans plus a $0.05 fee, from checkout.cornercoffee.nyc to CornerCoffee-NYC. The sheet showed a plain payment with no credit-limit change and no unbacked exposure, and it matched what the link claimed. Cash went from $120.00 to $94.95. Completed payments are final."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Reviewed the pending CornerCoffee request and approved it: $25.00 for espresso beans plus a $0.05 fee, from checkout.cornercoffee.nyc to CornerCoffee-NYC. The sheet showed a plain payment with no credit-limit change and no unbacked exposure, and it matched what the link claimed. Cash went from $120.00 to $94.95. Completed payments are final."
+        }
+      },
+      "latencyMs": 4761,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 40736,
+  "finalSummary": "Reviewed the pending CornerCoffee request and approved it: $25.00 for espresso beans plus a $0.05 fee, from checkout.cornercoffee.nyc to CornerCoffee-NYC. The sheet showed a plain payment with no credit-limit change and no unbacked exposure, and it matched what the link claimed. Cash went from $120.00 to $94.95. Completed payments are final."
+}

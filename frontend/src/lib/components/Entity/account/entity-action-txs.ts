@@ -176,3 +176,10 @@ export function buildMoveSettlementContinuation(
   }
   return { actions, broadcast };
 }
+
+/** 'credit-<16 hex>': the Account replay id of one credit request. */
+export function newCreditRequestId(): string {
+  const bytes = new Uint8Array(8);
+  globalThis.crypto.getRandomValues(bytes);
+  return `credit-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}

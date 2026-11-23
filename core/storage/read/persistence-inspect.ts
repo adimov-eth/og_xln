@@ -18,6 +18,7 @@ import type { RuntimeReplica } from '../../runtime/types';
 import type {
   TowerReceiptV1,
 } from '../recovery/bundle/types';
+import { errorMessage } from '../../support/boundary-guards';
 
 type PersistenceIssueSeverity = 'info' | 'warning' | 'critical';
 
@@ -69,8 +70,6 @@ export type PersistenceInspectionSummary = {
   issues: PersistenceIssue[];
   repairPlan: string[];
 };
-
-const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 const severityRank = (severity: PersistenceIssueSeverity): number =>
   severity === 'critical' ? 2 : severity === 'warning' ? 1 : 0;
@@ -254,7 +253,7 @@ export const inspectRecoveryBundleFile = (path?: string): PersistenceBundleSumma
     }
     return { checked: true, valid: false, encrypted: false, error: 'RECOVERY_BUNDLE_FORMAT_UNKNOWN' };
   } catch (error) {
-    return { checked: true, valid: false, encrypted: false, error: messageOf(error) };
+    return { checked: true, valid: false, encrypted: false, error: errorMessage(error) };
   }
 };
 
@@ -293,7 +292,7 @@ const inspectTowerReceipt = async (
       ok: false,
       url: normalizedUrl,
       lookupKey: normalizedLookupKey,
-      error: messageOf(error),
+      error: errorMessage(error),
     };
   }
 };

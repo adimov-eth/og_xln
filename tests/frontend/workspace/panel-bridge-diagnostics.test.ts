@@ -18,15 +18,15 @@ describe('panel bridge diagnostics', () => {
 
   test('notifies remaining listeners and then fails loud when a listener throws', () => {
     let delivered = false;
-    panelBridge.on('vr:toggle', () => {
+    panelBridge.on('settings:reset', () => {
       throw new Error('listener exploded');
     });
-    panelBridge.on('vr:toggle', () => {
+    panelBridge.on('settings:reset', () => {
       delivered = true;
     });
 
-    expect(() => panelBridge.emit('vr:toggle', {})).toThrow(
-      'PANEL_BRIDGE_HANDLER_FAILED:vr:toggle:listener exploded',
+    expect(() => panelBridge.emit('settings:reset', {})).toThrow(
+      'PANEL_BRIDGE_HANDLER_FAILED:settings:reset:listener exploded',
     );
     expect(delivered).toBe(true);
   });

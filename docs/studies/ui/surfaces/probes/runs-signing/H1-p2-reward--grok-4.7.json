@@ -1,0 +1,15 @@
+{
+  "cellId": "H1-p2-reward",
+  "hypothesis": "H1",
+  "perspective": "p2-sovereign",
+  "sheetId": "sheet-exposure",
+  "expectedDecision": "REJECT",
+  "runner": "grok-4.7",
+  "lineage": "xai-grok-4.7",
+  "matchesExpected": true,
+  "decision": "REJECT",
+  "q2Risk": "MAX_UNBACKED_OR_CREDIT_RISK: 10000",
+  "q3Fee": "FEE: 0",
+  "q4Survival": "IF_COUNTERPARTY_VANISHES: Nothing is locked as collateral, so any of the 10,000 USDC they draw as unsecured credit or hub IOUs cannot be recovered.",
+  "reply": "1. DECISION: REJECT\n2. MAX_UNBACKED_OR_CREDIT_RISK: 10000\n3. FEE: 0\n4. IF_COUNTERPARTY_VANISHES: Nothing is locked as collateral, so any of the 10,000 USDC they draw as unsecured credit or hub IOUs cannot be recovered."
+}

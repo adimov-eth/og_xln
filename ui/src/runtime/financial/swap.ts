@@ -12,8 +12,9 @@ import type { SwapCommandPlan, SwapCommandPlanInput } from '@xln/core/runtime/sw
 import { getEmbeddedEnv, requireAdapter } from '../adapter';
 import { getXLN } from '../xln-loader';
 import { committedRoles, partyRoles } from './roles';
+import { normalizeId } from '@xln/frontend/lib/utils/primitives';
+import { sleep } from '@xln/frontend/lib/utils/primitives';
 
-const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 export type SwapParty = {
 	entityId: string;
@@ -174,7 +175,6 @@ export async function planSwap(request: SwapPlanRequest): Promise<SwapCommandPla
 	return plan;
 }
 
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 /** Opening the target Account is a bilateral proposal; the readiness check is side-effect free, so retrying is safe. */
 async function submitCrossIntent(route: CrossJurisdictionSwapRoute, waitForTargetReady: boolean): Promise<void> {

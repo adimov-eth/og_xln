@@ -1,0 +1,87 @@
+{
+  "episodeId": "E4_savings_optin_consent--scripted-smoke--baseline",
+  "scenarioId": "E4_savings_optin_consent",
+  "modelId": "scripted-smoke",
+  "lineage": "scripted-deterministic",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Balances": true,
+      "q2Risk": true,
+      "q3Consent": true
+    },
+    "rawAnswers": "1. $150.00 in Savings and $350.00 in Cash.\n2. Savings are lent to earn interest and not protected like Cash.\n3. Yes, explicit consent was required."
+  },
+  "turns": 3,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "read Savings terms and balance",
+      "args": {
+        "intent": "read Savings terms and balance",
+        "expr": "(savings)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "balance-usd": 0,
+          "balance-formatted": "$0.00",
+          "apy": "4.2%",
+          "consent-accepted": false,
+          "note": "Earning interest separately from your Cash."
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "move $150 to Savings with explicit consent",
+      "args": {
+        "intent": "move $150 to Savings with explicit consent",
+        "action": "add-savings",
+        "args": {
+          "amount_usd": 150,
+          "accept_risk": true
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Earning interest in Savings",
+          "savings-usd": 150,
+          "cash-usd": 350
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "finish Savings opt-in",
+      "args": {
+        "intent": "finish Savings opt-in",
+        "summary": "Moved $150 to Savings; $350 remains in Cash."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Moved $150 to Savings; $350 remains in Cash."
+        }
+      },
+      "latencyMs": 1,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 72,
+  "finalSummary": "Moved $150 to Savings; $350 remains in Cash."
+}

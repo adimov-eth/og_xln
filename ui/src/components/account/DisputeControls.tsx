@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatUsd } from '../../runtime/format';
 import { accountSafety, formatDuration } from '../../runtime/financial/sovereignty';
-import { buildDisputeFinalizeTx, buildPrepareDisputeTx, disputeView } from '../../runtime/financial/manage';
+import { buildDisputeFinalizeTx, buildPrepareDisputeTx } from '@xln/frontend/lib/components/Entity/account/entity-action-txs';
+import { disputeView } from '../../runtime/financial/manage';
 import type { AccountView, WalletView } from '../../runtime/views';
 import { sendEntityTxs } from '../../runtime/tx';
 import { useApp } from '../../runtime/store';
@@ -36,7 +37,7 @@ export function DisputeControls({ account, wallet, onClose }: { account: Account
 								{dispute.timeout > 0 ? `Challenge window closes ${new Date(dispute.timeout * 1000).toLocaleString()}. ` : ''}
 								While this wallet is unlocked and online, it automatically submits finalization after the challenge window. If it locks, unlock it to resume. Your collateral-backed entitlement is paid to your reserve. Any excess is collected from the debtor’s available reserve; the unpaid remainder stays as debt. Gas is required.
 							</p>
-							<button type="button" className="btn primary danger" disabled={busy || dispute.finalizeQueued || !finalizationReady || !commandReady} onClick={() => void run('Dispute finalization queued', async () => { await send([buildDisputeFinalizeTx(counterpartyId)]); })} data-testid="dispute-finalize">
+							<button type="button" className="btn primary danger" disabled={busy || dispute.finalizeQueued || !finalizationReady || !commandReady} onClick={() => void run('Dispute finalization queued', async () => { await send([buildDisputeFinalizeTx(counterpartyId, 'dispute-finalize-from-configure')]); })} data-testid="dispute-finalize">
 								{dispute.finalizeQueued ? 'Finalize already queued' : !finalizationReady ? 'Waiting for challenge window' : busy ? 'Queuing…' : 'Queue dispute finalize'}
 							</button>
 						</>
@@ -117,7 +118,7 @@ export function DisputeControls({ account, wallet, onClose }: { account: Account
 								</button>
 							) : (
 								<div className="actions">
-									<button type="button" className="btn primary danger" disabled={busy || !commandReady} onClick={() => void run('Dispute prepared; the on-chain start joins your batch', async () => { await send([buildPrepareDisputeTx(counterpartyId)]); })} data-testid="dispute-prepare-confirm">
+									<button type="button" className="btn primary danger" disabled={busy || !commandReady} onClick={() => void run('Dispute prepared; the on-chain start joins your batch', async () => { await send([buildPrepareDisputeTx(counterpartyId, 'dispute-prepare-from-configure')]); })} data-testid="dispute-prepare-confirm">
 										{busy ? 'Preparing…' : 'Yes, dispute'}
 									</button>
 									<button type="button" className="btn ghost" disabled={busy} onClick={() => setConfirmDispute(false)}>

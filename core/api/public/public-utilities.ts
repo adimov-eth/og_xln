@@ -1,11 +1,11 @@
 export {
   createLazyEntity,
-  detectEntityType,
   encodeBoard,
   generateLazyEntityId,
   generateNumberedEntityId,
   hashBoard,
 } from '../../entity/factory';
+export { detectEntityType } from '../../protocol/identity';
 export {
   debugFundReserves,
   getEntityInfoFromChain,

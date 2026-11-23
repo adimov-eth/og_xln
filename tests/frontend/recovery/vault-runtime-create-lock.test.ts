@@ -178,7 +178,7 @@ describe('vault runtime creation lock', () => {
     expect(store).toContain('await vaultOperations.lockExpiredRuntimeLeases();');
     expect(panel).toContain("const connected = status === 'connected' && !booting && Boolean(activeEntityId);");
     expect(panel).toContain('if (!connected)');
-    expect(panel).toContain('<Gate />');
+    expect(panel).toContain('<Gate');
     expect(adapter).toContain('useApp.getState().lockAll();');
     expect(adapter).toContain('env.runtimeSeed = undefined;');
   });

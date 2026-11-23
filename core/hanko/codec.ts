@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { hexToBytes } from '../support/bytes/hex-bytes';
+import { hexToBytes, bytesToHex } from '../support/bytes/hex-bytes';
 import { FailureDispositionError } from '../protocol/errors/failure-taxonomy';
 
 import { decodeHankoAbi, encodeHankoAbi, type HankoAbiClaim } from './abi';
@@ -250,12 +250,6 @@ const signatureCount = (byteLength: number): number => {
 };
 
 const SECP256K1_HALF_ORDER_BYTES = hexToBytes(`0x${SECP256K1_HALF_ORDER.toString(16).padStart(64, '0')}`);
-const HEX_BYTE_TEXT = Array.from({ length: 256 }, (_, value) => value.toString(16).padStart(2, '0'));
-const bytesToLowerHex = (bytes: Uint8Array): string => {
-  let output = '0x';
-  for (let index = 0; index < bytes.length; index += 1) output += HEX_BYTE_TEXT[bytes[index] ?? 0];
-  return output;
-};
 
 /** Unsigned big-endian compare of two 32-byte scalars, no BigInt round trip. */
 const compareScalarBytes = (bytes: Uint8Array, offset: number, reference: Uint8Array): number => {
@@ -301,7 +295,7 @@ export const packHankoSignatures = (signatures: readonly Uint8Array[]): HankoHex
     }
   });
   packed.set(recoveryBits, signatures.length * 64);
-  return bytesToLowerHex(packed) as HankoHex;
+  return bytesToHex(packed) as HankoHex;
 };
 
 export const unpackHankoSignatures = (packed: string): readonly HankoHex[] => {
@@ -323,7 +317,7 @@ export const unpackHankoSignatures = (packed: string): readonly HankoHex[] => {
     signature.set(bytes.subarray(index * 64, (index + 1) * 64), 0);
     signature[64] = recovery;
     assertCanonicalSignature(signature, index);
-    return bytesToLowerHex(signature) as HankoHex;
+    return bytesToHex(signature) as HankoHex;
   });
 };
 

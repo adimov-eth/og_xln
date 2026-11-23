@@ -8,7 +8,7 @@ export type EntityOpenAction = 'r2r' | 'r2c' | 'pay' | 'swap' | 'dispute';
 /**
  * Every channel here must have a live producer AND consumer — a typed event nobody listens
  * on reads like working wiring. Dropped as fully unwired: account:updated, reserves:updated,
- * transfer:executed, layout:changed, rebalance:requested, timeMachine:play, vr:hand-payment,
+ * transfer:executed, layout:changed, rebalance:requested, timeMachine:play,
  * time:changed, entity:created, renderFps (Graph3D renders its own overlay).
  *
  * KNOWN DEAD CONTROL: ArchitectPanel's broadcast-style radios emit 'broadcast:style' and
@@ -16,14 +16,11 @@ export type EntityOpenAction = 'r2r' | 'r2c' | 'pay' | 'swap' | 'dispute';
  */
 type EventMap = {
   'entity:selected': { entityId: string };
-  'vr:toggle': {};
-  'vr:payment': { from: string; to: string }; // VR hand gesture payment
   'broadcast:toggle': { enabled: boolean };
   'broadcast:style': { style: 'raycast' | 'wave' | 'particles' };
   'settings:update': { key: string; value: unknown };
   'settings:reset': {};
   'camera:focus': { target: { x: number; y: number; z: number } };
-  'auto-demo:start': {}; // Auto-start demo in VR mode
   openEntityOperations: { entityId: string; entityName: string; signerId?: string; action?: EntityOpenAction }; // Open entity panel with optional action
   openJurisdiction: { jurisdictionName: string }; // Open jurisdiction panel (J-Machine click)
   focusPanel: { panelId: string }; // Focus any panel by ID

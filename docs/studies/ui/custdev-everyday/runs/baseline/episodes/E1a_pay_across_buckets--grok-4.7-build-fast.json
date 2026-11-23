@@ -1,0 +1,147 @@
+{
+  "episodeId": "E1a_pay_across_buckets--grok-4.7-build-fast--baseline",
+  "scenarioId": "E1a_pay_across_buckets",
+  "modelId": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7-build-fast",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Fee": true,
+      "q2Cash": true,
+      "q3NoManualMove": true
+    },
+    "rawAnswers": "1. The fee shown for sending $65.00 was $0.05.\n2. Cash left is $54.95.\n3. No manual move between wallet buckets was required before paying."
+  },
+  "turns": 5,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "See wallet actions and how to quote a payment to CornerCoffee before sending $65",
+      "args": {
+        "intent": "See wallet actions and how to quote a payment to CornerCoffee before sending $65",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 17311,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Learn how to quote the cost of paying CornerCoffee $65 before sending",
+      "args": {
+        "intent": "Learn how to quote the cost of paying CornerCoffee $65 before sending",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 9546,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Quote the cost of paying CornerCoffee $65 before sending the payment",
+      "args": {
+        "intent": "Quote the cost of paying CornerCoffee $65 before sending the payment",
+        "expr": "(quote-pay \"CornerCoffee\" 65)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": true,
+          "inline-preview": "CornerCoffee · $65.00 + $0.05 fee",
+          "reason": "Ready for 1-tap inline Pay across your Cash."
+        }
+      },
+      "latencyMs": 18330,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Send the quoted $65 payment to CornerCoffee after confirming the $0.05 fee and that it can complete",
+      "args": {
+        "intent": "Send the quoted $65 payment to CornerCoffee after confirming the $0.05 fee and that it can complete",
+        "action": "pay",
+        "args": {
+          "to": "CornerCoffee",
+          "amount_usd": 65
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Sent",
+          "to": "CornerCoffee",
+          "amount-usd": 65,
+          "fee-usd": 0.05,
+          "remaining-cash-usd": 54.95
+        }
+      },
+      "latencyMs": 10773,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "done",
+      "intent": "Confirm the CornerCoffee payment completed after the quote",
+      "args": {
+        "intent": "Confirm the CornerCoffee payment completed after the quote",
+        "summary": "Quoted CornerCoffee $65.00 with a $0.05 fee (within the $2 cap, ready to complete), then sent it. Status: Sent. Remaining cash: $54.95."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Quoted CornerCoffee $65.00 with a $0.05 fee (within the $2 cap, ready to complete), then sent it. Status: Sent. Remaining cash: $54.95."
+        }
+      },
+      "latencyMs": 11812,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 151934,
+  "finalSummary": "Quoted CornerCoffee $65.00 with a $0.05 fee (within the $2 cap, ready to complete), then sent it. Status: Sent. Remaining cash: $54.95."
+}

@@ -1,23 +1,40 @@
+import { useState } from 'react';
+import { CopyId } from '../components/CopyId';
+import { EverydaySettingsPanel } from '../components/everyday/EverydaySettingsPanel';
 import { Networks } from '../components/Networks';
 import { PageHead } from '../components/PageHead';
-import { CopyId } from '../components/CopyId';
 import { Appearance } from '../components/settings/Appearance';
 import { BalanceSettings, ScalePreview } from '../components/settings/BalanceSettings';
-import { Profile } from '../components/settings/Profile';
-import { Vault } from '../components/settings/Vault';
 import { Consensus } from '../components/settings/Consensus';
+import { Profile } from '../components/settings/Profile';
 import { StackManager } from '../components/settings/StackManager';
-import { useState } from 'react';
-import { peekXLN } from '../runtime/xln-loader';
+import { StewardPin } from '../components/settings/StewardPin';
+import { Vault } from '../components/settings/Vault';
 import { getAdapter, getEmbeddedEnv } from '../runtime/adapter';
+import { armedAttribute } from '@xln/frontend/lib/utils/control/armed-press';
+import { useClearTestData } from '../components/settings/useClearTestData';
 import { useApp } from '../runtime/store';
+import { useWalletPosture } from '../runtime/use-everyday-wallet';
+import { peekXLN } from '../runtime/xln-loader';
 
 export function SettingsScreen() {
+  const { posture, setPosture } = useWalletPosture();
   const [section, setSection] = useState<'general' | 'consensus'>('general');
   const height = useApp(s => s.height);
   const usdPerPx = useApp(s => s.usdPerPx);
   const adapter = getAdapter();
   const [diagnostics, setDiagnostics] = useState('');
+  const reset = useClearTestData();
+
+  if (posture === 'everyday') {
+    return (
+      <div className="everyday-screen fade-in">
+        <PageHead title="Settings" sub="Profile, backups, theme, and Pro tools." />
+        <EverydaySettingsPanel />
+      </div>
+    );
+  }
+
   const inspect = () => {
     const env = getEmbeddedEnv();
     if (!env) return setDiagnostics('No local runtime');
@@ -52,6 +69,7 @@ export function SettingsScreen() {
       ),
     );
   };
+
   return (
     <div className="screen fade-in">
       <PageHead title="Settings" eyebrow="Wallet" sub="Identity, appearance, the guided tour, runtime and vault." />
@@ -79,7 +97,47 @@ export function SettingsScreen() {
       ) : (
         <div className="two-col">
           <div className="flat-col">
+            <div className="setting first">
+              <div>
+                <div className="t">Trading &amp; operator tools (Pro)</div>
+                <div className="s">Turn off to return to the calm Everyday wallet view.</div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={posture === 'pro'}
+                aria-label="Trading and operator tools (Pro)"
+                className="everyday-switch"
+                onClick={() => setPosture('everyday')}
+                data-testid="toggle-pro-mode"
+              >
+                <span className="everyday-switch-track">
+                  <span className="everyday-switch-thumb" />
+                </span>
+              </button>
+            </div>
+            <div className="setting">
+              <div>
+                <div className="t">Test data</div>
+                <div className="s">Your test balance goes to zero and test accounts and activity leave this device. Your login stays.</div>
+              </div>
+              <button
+                type="button"
+                className={reset.armed || reset.resetting ? 'btn sm danger reset-action' : 'btn sm reset-action'}
+                disabled={reset.resetting}
+                onClick={reset.press}
+                onBlur={reset.disarm}
+                data-armed={armedAttribute(reset.arm)}
+                data-testid="settings-clear-test-data"
+              >
+                {reset.label}
+              </button>
+              <span className="sr-only" role="status">
+                {reset.armed ? 'Press again to clear test data. This cannot be undone.' : ''}
+              </span>
+            </div>
             <Profile />
+            <StewardPin />
             <Appearance />
             <BalanceSettings />
             <div className="sect">

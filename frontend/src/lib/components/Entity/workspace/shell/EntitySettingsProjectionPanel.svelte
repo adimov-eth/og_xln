@@ -9,9 +9,11 @@
 </script>
 
 <script lang="ts">
+  import { page } from '$app/state';
   import { Network, PlusCircle, Save, ShieldCheck, SlidersHorizontal } from 'lucide-svelte';
   import type { RuntimeReplica, HubRebalanceConfig } from '@xln/core/api/public/runtime-module';
   import { errorLog } from '#lib/stores/errorLogStore.ts';
+  import { resolveEffectivePosture, setWalletPosture, walletPosture } from '#lib/stores/everyday/walletPostureStore.ts';
   import { runtimeControllerHandle } from '#lib/stores/runtimeControllerStore.ts';
   import { settings, settingsOperations } from '#lib/stores/settingsStore.ts';
   import {
@@ -44,6 +46,7 @@
   import PushWakePanel from '#lib/components/Settings/PushWakePanel.svelte';
   import StackManager from '#lib/components/Settings/StackManager.svelte';
   import EntityConsensusSettingsPanel from './EntityConsensusSettingsPanel.svelte';
+  import StewardPinPanel from '../../governance/StewardPinPanel.svelte';
   import type { EntityConsensusSettingsView } from '../entity-consensus-settings';
   import type { SettingsSubview } from '../entity-panel-routing';
   import type { ThemeName } from '#lib/types/ui.ts';
@@ -105,6 +108,7 @@
   let recoverySaving = false;
   let recoveryDiscoveryStatus: RuntimeRecoveryDiscoveryStatus | null = null;
   let recoveryDiscoveryLoadedFor = '';
+  let pendingPosture: 'everyday' | 'pro' | null = null;
 
   const themeOptions: Array<{ value: ThemeName; label: string }> = [
     { value: 'dark', label: 'Dark' },
@@ -613,6 +617,28 @@
     </section>
   {:else}
 
+  <section class="panel" data-testid="settings-posture-panel">
+    <label class="settings-control settings-control--toggle">
+      <span class="settings-control-copy">
+        <strong>Trading &amp; operator tools (Pro)</strong>
+        <small>Show orderbooks, cross-chain swaps, credit lanes, and node controls.</small>
+      </span>
+      <!-- pendingPosture holds the clicked toggle state until EntityWorkspace swaps shells, preventing checkbox flicker during unmount. -->
+      <input
+        type="checkbox"
+        data-testid="toggle-pro-mode"
+        checked={(pendingPosture ?? resolveEffectivePosture($walletPosture, typeof window !== 'undefined' ? page.url.search : '')) === 'pro'}
+        on:change={(event) => {
+          const nextPosture = (event.currentTarget as HTMLInputElement).checked ? 'pro' : 'everyday';
+          pendingPosture = nextPosture;
+          setWalletPosture(nextPosture);
+        }}
+      />
+    </label>
+  </section>
+
+  {#if normalizedEntityId}<StewardPinPanel entityId={normalizedEntityId} />{/if}
+
   <div class="settings-grid">
     <section class="panel">
       <div class="panel-title">
@@ -765,7 +791,7 @@
 
   .eyebrow {
     margin: 0 0 4px;
-    color: var(--theme-accent, #fbbf24);
+    color: var(--theme-accent, #c5cfde);
     font-size: 12px;
     font-weight: 800;
     text-transform: uppercase;
@@ -780,10 +806,10 @@
   .runtime-pill {
     gap: 8px;
     padding: 8px 10px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 34%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 34%, transparent);
     border-radius: 8px;
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 10%, transparent);
-    color: var(--theme-accent, #fbbf24);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent);
+    color: var(--theme-accent, #c5cfde);
     font-size: 12px;
     text-transform: uppercase;
   }
@@ -807,8 +833,8 @@
   }
 
   .settings-tabs button.active {
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 42%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 12%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 42%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent);
     color: var(--theme-text-primary, #f4f4f5);
   }
 
@@ -859,7 +885,7 @@
     width: 18px;
     height: 18px;
     padding: 0;
-    accent-color: var(--theme-accent, #fbbf24);
+    accent-color: var(--theme-accent, #c5cfde);
   }
 
   .panel-title {
@@ -934,7 +960,7 @@
   textarea {
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #3f3f46) 84%, transparent);
+    border: 1px solid var(--theme-input-border, #3f3f46);
     border-radius: 8px;
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 94%, transparent);
     color: var(--theme-text-primary, #f4f4f5);
@@ -950,7 +976,7 @@
   select {
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--theme-input-border, #3f3f46) 84%, transparent);
+    border: 1px solid var(--theme-input-border, #3f3f46);
     border-radius: 8px;
     background: color-mix(in srgb, var(--theme-input-bg, #09090b) 94%, transparent);
     color: var(--theme-text-primary, #f4f4f5);
@@ -971,7 +997,7 @@
 
   .primary-action {
     border: 0;
-    background: var(--theme-accent, #fbbf24);
+    background: var(--theme-accent, #c5cfde);
     color: #0a0a0a;
     min-height: 44px;
   }
@@ -979,9 +1005,9 @@
   .secondary-action {
     min-height: 36px;
     padding: 0 12px;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 40%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 12%, transparent);
-    color: var(--theme-accent, #fbbf24);
+    border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 40%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 12%, transparent);
+    color: var(--theme-accent, #c5cfde);
   }
 
   .primary-action:disabled,
@@ -1051,7 +1077,7 @@
   }
 
   .recovery-coverage-card[data-status='configured'] .coverage-status {
-    color: var(--theme-accent, #fbbf24);
+    color: var(--theme-accent, #c5cfde);
   }
 
   .recovery-coverage-card[data-status='missing'] .coverage-status {
@@ -1088,8 +1114,8 @@
   }
 
   .recovery-mode-option.selected {
-    border-color: color-mix(in srgb, var(--theme-accent, #fbbf24) 54%, transparent);
-    background: color-mix(in srgb, var(--theme-accent, #fbbf24) 10%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent, #c5cfde) 54%, transparent);
+    background: color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent);
   }
 
   .recovery-mode-option:disabled {

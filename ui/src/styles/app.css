@@ -33,12 +33,13 @@
 	width: 30px;
 	height: 30px;
 	border-radius: 9px;
-	background: linear-gradient(135deg, color-mix(in srgb, var(--accent-fill) 80%, #ffffff), var(--accent-fill));
+	/* Machined silver tile in every posture: the mark is the brand, not the interactive accent. */
+	background: linear-gradient(145deg var(--in-oklab), var(--ev-btn-primary-top), var(--ev-btn-primary-bot));
 	display: grid;
 	place-items: center;
-	color: #fff;
+	color: var(--ev-btn-primary-fg);
 	flex: none;
-	box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
 .rail-item {
@@ -837,6 +838,15 @@ button.more:hover {
 	gap: 8px;
 }
 
+/* A field that takes typed input is a control: its edge carries the 3:1 boundary. */
+.field:not(.card .field):has(.input:not(.boxed)) {
+	box-shadow: inset 0 0 0 1px var(--ev-input-edge), var(--shadow-card);
+}
+
+.field:not(.card .field):has(.input:not(.boxed):focus) {
+	box-shadow: inset 0 0 0 1px var(--ink), 0 0 0 3px color-mix(in oklab, var(--ink) 18%, transparent), var(--shadow-card);
+}
+
 .field-head {
 	display: flex;
 	justify-content: space-between;
@@ -874,7 +884,7 @@ button.more:hover {
 }
 
 .input.big {
-	font-size: 30px;
+	font-size: var(--money-lg);
 	font-weight: 600;
 	letter-spacing: -0.02em;
 	color: var(--display);
@@ -884,7 +894,7 @@ button.more:hover {
 
 .input.boxed {
 	background: var(--surface);
-	border: 1px solid var(--line-2);
+	border: 1px solid var(--ev-input-edge);
 	border-radius: 8px;
 	padding: 10px 12px;
 	font-size: 14px;
@@ -999,7 +1009,7 @@ textarea.input.boxed {
 
 /* ---------- entity switcher ---------- */
 
-/* The identity block on Home and Desk, opened as a picker over the runtime's entities. */
+/* The identity block on Home, opened as a picker over the runtime's entities. */
 .entity-switch {
 	display: flex;
 	align-items: center;
@@ -1183,6 +1193,7 @@ textarea.input.boxed {
 	box-shadow: 0 0 0 1px var(--line-2), 0 1px 1px rgba(0, 0, 0, 0.04);
 	color: var(--ink);
 	width: 100%;
+	padding-inline: 16px;
 	transition:
 		background var(--dur-fast) var(--ease),
 		box-shadow var(--dur-fast) var(--ease),
@@ -1208,6 +1219,17 @@ textarea.input.boxed {
 	filter: brightness(1.07);
 }
 
+/* With the silver accent the primary is brushed metal in every posture, not a flat fill:
+   the Everyday gradient, 1px brush lines, and a streak where the ground's glare falls. */
+:root[data-accent='silver']:not([data-material='terminal']) .btn.primary:not(:disabled) {
+	background:
+		linear-gradient(calc(var(--ev-bevel-angle, 128deg) - 16deg), transparent calc(var(--ev-glare-pos, 46%) - 14%), var(--ev-primary-streak) var(--ev-glare-pos, 46%), transparent calc(var(--ev-glare-pos, 46%) + 12%)),
+		var(--ev-brush),
+		linear-gradient(calc(var(--ev-bevel-angle, 128deg) + 26deg) var(--in-oklab), var(--ev-btn-primary-top) 0%, var(--ev-btn-primary-mid) 52%, var(--ev-btn-primary-bot) 100%);
+	color: var(--ev-btn-primary-fg);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78), 0 1px 3px rgba(0, 0, 0, 0.36);
+}
+
 /* Disabled is grey, never a faded accent that still looks pressable. */
 .btn.primary:disabled,
 .actions.pills .btn.primary:disabled {
@@ -1231,6 +1253,25 @@ textarea.input.boxed {
 	padding: 0 14px;
 }
 
+/* On touch screens every Pro button takes taps across at least 48px without changing how it looks, so Pro stays dense. */
+@media (pointer: coarse) {
+	.app:not([data-posture='everyday']) .btn,
+	.gate .btn {
+		position: relative;
+	}
+
+	.app:not([data-posture='everyday']) .btn::after,
+	.gate .btn::after {
+		content: '';
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 50%;
+		height: max(100%, 48px);
+		transform: translateY(-50%);
+	}
+}
+
 .btn.quiet {
 	background: none;
 	box-shadow: none;
@@ -1250,7 +1291,30 @@ textarea.input.boxed {
 .btn.danger {
 	background: var(--dispute-dim);
 	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dispute) 30%, transparent);
-	color: var(--dispute);
+	/* The label mixes toward ink so it holds 4.5:1 on its own tint in both themes. */
+	color: color-mix(in oklab, var(--dispute) 70%, var(--ink));
+}
+
+/* Danger keeps its identity in every state: hover deepens the tint, press sinks, disabled fades. */
+.btn.danger:hover:not(:disabled) {
+	color: color-mix(in oklab, var(--dispute) 58%, var(--ink));
+	background: color-mix(in oklab, var(--dispute) 20%, var(--dispute-dim));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dispute) 50%, transparent);
+}
+
+.btn.danger:active:not(:disabled) {
+	color: color-mix(in oklab, var(--dispute) 58%, var(--ink));
+	background: color-mix(in oklab, var(--dispute) 14%, var(--dispute-dim));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dispute) 50%, transparent), inset 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.btn.danger:disabled {
+	opacity: 0.6;
+}
+
+/* An irreversible action keeps its width while it runs, so the row never reflows under the finger. */
+.btn.reset-action {
+	min-width: 9.5em;
 }
 
 /* A row of equal flow buttons. */
@@ -1614,7 +1678,8 @@ textarea.input.boxed {
 
 .switch.on::after {
 	transform: translateX(16px);
-	background: #fff;
+	/* The ink that reads on the accent: obsidian on silver, white on indigo. */
+	background: var(--btn-ink);
 }
 
 .scale-row {
@@ -1650,14 +1715,29 @@ textarea.input.boxed {
 }
 
 .toast {
-	background: var(--surface-2);
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	background: var(--surface-3);
 	border: 1px solid var(--line-2);
 	border-radius: 12px;
-	padding: 12px 16px;
+	padding: 8px 8px 8px 16px;
 	font-size: 13px;
 	box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 	animation: fade-in var(--dur-slow) var(--ease);
 	overflow-wrap: anywhere;
+}
+
+/* The message takes the row; actions and the dismiss control stay on its right edge. */
+.toast > span {
+	flex: 1;
+	min-width: 0;
+	padding: 4px 0;
+}
+
+.toast .icon-btn {
+	background: transparent;
+	box-shadow: none;
 }
 
 .toast button { pointer-events: auto; }
@@ -1715,6 +1795,29 @@ textarea.input.boxed {
 	max-width: 52ch;
 	overflow-wrap: anywhere;
 	white-space: pre-wrap;
+}
+
+.gate-recover {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 12px;
+}
+
+.gate-recover .gate-sub {
+	margin-bottom: 0;
+}
+
+.gate-recover .gate-diagnostic {
+	margin-top: 0;
+}
+
+.gate-diagnostic {
+	margin-top: 18px;
+	color: var(--ink-3);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+	user-select: text;
 }
 
 .gate-cards {
@@ -2085,93 +2188,6 @@ textarea.input.boxed {
 	background: var(--surface-3);
 }
 
-/* Desk: the dense console */
-.desk-grid {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) 360px;
-	gap: 18px;
-	align-items: start;
-}
-.desk-table {
-	width: 100%;
-	border-collapse: collapse;
-	font-size: 13px;
-	font-variant-numeric: tabular-nums;
-}
-.desk-table th {
-	text-align: right;
-	font-weight: 600;
-	font-size: 12.5px;
-	color: var(--ink-2);
-	padding: 8px 10px;
-	border-bottom: 1px solid var(--line-2);
-	white-space: nowrap;
-}
-.desk-table th:first-child,
-.desk-table td:first-child {
-	text-align: left;
-}
-.desk-table td {
-	font-variant-numeric: tabular-nums;
-	text-align: right;
-	padding: 8px 10px;
-	border-bottom: 1px solid var(--line);
-	white-space: nowrap;
-	color: var(--ink);
-}
-.desk-table tr.tappable:hover td {
-	background: var(--surface-2);
-	cursor: pointer;
-}
-.desk-table td.bar-cell {
-	width: 220px;
-	padding-right: 0;
-}
-.desk-table tfoot td {
-	font-weight: 600;
-	border-top: 1px solid var(--line-2);
-	border-bottom: 0;
-}
-.desk-stat {
-	display: grid;
-	grid-template-columns: repeat(4, minmax(0, 1fr));
-	gap: 10px;
-	margin-bottom: 16px;
-}
-.desk-stat .card {
-	padding: 12px 14px;
-	margin: 0;
-}
-.desk-stat .k {
-	font-size: 12.5px;
-	font-weight: 500;
-	color: var(--ink-2);
-}
-.desk-stat .v {
-	font-size: 22px;
-	font-weight: 600;
-	margin-top: 2px;
-}
-.kbd {
-	font-family: var(--font-mono);
-	font-size: 11px;
-	padding: 1px 6px;
-	border: 1px solid var(--line-2);
-	border-radius: 5px;
-	color: var(--ink-2);
-}
-.desk-grid .card {
-	overflow: hidden;
-}
-.desk-grid .card + .card {
-	margin-top: 16px;
-}
-@media (max-width: 1200px) {
-	.desk-grid {
-		grid-template-columns: minmax(0, 1fr);
-	}
-}
-
 /* Settings: design sample + swatches inside segmented controls */
 .design-sample {
 	margin: 12px 0 14px;
@@ -2349,7 +2365,7 @@ textarea.input.boxed {
 .receive-spectrum input[type='range']::-webkit-slider-thumb {
 	appearance: none; width: 28px; height: 28px; border-radius: 50%;
 	background: color-mix(in srgb, var(--surface) 80%, transparent);
-	border: 2px solid var(--ink); backdrop-filter: blur(12px);
+	border: 2px solid var(--ink); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 	box-shadow: 0 2px 10px color-mix(in srgb, var(--ink) 15%, transparent), inset 0 1px 4px var(--line-2);
 }
 .receive-spectrum input[type='range']::-moz-range-thumb {

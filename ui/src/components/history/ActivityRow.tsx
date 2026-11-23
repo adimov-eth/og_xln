@@ -47,8 +47,8 @@ export function movementParty(movement: Movement, names: Map<string, string>): s
 }
 
 /** "14:05" today, "Oct 1, 14:05" before; the frame stays in the detail view for whoever needs the proof. */
-function movementTime(movement: Movement): string {
-  if (!movement.timestamp) return `frame #${movement.height}`;
+function movementTime(movement: Movement, hideFrameNumber = false): string {
+  if (!movement.timestamp) return hideFrameNumber ? 'Recent' : `frame #${movement.height}`;
   const at = new Date(movement.timestamp);
   const time = at.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
   if (at.toDateString() === new Date().toDateString()) return time;
@@ -61,19 +61,21 @@ export function ActivityRow({
   first,
   selected,
   onClick,
+  hideFrameNumber = false,
 }: {
   movement: Movement;
   names: Map<string, string>;
   first: boolean;
   selected?: boolean;
   onClick?: () => void;
+  hideFrameNumber?: boolean;
 }) {
   const amount = formatMovementAmount(movement);
   const { icon, cls } = movementIcon(movement);
   const party = movementParty(movement, names);
   // A credit limit or collateral figure is a setting, not money that moved: keep it out of the money column.
   const amountInline = movement.kind === 'account' || movement.kind === 'settlement';
-  const time = movementTime(movement);
+  const time = movementTime(movement, hideFrameNumber);
   const detail = [party, amountInline && amount ? amount : ''].filter(Boolean).join(' · ');
   const Tag = onClick ? 'button' : 'span';
   return (

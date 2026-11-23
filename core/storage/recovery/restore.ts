@@ -4,7 +4,7 @@
  * Human-audit importance: 100/100 — this is the event-sourcing equivalence proof path.
  */
 import { Level } from 'level';
-import { type RuntimeOutputRoutingDeps } from '../../runtime/delivery/topology/output-routing';
+import { type RuntimeOutputRoutingDeps } from '../../runtime/delivery/pending';
 import { applyRecoveryRuntimeOutputPlan } from '../../runtime/delivery/recovery-output';
 import {
   assertPersistedContractConfigReady,

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { Glob } from 'bun';
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
@@ -73,13 +74,9 @@ const isGenericPhantomIntersection = (node: ts.TypeAliasDeclaration): boolean =>
 };
 
 const collectFiles = (directory: string): string[] =>
-  fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-    const target = path.join(directory, entry.name);
-    if (entry.isDirectory()) return collectFiles(target);
-    if (!entry.isFile() || !target.endsWith('.ts') || target.endsWith('.d.ts')) return [];
-    const relative = path.relative(ROOT, target);
-    return /\/(?:__tests__|qa|scenarios|scripts)\//.test(`/${relative}`) ? [] : [target];
-  });
+  [...new Glob(`${directory}/**/*.ts`).scanSync({ dot: true, onlyFiles: true })]
+    .filter(target => !target.endsWith('.d.ts') && !/\/(?:__tests__|qa|scenarios|scripts)\//.test(`/${path.relative(ROOT, target)}`))
+    .sort();
 
 const errors: string[] = [];
 for (const ownerModule of OWNER_MODULES) {

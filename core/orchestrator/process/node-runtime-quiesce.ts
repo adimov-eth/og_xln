@@ -14,6 +14,7 @@ import type { RuntimeP2PConfig } from '../../runtime/envelope/p2p-types';
 import type { RuntimeReplica } from '../../runtime/types';
 import { JSON_HEADERS } from '../../api/server/utils';
 import { safeStringify } from '../../protocol/serialization';
+import { errorMessage } from '../../support/boundary-guards';
 
 export type NodeRuntimeQuiesceOptions = {
   workTimeoutMs: number;
@@ -44,9 +45,6 @@ export type NodeRuntimeCheckpointResult = NodeRuntimeQuiesceResult & {
   wasPersistencePaused: boolean;
 };
 
-const errorText = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
-
 type ChildQuiesceLog = (event: 'quiesce.refused' | 'quiesce.post_failed', details: Record<string, unknown>) => void;
 
 /**
@@ -60,7 +58,7 @@ export const requestChildQuiesce = async (url: string, timeoutMs: number, log: C
     if (response.ok) return;
     log('quiesce.refused', { url, status: response.status, body: (await response.text()).slice(0, 500) });
   } catch (error) {
-    log('quiesce.post_failed', { url, error: errorText(error) });
+    log('quiesce.post_failed', { url, error: errorMessage(error) });
   }
 };
 
@@ -105,7 +103,7 @@ export const quiesceNodeRuntime = async (
   try {
     await stopJurisdictionWatchersAndWait(env);
   } catch (error) {
-    failures.push(`watchers:${errorText(error)}`);
+    failures.push(`watchers:${errorMessage(error)}`);
   }
   try {
     runtimeDrained = await waitForRuntimeWorkDrained(
@@ -116,7 +114,7 @@ export const quiesceNodeRuntime = async (
     );
     if (!runtimeDrained) failures.push('work_drain_timeout');
   } catch (error) {
-    failures.push(`work_drain:${errorText(error)}`);
+    failures.push(`work_drain:${errorMessage(error)}`);
   }
   if (runtimeDrained && afterInitialDrain) {
     try {
@@ -129,19 +127,19 @@ export const quiesceNodeRuntime = async (
       );
       if (!runtimeDrained) failures.push('barrier_drain_timeout');
     } catch (error) {
-      failures.push(`barrier:${errorText(error)}`);
+      failures.push(`barrier:${errorMessage(error)}`);
     }
   }
   try {
     runtimeIdle = await stopRuntimeLoopAndWait(env, options.loopTimeoutMs);
     if (!runtimeIdle) failures.push('loop_drain_timeout');
   } catch (error) {
-    failures.push(`loop_drain:${errorText(error)}`);
+    failures.push(`loop_drain:${errorMessage(error)}`);
   }
   try {
     await stopP2PAndWait(env, options.loopTimeoutMs);
   } catch (error) {
-    failures.push(`p2p:${errorText(error)}`);
+    failures.push(`p2p:${errorMessage(error)}`);
   }
 
   if (failures.length > 0) {
@@ -224,7 +222,7 @@ const quiesceForCheckpoint = async (
     // loop beside it is unsafe, so the Runtime halts for the operator.
     if (state.loopPromise || state.processingPromise) {
       haltRuntimeRequiresOperator(env, error);
-      throw new Error(`NODE_RUNTIME_CHECKPOINT_FAILED:quiesce:${errorText(error)}|halted:loop_not_drained`, {
+      throw new Error(`NODE_RUNTIME_CHECKPOINT_FAILED:quiesce:${errorMessage(error)}|halted:loop_not_drained`, {
         cause: error,
       });
     }
@@ -232,8 +230,8 @@ const quiesceForCheckpoint = async (
     // unhalted Runtime that refuses every later checkpoint as already quiescing.
     const resumeFailure = restoreNodeRuntimeProducers(env, state, producers, wasPersistencePaused);
     const failures = [
-      `quiesce:${errorText(error)}`,
-      ...(resumeFailure ? [`resume:${errorText(resumeFailure)}`] : []),
+      `quiesce:${errorMessage(error)}`,
+      ...(resumeFailure ? [`resume:${errorMessage(resumeFailure)}`] : []),
     ];
     throw new Error(`NODE_RUNTIME_CHECKPOINT_FAILED:${failures.join('|')}`, { cause: error });
   }
@@ -285,8 +283,8 @@ export const checkpointNodeRuntime = async (
   const resumeFailure = restoreNodeRuntimeProducers(env, state, producers, Boolean(state.persistencePaused));
 
   const failures = [
-    ...(persistFailure ? [`persist:${errorText(persistFailure)}`] : []),
-    ...(resumeFailure ? [`resume:${errorText(resumeFailure)}`] : []),
+    ...(persistFailure ? [`persist:${errorMessage(persistFailure)}`] : []),
+    ...(resumeFailure ? [`resume:${errorMessage(resumeFailure)}`] : []),
   ];
   if (failures.length > 0) {
     throw new Error(`NODE_RUNTIME_CHECKPOINT_FAILED:${failures.join('|')}`, {

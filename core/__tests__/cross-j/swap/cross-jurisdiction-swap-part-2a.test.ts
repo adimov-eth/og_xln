@@ -148,12 +148,10 @@ import {
   type RuntimeEntityRoutingDeps,
 } from '../../../runtime/delivery/topology/entity-routing';
 
-import {
-  buildPendingNetworkOutputs,
-  buildRouteOutputKey,
-  dispatchEntityOutputs,
-  planEntityOutputs,
-} from '../../../runtime/delivery/topology/output-routing';
+import { buildRouteOutputKey } from '../../../runtime/delivery/identity';
+import { buildPendingNetworkOutputs } from '../../../runtime/delivery/pending';
+import { planEntityOutputs } from '../../../runtime/delivery/plan';
+import { dispatchEntityOutputs } from '../../../runtime/delivery/dispatch';
 
 import { deliveryAccepted, deliveryDeferred } from '../../../protocol/payments/delivery-result';
 

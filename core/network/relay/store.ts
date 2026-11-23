@@ -5,7 +5,7 @@
  * and debug events. No WebSocket API, no crypto, no RuntimeReplica.
  */
 
-import { isRuntimeId, normalizeRuntimeId } from '../p2p/auth/runtime-id';
+import { isRuntimeId, normalizeRuntimeId } from '../../protocol/identity/runtime-id';
 import { canonicalizeProfile, type Profile } from '../../entity/profile';
 import { safeStringify } from '../../protocol/serialization';
 import {

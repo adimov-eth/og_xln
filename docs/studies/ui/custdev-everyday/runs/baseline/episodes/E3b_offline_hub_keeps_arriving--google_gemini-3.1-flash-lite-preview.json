@@ -1,0 +1,97 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--google/gemini-3.1-flash-lite-preview--baseline",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "google/gemini-3.1-flash-lite-preview",
+  "lineage": "google-gemini-3.1-flash-lite",
+  "specMode": "baseline",
+  "passed": false,
+  "statePassed": true,
+  "comprehension": {
+    "passed": false,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": false,
+      "q3HubOffline": true
+    },
+    "rawAnswers": "1. I have $0.00 in settled Cash available to spend right now.\n2. The $50.00 payment is currently being held separately while it finishes processing.\n3. It cannot settle into my Cash balance because the payment provider is currently offline."
+  },
+  "turns": 3,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check the home screen to see pending payments and current balance.",
+      "args": {
+        "expr": "(screen 'home)",
+        "intent": "Check the home screen to see pending payments and current balance."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 0,
+            "cash-formatted": "$0.00",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "incoming-status": "Payment still finishing — we will keep retrying automatically."
+          },
+          "buttons": [
+            "Pay",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 1797,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "act",
+      "intent": "Wait for the incoming payment to finish.",
+      "args": {
+        "intent": "Wait for the incoming payment to finish.",
+        "args": {},
+        "action": "wait-settlement"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 1731,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "done",
+      "intent": "Explain the status of the incoming payment and the ability to pay CornerCoffee.",
+      "args": {
+        "summary": "The $50.00 payment is still processing and the payment provider is currently offline, so the funds are not yet available in your cash balance. Because your current cash balance is $0.00, you cannot pay CornerCoffee $10.00 at this time.",
+        "intent": "Explain the status of the incoming payment and the ability to pay CornerCoffee."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "The $50.00 payment is still processing and the payment provider is currently offline, so the funds are not yet available in your cash balance. Because your current cash balance is $0.00, you cannot pay CornerCoffee $10.00 at this time."
+        }
+      },
+      "latencyMs": 2716,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Check your incoming $50.00 payment and wait to see if it finishes. Verify whether you can pay CornerCoffee $10.00 now, and explain why.\"\nNote: task verification failed (comprehension={\"q1StillZero\":true,\"q2Arriving\":false,\"q3HubOffline\":true}).\nHere is what you tried:\nTurn 1: discover(intent=\"Check the home screen to see pending payments and current balance.\", args={\"expr\":\"(screen 'home)\",\"intent\":\"Check the home screen to see pending payments and current balance.\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"note\":\"Your money, ready to spend or cash out anytim\nTurn 2: act(intent=\"Wait for the incoming payment to finish.\", args={\"intent\":\"Wait for the incoming payment to finish.\",\"args\":{},\"action\":\"wait-settlement\"}) -> OK: {\"status\":\"Still finishing — payment provider is offline; arriving funds kept separate from Cash.\",\"cash-usd\":0,\"arriving-usd\":50}\nTurn 3: done(intent=\"Explain the status of the incoming payment and the ability to pay CornerCoffee.\", args={\"summary\":\"The $50.00 payment is still processing and the payment provider is currently offline, so the funds are not yet available in your cash balance. Because your current cash balance is $0.00, you cannot pay CornerCoffee $10.00 at this time.\",\"intent\":\"Explain the status of the incoming payment and the ability to pay CornerCoffee.\"}) -> OK: {\"done\":true,\"summary\":\"The $50.00 payment is still processing and the payment provider is currently offline, so the funds are not yet available in your cash balance. Because your \nHere is what would have worked:\ndiscover(\"(cash)\"), act(\"wait-settlement\"), discover(\"(quote-pay \\\"CornerCoffee\\\" 10)\") or observe $0 Cash while $50 stays arriving, then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The interface design made this task difficult due to a lack of clarity regarding \"arriving\" funds and the disconnect between the home screen and the payment flow. Here is the concrete feedback:\n\n**1. Misleading \"Cash\" Labeling**\n*   **The Issue:** The home screen displays a single \"Cash\" balance of $0.00. This implies that *all* available funds are represented by that number.\n*   **The Fix:** The UI should explicitly show \"Available Cash\" vs. \"Pending/Arriving Funds\" on the home screen. If the $50 is \"arriving,\" it should be visible as a secondary line item (e.g., \"Pending: $50.00\") rather than hidden behind a status message that only appears after an action is triggered.\n\n**2. Missing Cues for Payment Eligibility**\n*   **The Issue:** There is no \"pre-flight\" check or indicator on the home screen to tell me if I *can* pay a merchant. I had to guess that the $50 wasn't spendable.\n*   **The Fix:** The payment interface should provide a \"Spendable Balance\" cue. If I attempt to pay $10, the UI should immediately show a warning like \"Insufficient available funds (Available: $0.00, Pending: $50.00)\" rather than forcing me to infer this from the home screen state.\n\n**3. Ambiguous \"Wait\" Action**\n*   **The Issue:** The `wait-settlement` action returned a status message (\"payment provider is offline\") that felt like a system error rather than a state of the transaction.\n*   **The Fix:** The status message should be actionable. Instead of just saying the provider is offline, it should say: \"Provider offline. Funds will be available once connection is restored.\" This clarifies that the *system* is the blocker, not the *transaction* itself.\n\n**4. Disconnect Between \"Home\" and \"Pay\"**\n*   **The Issue:** The \"Home\" screen is a summary, but it doesn't summarize *all* relevant financial states (like the offline provider).\n*   **The Fix:** If the payment provider is offline, the home screen should display a persistent alert banner (e.g., \"Payment services currently limited\") so the user knows immediately that incoming/outgoing transactions are stalled, rather than having to \"wait\" to discover the system is down.",
+    "latencyMs": 3375
+  },
+  "durationMs": 26010,
+  "finalSummary": "The $50.00 payment is still processing and the payment provider is currently offline, so the funds are not yet available in your cash balance. Because your current cash balance is $0.00, you cannot pay CornerCoffee $10.00 at this time."
+}

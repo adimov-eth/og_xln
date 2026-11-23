@@ -9,6 +9,8 @@
   import BigIntInput from '../../../Common/BigIntInput.svelte';
   import EntitySelect from '../../workspace/shell/EntitySelect.svelte';
   import { requireTokenDecimals } from '../../token-metadata';
+  import { signedCreditLimitFor } from '../account-credit-view';
+  import { newCreditRequestId } from '../entity-action-txs';
 
   export let entityId: string;
   export let actionRuntimeEnv: RuntimeReplica | null = null;
@@ -37,7 +39,7 @@
   $: signedCredit = signedDelta && activeXlnFunctions
     ? activeXlnFunctions.deriveDelta(signedDelta, entityId.toLowerCase() < effectiveCounterparty.toLowerCase())
     : null;
-  $: currentSignedLimit = signedCredit ? (mode === 'extend' ? signedCredit.ownCreditLimit : signedCredit.peerCreditLimit) : null;
+  $: currentSignedLimit = signedCredit ? signedCreditLimitFor(mode, signedCredit) : null;
   $: tokenList = activeXlnFunctions
     ? [1, 2, 3].map((id) => ({ id, symbol: activeXlnFunctions.getTokenInfo(id).symbol }))
     : [];
@@ -55,13 +57,6 @@
         type: 'requestCredit';
         data: { counterpartyEntityId: string; tokenId: number; amount: bigint; requestId: string };
       };
-
-  /** 'credit-<16 hex>': the Account replay id of one credit request. */
-  function newCreditRequestId(): string {
-    const bytes = new Uint8Array(8);
-    globalThis.crypto.getRandomValues(bytes);
-    return `credit-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-  }
 
   /**
    * Extend: we set our own credit line to the counterparty. Request: we sign a
@@ -150,7 +145,7 @@
 
 <style>
   .action-card {
-    background: #18181b;
+    background: var(--theme-surface, #121418);
     border: 1px solid #27272a;
     border-radius: 10px;
     padding: 12px;
@@ -159,12 +154,12 @@
 
   .action-card h4 {
     margin: 0 0 8px 0;
-    color: #e4e4e7;
+    color: var(--theme-text-primary, #e4e4e7);
     font-size: 0.8em;
     font-weight: 600;
   }
 
-  .credit-explanation { margin: 8px 0; color: #a1a1aa; font-size: 0.8em; line-height: 1.5; }
+  .credit-explanation { margin: 8px 0; color: var(--theme-text-secondary, #a1a1aa); font-size: 0.8em; line-height: 1.5; }
 
   .action-form {
     display: flex;
@@ -175,18 +170,18 @@
 
   .form-select {
     padding: 9px 10px;
-    background: #09090b;
+    background: var(--theme-background, #07080b);
     border: 1px solid #27272a;
     border-radius: 8px;
-    color: #e4e4e7;
+    color: var(--theme-text-primary, #e4e4e7);
     font-size: 0.88em;
     min-width: 100px;
   }
 
   .form-select:focus {
-    border-color: #fbbf24;
+    border-color: var(--theme-accent, #c5cfde);
     outline: none;
-    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.1);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accent, #c5cfde) 10%, transparent);
   }
 
   .action-button {

@@ -10,6 +10,7 @@
  */
 
 import { Depository__factory } from '../../jurisdictions/typechain-types';
+import { raceTimeout } from '../support/time';
 import { createXlnJsonRpcProvider } from '../jurisdiction/adapter';
 import { assertWatchtowerRpcUrlAllowed } from './action';
 import { buildDisputeWakeNotification, disputeWakeCollapseKey, selectWakeTargets } from './push/dispute-wake';
@@ -21,6 +22,7 @@ import type {
   PushSender,
   StoredPushRegistration,
 } from './push/types';
+import { errorMessage } from '../support/boundary-guards';
 
 const DISPUTE_INTERFACE = Depository__factory.createInterface();
 const DISPUTE_STARTED_TOPIC = DISPUTE_INTERFACE.getEvent('DisputeStarted')!.topicHash;
@@ -41,8 +43,6 @@ const uint256ToSafeNumber = (value: unknown, label: string): number => {
   }
   return Number(value);
 };
-
-const formatError = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 type WatchLog = { topics: readonly string[]; data: string; blockNumber?: number; transactionHash?: string };
 
@@ -114,23 +114,12 @@ const parseDisputeStarted = (
     };
   } catch (error) {
     const location = `${chainId}:${depositoryAddress.toLowerCase()}:${Number(log.blockNumber || 0)}`;
-    throw new Error(`WATCHTOWER_DISPUTE_MATCHING_LOG_INVALID:${location}:${formatError(error)}`, { cause: error });
+    throw new Error(`WATCHTOWER_DISPUTE_MATCHING_LOG_INVALID:${location}:${errorMessage(error)}`, { cause: error });
   }
 };
 
-const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label}_TIMEOUT:${timeoutMs}`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-};
+const withTimeout = <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> =>
+  raceTimeout(promise, timeoutMs, () => new Error(`${label}_TIMEOUT:${timeoutMs}`));
 
 /**
  * Registrations are unauthenticated, so their RPC URLs are candidates only: a
@@ -162,7 +151,7 @@ const connectTargetProvider = async (
         chainId: target.chainId,
         depositoryAddress: target.depositoryAddress,
         rpcUrl: candidate,
-        error: formatError(error),
+        error: errorMessage(error),
       });
     }
   }
@@ -319,7 +308,7 @@ export const runDisputeWatchSweep = async (
       disputeWatchLog.error('target.failed', {
         chainId: target.chainId,
         depositoryAddress: target.depositoryAddress,
-        error: formatError(error),
+        error: errorMessage(error),
       });
     }
   }

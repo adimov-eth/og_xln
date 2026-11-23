@@ -1,4 +1,4 @@
-import { logError, shortHash } from '../../../support/logger';
+import { shortHash } from '../../../support/logger';
 import type { EntityState, EntityFrame, EntityCandidate } from '../../types';
 import { applyEntityFrame } from '../frame/application';
 import { copyProposableAccounts } from '../account/touched-accounts';
@@ -87,7 +87,7 @@ const verifyProposalFrameHash = (
     frame.jPrefixCertificate,
   );
   if (frameHash === frame.hash) return null;
-  logError('FRAME_CONSENSUS', '❌ HASH MISMATCH: invalid proposal frame hash', {
+  entityLog.error('❌ HASH MISMATCH: invalid proposal frame hash', {
     expected: frameHash,
     received: frame.hash,
   });
@@ -107,8 +107,7 @@ const buildVerifiedProposalHashes = (
   );
   const mismatch = getEntityHashManifestMismatch(hashesToSign, frame.hashesToSign);
   if (!mismatch) return hashesToSign;
-  logError(
-    'FRAME_CONSENSUS',
+  entityLog.error(
     `❌ BYZANTINE: Secondary hash manifest mismatch: ${mismatch}`,
     {
       frame: frame.hash,

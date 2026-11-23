@@ -179,10 +179,10 @@
   .rows { display: grid; gap: 8px; margin-top: 12px; }
   .row, .proposal { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border-top: 1px solid color-mix(in srgb, var(--theme-card-border, #27272a) 70%, transparent); padding-top: 8px; }
   .row code { margin-right: auto; }
-  b { border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 35%, transparent); border-radius: 999px; color: var(--theme-accent, #fbbf24); font-size: 10px; padding: 3px 6px; text-transform: uppercase; }
+  b { border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 35%, transparent); border-radius: 999px; color: var(--theme-accent, #c5cfde); font-size: 10px; padding: 3px 6px; text-transform: uppercase; }
   .proposal { display: grid; }
   .proposal div { display: flex; justify-content: space-between; gap: 8px; }
-  .payment-intent { display: grid; gap: 9px; margin-top: 4px; border: 1px solid color-mix(in srgb, var(--theme-accent, #fbbf24) 24%, var(--theme-card-border, #27272a)); border-radius: 7px; background: color-mix(in srgb, var(--theme-accent, #fbbf24) 4%, transparent); padding: 11px; }
+  .payment-intent { display: grid; gap: 9px; margin-top: 4px; border: 1px solid color-mix(in srgb, var(--theme-accent, #c5cfde) 24%, var(--theme-card-border, #27272a)); border-radius: 7px; background: color-mix(in srgb, var(--theme-accent, #c5cfde) 4%, transparent); padding: 11px; }
   .payment-intent .payment-intent-head { align-items: center; }
   .payment-intent-head strong { color: var(--theme-text-primary, #f4f4f5); font-size: 12px; }
   .payment-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 14px; margin: 0; }

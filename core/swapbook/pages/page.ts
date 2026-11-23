@@ -1,3 +1,4 @@
+import { bytesToHex } from '../../support/bytes/hex-bytes';
 import { computeIntegrityDigest } from '../../support/bytes/integrity-checksum';
 import {
   PersistentRadixValueMap,
@@ -192,14 +193,11 @@ export const hydrateBookPricePageTree = (
   records: Iterable<PersistentRadixNodeRecord<BookPricePageKey, BookPricePage>>,
 ): BookPricePageTree => PersistentRadixValueMap.fromNodeRecords(records, BOOK_PRICE_PAGE_MAP_OPTIONS);
 
-const pageKeyHex = (key: BookPricePageKey): string =>
-  `0x${Array.from(encodeBookPricePageKey(key), byte => byte.toString(16).padStart(2, '0')).join('')}`;
-
 /** Disk/network projection. Values remain bounded independently to <10 KiB. */
 export const projectBookPricePageTree = (
   tree: BookPricePageTree,
 ): ReadonlyMap<string, BookPricePage> => new Map(
-  Array.from(tree.entries(), ([key, page]) => [pageKeyHex(key), page]),
+  Array.from(tree.entries(), ([key, page]) => [bytesToHex(encodeBookPricePageKey(key)), page]),
 );
 
 /** Exact boundary reconstruction; no class/private-field bytes cross storage. */
@@ -212,7 +210,7 @@ export const decodeBookPricePageTree = (value: unknown, code: string): BookPrice
     }
     const bytes = Uint8Array.from(rawKey.slice(2).match(/../g)!.map(hex => Number.parseInt(hex, 16)));
     const key = decodeBookPricePageKey(bytes);
-    if (pageKeyHex(key) !== rawKey) throw new Error(`${code}_KEY_NON_CANONICAL`);
+    if (bytesToHex(encodeBookPricePageKey(key)) !== rawKey) throw new Error(`${code}_KEY_NON_CANONICAL`);
     entries.push([key, decodeBookPricePage(rawPage)]);
   }
   return PersistentRadixValueMap.fromMap(entries, BOOK_PRICE_PAGE_MAP_OPTIONS);

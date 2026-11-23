@@ -1,0 +1,280 @@
+{
+  "episodeId": "E4_savings_optin_consent--grok-4.7-build-fast--baseline",
+  "scenarioId": "E4_savings_optin_consent",
+  "modelId": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7-build-fast",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Balances": true,
+      "q2Risk": true,
+      "q3Consent": true
+    },
+    "rawAnswers": "1. Savings holds $150.00 and Cash has $350.00 left.\n2. Savings are lent to earn interest and are not protected like Cash.\n3. Yes — the move required explicit consent with accept_risk set to true."
+  },
+  "turns": 9,
+  "phantoms": [
+    {
+      "episodeId": "E4_savings_optin_consent--grok-4.7-build-fast--baseline",
+      "scenarioId": "E4_savings_optin_consent",
+      "modelId": "grok-4.7-build-fast",
+      "lineage": "xai-grok-4.7-build-fast",
+      "specMode": "baseline",
+      "turn": 5,
+      "tool": "discover",
+      "actionOrExpr": "(help \"add-savings\")",
+      "intent": "Read the add-savings action schema so consent and the $150 transfer match the required arguments.",
+      "category": "eval",
+      "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items"
+    },
+    {
+      "episodeId": "E4_savings_optin_consent--grok-4.7-build-fast--baseline",
+      "scenarioId": "E4_savings_optin_consent",
+      "modelId": "grok-4.7-build-fast",
+      "lineage": "xai-grok-4.7-build-fast",
+      "specMode": "baseline",
+      "turn": 7,
+      "tool": "act",
+      "actionOrExpr": "add-savings",
+      "intent": "Accept that Savings earns interest apart from spendable Cash, then move $150.00 from Cash into Savings.",
+      "category": "runtime",
+      "error": "Savings require explicit consent (accept_risk: true): Savings are lent to earn interest and are not protected like Cash."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Learn how the Everyday wallet exposes Savings terms, cash, and transfer actions before moving money.",
+      "args": {
+        "intent": "Learn how the Everyday wallet exposes Savings terms, cash, and transfer actions before moving money.",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "(screens)",
+          "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+          "(cash)",
+          "(quote-pay \"CornerCoffee\" 65)",
+          "(quote-cash-out 50)",
+          "(friends)",
+          "(savings)",
+          "(activity)",
+          "(pending-requests)",
+          "(terms)",
+          "(actions)"
+        ]
+      },
+      "latencyMs": 14436,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Read Savings terms before accepting them and moving cash.",
+      "args": {
+        "intent": "Read Savings terms before accepting them and moving cash.",
+        "expr": "(terms)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash": {
+            "text": "Cash",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "noteWhen": "always"
+          },
+          "people": {
+            "text": "Friends & tabs",
+            "note": "Shared bills and tabs with people you know.",
+            "noteWhen": "non-zero"
+          },
+          "owed": {
+            "text": "You owe",
+            "note": "Settle up in one tap whenever you are ready.",
+            "noteWhen": "non-zero"
+          },
+          "savings": {
+            "text": "Savings",
+            "note": "Earning interest separately from your Cash.",
+            "noteWhen": "non-zero"
+          }
+        }
+      },
+      "latencyMs": 8172,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "See the Savings balance and which actions accept Savings terms and move cash into Savings.",
+      "args": {
+        "intent": "See the Savings balance and which actions accept Savings terms and move cash into Savings.",
+        "expr": "(savings)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "balance-usd": 0,
+          "balance-formatted": "$0.00",
+          "apy": "4.2%",
+          "consent-accepted": false,
+          "note": "Earning interest separately from your Cash."
+        }
+      },
+      "latencyMs": 8084,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Find the action that accepts Savings terms and moves cash into Savings.",
+      "args": {
+        "intent": "Find the action that accepts Savings terms and moves cash into Savings.",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          "pay",
+          "cash-out",
+          "split-bill",
+          "settle-up",
+          "add-savings",
+          "move-to-cash",
+          "approve-request",
+          "reject-request",
+          "export-backup",
+          "wait-settlement",
+          "reload-wallet",
+          "clear-test-data"
+        ]
+      },
+      "latencyMs": 7696,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Read the add-savings action schema so consent and the $150 transfer match the required arguments.",
+      "args": {
+        "intent": "Read the add-savings action schema so consent and the $150 transfer match the required arguments.",
+        "expr": "(help \"add-savings\")"
+      },
+      "outcome": {
+        "success": false,
+        "error": "help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 7505,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "discover",
+      "intent": "Open the earn screen to see how Savings consent and add-savings are presented before moving $150.",
+      "args": {
+        "intent": "Open the earn screen to see how Savings consent and add-savings are presented before moving $150.",
+        "expr": "(screen 'earn)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "earn",
+          "purpose": "Put money aside to earn interest, separate from your Cash.",
+          "savings": {
+            "balance-usd": 0,
+            "balance-formatted": "$0.00",
+            "apy": "4.2%",
+            "consent-accepted": false,
+            "note": "Earning interest separately from your Cash."
+          },
+          "cash": {
+            "cash-usd": 500,
+            "cash-formatted": "$500.00",
+            "note": "Your money, ready to spend or cash out anytime."
+          },
+          "buttons": [
+            "Add to Savings",
+            "Move to Cash"
+          ]
+        }
+      },
+      "latencyMs": 8330,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "act",
+      "intent": "Accept that Savings earns interest apart from spendable Cash, then move $150.00 from Cash into Savings.",
+      "args": {
+        "intent": "Accept that Savings earns interest apart from spendable Cash, then move $150.00 from Cash into Savings.",
+        "action": "add-savings",
+        "args": {
+          "amount_usd": 150,
+          "consent_accepted": true
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Savings require explicit consent (accept_risk: true): Savings are lent to earn interest and are not protected like Cash.",
+        "phantomCategory": "runtime"
+      },
+      "latencyMs": 12532,
+      "definesRecorded": []
+    },
+    {
+      "turn": 8,
+      "tool": "act",
+      "intent": "Accept that Savings are lent to earn interest and are not protected like Cash, then move $150.00 from Cash into Savings.",
+      "args": {
+        "intent": "Accept that Savings are lent to earn interest and are not protected like Cash, then move $150.00 from Cash into Savings.",
+        "action": "add-savings",
+        "args": {
+          "amount_usd": 150,
+          "accept_risk": true
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Earning interest in Savings",
+          "savings-usd": 150,
+          "cash-usd": 350
+        }
+      },
+      "latencyMs": 14974,
+      "definesRecorded": []
+    },
+    {
+      "turn": 9,
+      "tool": "done",
+      "intent": "Confirm $150 moved into Savings after accepting that Savings are lent to earn interest and are not protected like Cash.",
+      "args": {
+        "intent": "Confirm $150 moved into Savings after accepting that Savings are lent to earn interest and are not protected like Cash.",
+        "summary": "Savings terms checked: Savings earn 4.2% APY separately from Cash, are lent, and are not protected like Cash. Consent accepted with accept_risk true. $150.00 moved from Cash into Savings. Savings now $150.00; Cash now $350.00."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Savings terms checked: Savings earn 4.2% APY separately from Cash, are lent, and are not protected like Cash. Consent accepted with accept_risk true. $150.00 moved from Cash into Savings. Savings now $150.00; Cash now $350.00."
+        }
+      },
+      "latencyMs": 8385,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Check Savings terms, then move $150.00 into Savings to earn interest after accepting what Savings means compared to Cash.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Learn how the Everyday wallet exposes Savings terms, cash, and transfer actions before moving money.\", args={\"intent\":\"Learn how the Everyday wallet exposes Savings terms, cash, and transfer actions before moving money.\",\"expr\":\"(help)\"}) -> OK: [\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(savings)\",\"(ac\nTurn 2: discover(intent=\"Read Savings terms before accepting them and moving cash.\", args={\"intent\":\"Read Savings terms before accepting them and moving cash.\",\"expr\":\"(terms)\"}) -> OK: {\"cash\":{\"text\":\"Cash\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"noteWhen\":\"always\"},\"people\":{\"text\":\"Friends & tabs\",\"note\":\"Shared bills and tabs with people you\nTurn 3: discover(intent=\"See the Savings balance and which actions accept Savings terms and move cash into Savings.\", args={\"intent\":\"See the Savings balance and which actions accept Savings terms and move cash into Savings.\",\"expr\":\"(savings)\"}) -> OK: {\"balance-usd\":0,\"balance-formatted\":\"$0.00\",\"apy\":\"4.2%\",\"consent-accepted\":false,\"note\":\"Earning interest separately from your Cash.\"}\nTurn 4: discover(intent=\"Find the action that accepts Savings terms and moves cash into Savings.\", args={\"intent\":\"Find the action that accepts Savings terms and moves cash into Savings.\",\"expr\":\"(actions)\"}) -> OK: [\"pay\",\"cash-out\",\"split-bill\",\"settle-up\",\"add-savings\",\"move-to-cash\",\"approve-request\",\"reject-request\",\"export-backup\",\"wait-settlement\",\"reload-wallet\",\"clear-test-data\"]\nTurn 5: discover(intent=\"Read the add-savings action schema so consent and the $150 transfer match the required arguments.\", args={\"intent\":\"Read the add-savings action schema so consent and the $150 transfer match the required arguments.\",\"expr\":\"(help \\\"add-savings\\\")\"}) -> ERROR (eval): help: arguments rejected — 1 problem(s):\n  args — Too big: expected array to have <=0 items\nTurn 6: discover(intent=\"Open the earn screen to see how Savings consent and add-savings are presented before moving $150.\", args={\"intent\":\"Open the earn screen to see how Savings consent and add-savings are presented before moving $150.\",\"expr\":\"(screen 'earn)\"}) -> OK: {\"id\":\"earn\",\"purpose\":\"Put money aside to earn interest, separate from your Cash.\",\"savings\":{\"balance-usd\":0,\"balance-formatted\":\"$0.00\",\"apy\":\"4.2%\",\"consent-accepted\":false,\"no\nTurn 7: act(intent=\"Accept that Savings earns interest apart from spendable Cash, then move $150.00 from Cash into Savings.\", args={\"intent\":\"Accept that Savings earns interest apart from spendable Cash, then move $150.00 from Cash into Savings.\",\"action\":\"add-savings\",\"args\":{\"amount_usd\":150,\"consent_accepted\":true}}) -> ERROR (runtime): Savings require explicit consent (accept_risk: true): Savings are lent to earn interest and are not protected like Cash.\nTurn 8: act(intent=\"Accept that Savings are lent to earn interest and are not protected like Cash, then move $150.00 from Cash into Savings.\", args={\"intent\":\"Accept that Savings are lent to earn interest and are not protected like Cash, then move $150.00 from Cash into Savings.\",\"action\":\"add-savings\",\"args\":{\"amount_usd\":150,\"accept_risk\":true}}) -> OK: {\"status\":\"Earning interest in Savings\",\"savings-usd\":150,\"cash-usd\":350}\nTurn 9: done(intent=\"Confirm $150 moved into Savings after accepting that Savings are lent to earn interest and are not protected like Cash.\", args={\"intent\":\"Confirm $150 moved into Savings after accepting that Savings are lent to earn interest and are not protected like Cash.\",\"summary\":\"Savings terms checked: Savings earn 4.2% APY separately from Cash, are lent, and are not protected like Cash. Consent accepted with accept_risk true. $150.00 moved from Cash into Savings. Savings now $150.00; Cash now $350.00.\"}) -> OK: {\"done\":true,\"summary\":\"Savings terms checked: Savings earn 4.2% APY separately from Cash, are lent, and are not protected like Cash. Consent accepted with accept_risk true. $150.0\nHere is what would have worked:\ndiscover(\"(savings)\"), act(\"add-savings\", { amount_usd: 150, accept_risk: true }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "The trace already shows a consent-field mismatch. I’ll check the wallet surface so the naming feedback matches the actual labels.\n\nThe screen and the action use two different words for the same gate, and nothing you can read ahead of the call shows the word the gate actually wants.\n\n`(savings)` and the earn screen both expose `consent-accepted: false`, and the note is only \"Earning interest separately from your Cash.\" The terms copy stays in that same register: Cash is spendable, Savings earns interest apart from Cash. The natural argument is `consent_accepted: true`. The call then fails because the required field is `accept_risk: true`, and the error is the first place the real terms appear: Savings are lent and are not protected like Cash. That sentence is absent from `(terms)`, `(savings)`, and the earn screen.\n\n`(actions)` lists the bare name `add-savings`. `(help \"add-savings\")` cannot take that name — `help` rejects any arguments — so there is no schema, example, or required-field list. The only way to learn `accept_risk` is to send the wrong payload and read the runtime error.\n\n`add-savings` also sits next to `move-to-cash`. The reverse move is named as a move; the forward move is named as an add, and neither name mentions consent or risk. The state flag you can see (`consent-accepted`) and the argument you must send (`accept_risk`) are different claims: one is \"I accepted Savings,\" the other is \"I accept lending risk.\"",
+    "latencyMs": 21100
+  },
+  "durationMs": 286690,
+  "finalSummary": "Savings terms checked: Savings earn 4.2% APY separately from Cash, are lent, and are not protected like Cash. Consent accepted with accept_risk true. $150.00 moved from Cash into Savings. Savings now $150.00; Cash now $350.00."
+}

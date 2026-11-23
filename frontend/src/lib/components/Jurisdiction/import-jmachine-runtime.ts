@@ -5,6 +5,7 @@ import {
   type JMachineConfig,
 } from '#lib/stores/network/jmachineStore.ts';
 import { submitRuntimeInput } from '#lib/stores/xlnStore.ts';
+import { sleep } from '../../utils/primitives';
 
 export type JMachineCreateDetail = {
   name: string;
@@ -28,7 +29,6 @@ const J_MACHINE_IMPORT_COMMIT_POLL_MS = 50;
 
 const normalizeName = (value: unknown): string => String(value || '').trim();
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const normalizeMode = (value: unknown): JMachineCreateDetail['mode'] =>
   value === 'browservm' ? 'browservm' : 'rpc';

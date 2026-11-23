@@ -119,44 +119,6 @@ test('authenticated direct peer outage retires its session without halting the R
   expect(env.infrastructure?.operatorStatus).toBeUndefined();
 });
 
-test('node websocket async send failures retain exact envelope correlation', () => {
-  const errors: string[] = [];
-  const client = new RuntimeWsClient({
-    url: 'ws://127.0.0.1:1/relay',
-    runtimeId: RUNTIME_ID,
-    helloAudience: RUNTIME_ID,
-    signerId: '1',
-    seed: 'node-ws-async-send-failure',
-    encryptionKeyPair: deriveEncryptionKeyPair('node-ws-async-send-failure'),
-    onError: error => errors.push(error.message),
-  });
-  const socket = {
-    readyState: 1,
-    bufferedAmount: 77,
-    on: () => undefined,
-    send: (_payload: string, callback?: (error?: Error) => void) => {
-      callback?.(new Error('kernel flush failed'));
-    },
-    close: () => undefined,
-  };
-  const internals = client as unknown as {
-    ws: typeof socket;
-    helloAcknowledged: boolean;
-    helloAudience: string;
-    helloNonce: string;
-  };
-  internals.ws = socket;
-  internals.helloAcknowledged = true;
-  internals.helloAudience = RUNTIME_ID;
-  internals.helloNonce = 'node-ws-send-nonce';
-
-  expect(client.sendDebugEvent({ code: 'CORRELATED_SEND' })).toBe(true);
-  expect(errors).toHaveLength(1);
-  expect(errors[0]).toContain('WS_ASYNC_SEND_FAILED:type=debug_event:id=');
-  expect(errors[0]).toContain(':bytes=');
-  expect(errors[0]).toContain(':buffered=77:error=kernel flush failed');
-});
-
 test('a pre-auth socket close remains eligible for explicit initial retry', () => {
   const errors: string[] = [];
   const client = new RuntimeWsClient({
@@ -323,10 +285,12 @@ test('websocket shutdown observes a close racing listener registration', async (
     readyState: 2,
     send: () => {},
     close: () => { closeCalls += 1; },
-    on(event: string, _listener: (...args: unknown[]) => void) {
-      if (event === 'close') socket.readyState = 3;
-    },
+    onclose: null as (() => void) | null,
   };
+  Object.defineProperty(socket, 'onclose', {
+    get: () => null,
+    set: () => { socket.readyState = 3; },
+  });
   (client as unknown as { ws: typeof socket }).ws = socket;
 
   await client.closeAndWait(25);

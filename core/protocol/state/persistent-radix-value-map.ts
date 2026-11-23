@@ -1,3 +1,4 @@
+import { bytesToHex } from '../../support/bytes/hex-bytes';
 import { createStructuredLogger } from '../../support/logger';
 
 import {
@@ -19,7 +20,6 @@ import {
   makeRadixLeaf,
   putRadixNode,
   radixBytesEqual,
-  radixBytesKey,
   radixPathSlots,
   radixPathStartsWith,
   sealRadixNode,
@@ -393,7 +393,7 @@ export class PersistentRadixValueMap<K, V> implements ReadonlyMap<K, V> {
     const seen = new Set<string>();
     for (const [key, value] of source) {
       const leaf = makeRadixLeaf(options, key, value);
-      const hex = radixBytesKey(leaf.keyBytes);
+      const hex = bytesToHex(leaf.keyBytes);
       if (seen.has(hex)) throw new Error(`PERSISTENT_RADIX_DUPLICATE_KEY:${hex}`);
       seen.add(hex);
       leaves.push(leaf);
@@ -519,7 +519,7 @@ export class PersistentRadixValueMap<K, V> implements ReadonlyMap<K, V> {
       this.#options,
       this.#root,
       radixPathSlots(keyBytes, this.#options.radix),
-      radixBytesKey(keyBytes),
+      bytesToHex(keyBytes),
     );
     return result.deleted
       ? new PersistentRadixValueMap(

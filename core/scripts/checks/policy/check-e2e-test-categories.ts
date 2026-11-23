@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { Glob } from 'bun';
 
 import {
   formatQaTestCategoryViolations,
@@ -9,18 +8,8 @@ import {
 } from '../../../qa/test-categories';
 import { listPlaywrightTestMetadata } from '../../e2e/harness/playwright-test-metadata';
 
-const listSpecs = (root: string): string[] => {
-  const specs: string[] = [];
-  const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) visit(path);
-      else if (entry.isFile() && entry.name.endsWith('.spec.ts')) specs.push(path);
-    }
-  };
-  visit(root);
-  return specs.sort();
-};
+const listSpecs = (root: string): string[] =>
+  [...new Glob(`${root}/**/*.spec.ts`).scanSync({ dot: true, onlyFiles: true })].sort();
 
 const mainTests = await listPlaywrightTestMetadata(listSpecs('tests'));
 const frontendTests = await listPlaywrightTestMetadata(listSpecs('frontend/tests'), {

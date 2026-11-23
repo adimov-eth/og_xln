@@ -13,6 +13,7 @@
 import { assertCheckEnvironment } from '../../../../tools/checks/check-environment';
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
+import { parseArgs } from 'node:util';
 import {
   cleanupTestArtifactsBeforeRun,
   TEST_ARTIFACT_CLEANUP_DONE_ENV,
@@ -30,29 +31,32 @@ type CliArgs = {
   keepTestArtifacts: boolean;
 };
 
-const parseArgs = (): CliArgs => {
-  const args = process.argv.slice(2);
-  const getFlag = (name: string): string | undefined => {
-    const eq = args.find(a => a.startsWith(`--${name}=`));
-    if (eq) return eq.split('=')[1];
-    const i = args.findIndex(a => a === `--${name}`);
-    if (i >= 0 && i + 1 < args.length) {
-      const next = args[i + 1];
-      if (next && !next.startsWith('--')) return next;
-    }
-    return undefined;
-  };
+const readCliArgs = (): CliArgs => {
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    strict: true,
+    allowPositionals: true,
+    options: {
+      'scenario-workers': { type: 'string' },
+      'e2e-shards': { type: 'string' },
+      smoke: { type: 'boolean' },
+      quick: { type: 'boolean' },
+      'skip-build': { type: 'boolean' },
+      'keep-test-artifacts': { type: 'boolean' },
+      'no-cleanup': { type: 'boolean' },
+    },
+  });
 
-  const scenarioWorkersRaw = Number(getFlag('scenario-workers') || '3');
-  const e2eShardsRaw = Number(getFlag('e2e-shards') || '2');
+  const scenarioWorkersRaw = Number(values['scenario-workers'] || '3');
+  const e2eShardsRaw = Number(values['e2e-shards'] || '2');
 
   return {
     scenarioWorkers: Number.isFinite(scenarioWorkersRaw) && scenarioWorkersRaw > 0 ? Math.floor(scenarioWorkersRaw) : 3,
     e2eShards: Number.isFinite(e2eShardsRaw) && e2eShardsRaw > 0 ? Math.floor(e2eShardsRaw) : 2,
-    smoke: args.includes('--smoke'),
-    quick: args.includes('--quick'),
-    skipBuild: args.includes('--skip-build'),
-    keepTestArtifacts: args.includes('--keep-test-artifacts') || args.includes('--no-cleanup'),
+    smoke: values.smoke === true,
+    quick: values.quick === true,
+    skipBuild: values['skip-build'] === true,
+    keepTestArtifacts: values['keep-test-artifacts'] === true || values['no-cleanup'] === true,
   };
 };
 
@@ -89,7 +93,7 @@ async function main(): Promise<void> {
     console.log('Usage: bun core/scripts/e2e/runners/run-all-tests-fast.ts [--quick|--smoke] [--scenario-workers=N] [--e2e-shards=N]');
     return;
   }
-  const args = parseArgs();
+  const args = readCliArgs();
   assertBroadE2ERunHasNoUnresolvedReruns();
   console.log('\n' + '='.repeat(72));
   console.log('Fast Full Suite (parallel + isolated)');

@@ -7,7 +7,6 @@
  * prepared frames.
  */
 import { verifyAccountSignature } from '../../../account/crypto';
-import { log } from '../../../support/diagnostics';
 import { canonicalConsensusValuesEqual } from '../../../protocol/serialization/binary-codec';
 import { compareStableText } from '../../../protocol/serialization';
 import type { ConsensusConfig, EntityCandidate, EntityLeaderCertificate, EntityLeaderTimeoutVote, EntityReplica, EntityState, HashToSign, EntityFrame } from '../../types';
@@ -58,7 +57,7 @@ export const verifyHashPrecommitSignatures = (
     throw new Error(`${context}:EMPTY_HASH_MANIFEST`);
   }
   if (sigs.length !== hashesToSign.length) {
-    log.error(
+    entityLog.warn(
       `❌ ${context}: signature count mismatch from ${signerId}: got ${sigs.length}, expected ${hashesToSign.length}`,
     );
     return false;
@@ -67,11 +66,11 @@ export const verifyHashPrecommitSignatures = (
     const hashInfo = hashesToSign[i];
     const sig = sigs[i];
     if (!hashInfo || !sig) {
-      log.error(`❌ ${context}: missing signature[${i}] from ${signerId}`);
+      entityLog.warn(`❌ ${context}: missing signature[${i}] from ${signerId}`);
       return false;
     }
     if (!verifyAccountSignature(env, signerId, hashInfo.hash, sig)) {
-      log.error(
+      entityLog.warn(
         `❌ ${context}: invalid ${hashInfo.type} signature[${i}] from ${signerId} ` +
           `hash=${hashInfo.hash.slice(0, 30)}... context=${hashInfo.context}`,
       );

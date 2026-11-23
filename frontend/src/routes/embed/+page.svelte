@@ -99,8 +99,6 @@
 {/if}
 
 <View
-  layout="default"
-  networkMode="simnet"
   {embedMode}
   {presentMode}
 />

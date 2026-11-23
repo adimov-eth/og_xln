@@ -1,12 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const repoRoot = resolve(import.meta.dir, '../../../../..');
 const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as {
   scripts: Record<string, string>;
 };
-const harnessRel = 'core/scripts/checks/fints/check-fints-negative-types.ts';
 const parallelGateNames = (scriptName: string): string[] =>
   (packageJson.scripts[scriptName] ?? '').trim().split(/\s+/).slice(2);
 const srcGateNames = (): string[] => parallelGateNames('check:src');
@@ -19,6 +18,8 @@ describe('full check orchestration', () => {
     const uiPackage = JSON.parse(readFileSync(join(repoRoot, 'ui/package.json'), 'utf8'));
     expect(uiPackage.scripts.check).toBe('tsc --noEmit -p tsconfig.json --checkers 4');
     expect(srcGateNames()[0]).toBe('soundcheck:fast');
+    expect(packageJson.scripts['soundcheck:fast']).toStartWith('bun tools/run-parallel-checks.ts ');
+    expect(packageJson.scripts['soundcheck']).toBe(packageJson.scripts['soundcheck:fast']);
     expect(srcGateNames().filter(name => name.startsWith('rscore:'))).toEqual([]);
     expect(packageJson.scripts['check:src:parallel']).toBeUndefined();
   });
@@ -34,16 +35,28 @@ describe('full check orchestration', () => {
 });
 
 describe('FinTS negative-type gate registration', () => {
-  test('package script points at the existing harness exactly once through soundcheck', () => {
-    expect(packageJson.scripts['check:fints-negative-types']).toBe(`bun ${harnessRel}`);
-    expect(existsSync(join(repoRoot, harnessRel))).toBe(true);
-    expect(srcGateNames().filter(name => name === 'soundcheck:fast')).toEqual(['soundcheck:fast']);
-    expect(srcGateNames()).not.toContain('check:fints-negative-types');
+  test('type fixtures and brand minting run inside the runtime contract type check', () => {
+    const script = packageJson.scripts['check:runtime-contract-types'] ?? '';
+    expect(script).toContain('tsc -p tsconfig.runtime-contract-tests.json');
+    expect(script).toContain('bun core/scripts/checks/fints/check-brand-minting.ts');
+    expect(packageJson.scripts['check:fints-negative-types']).toBe('bun run check:runtime-contract-types');
+    expect(srcGateNames()).toContain('check:runtime-contract-types');
 
-    const soundcheck = readFileSync(join(repoRoot, 'tools/soundcheck.ts'), 'utf8');
-    expect(soundcheck.match(/name: 'fints-negative-types'/g)).toEqual(["name: 'fints-negative-types'"]);
-    expect(soundcheck.match(/check:fints-negative-types/g)).toEqual(['check:fints-negative-types']);
-    expect(soundcheck).not.toContain('bun run check:src');
-    expect(packageJson.scripts['check:src']).toStartWith('bun tools/run-parallel-checks.ts ');
+    const tsconfig = JSON.parse(readFileSync(join(repoRoot, 'tsconfig.runtime-contract-tests.json'), 'utf8')) as {
+      files: string[];
+    };
+    const fixtureRoot = join(repoRoot, 'core/__tests__/types/fints');
+    const fixtures = [...new Bun.Glob('**/*.{positive,negative,widened}.ts').scanSync({ cwd: fixtureRoot })]
+      .map(file => `core/__tests__/types/fints/${file}`)
+      .sort();
+    expect(fixtures.length).toBeGreaterThan(0);
+    expect(tsconfig.files.filter(file => file.startsWith('core/__tests__/types/fints/')).sort()).toEqual(fixtures);
+  });
+
+  test('every negative fixture line carries an expect-error directive', () => {
+    const fixtureRoot = join(repoRoot, 'core/__tests__/types/fints');
+    for (const file of new Bun.Glob('**/*.negative.ts').scanSync({ cwd: fixtureRoot })) {
+      expect(readFileSync(join(fixtureRoot, file), 'utf8')).toContain('@ts-expect-error');
+    }
   });
 });

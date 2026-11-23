@@ -2,7 +2,7 @@ import { expect, test as base, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { ZeroHash } from 'ethers';
 import { Depository__factory } from '../../jurisdictions/typechain-types/factories/Depository.sol/Depository__factory';
-import { enterStack, LOCAL_PASSWORD, readWalletCheckpoint, reopenStack, type StackWallet } from './stack';
+import { enterStack, gotoProWallet, LOCAL_PASSWORD, readWalletCheckpoint, reopenStack, type StackWallet } from './stack';
 import { AMOUNT, WAIT, broadcast, finishSubmission, fundCollateral, manageDispute, readState } from './dispute-wallet';
 import { chainMoney, privateChain } from './dispute-chain';
 
@@ -50,7 +50,7 @@ const test = base.extend<{ fundedBackup: FundedBackup }>({
       await source.close();
       const restored = await target.newPage();
       await restored.clock.install();
-      await restored.goto('/');
+      await gotoProWallet(restored, '/');
       await use({ restored, wallet, hubId, path, contents, funded, before, provider });
     } finally {
       await source.close();

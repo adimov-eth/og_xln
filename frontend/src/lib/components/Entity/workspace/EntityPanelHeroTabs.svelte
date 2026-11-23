@@ -110,8 +110,9 @@
     </div>
   </div>
   <div class="hero-right">
-    <LendingBalance entityId={tab.entityId} apiBase={lendingApiBase} accounts={lendingAccounts} {isLive} walletBalance={netWorth} {getAssetValue} {formatUsdExact} />
+    <!-- Label above the figure, as in Everyday and the React wallet: the hero role reads the same everywhere. -->
     <div class="hero-label" title={walletHelp['balance']}>Total balance</div>
+    <LendingBalance entityId={tab.entityId} apiBase={lendingApiBase} accounts={lendingAccounts} {isLive} walletBalance={netWorth} {getAssetValue} {formatUsdExact} />
     <div class="hero-label">Available to pay: {formatUsdExact(availableToPay)} · includes credit</div>
     <details><summary>Balance explained</summary><p>{walletHelp['balance']}</p></details>
   </div>
@@ -138,7 +139,7 @@
   .hero {
     padding: 16px var(--panel-gutter-x);
     background:
-      linear-gradient(180deg, color-mix(in srgb, var(--theme-accent, #fbbf24) 5%, transparent), transparent),
+      linear-gradient(180deg, color-mix(in srgb, var(--theme-accent, #c5cfde) 5%, transparent), transparent),
       color-mix(in srgb, var(--theme-card-bg, #111113) 98%, transparent);
     border-bottom: 1px solid color-mix(in srgb, var(--theme-card-border, var(--theme-border, #27272a)) 74%, transparent);
     display: flex;
@@ -176,8 +177,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #18181b;
-    color: #f4f4f5;
+    background: var(--theme-surface, #121418);
+    color: var(--theme-text-primary, #f4f4f5);
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -265,7 +266,7 @@
 
   .wallet-label,
   .muted {
-    color: #52525b;
+    color: var(--theme-text-muted, #52525b);
     line-height: 1.5;
     margin: 0 0 4px;
     font-size: 11px;
@@ -276,7 +277,7 @@
     align-items: center;
     gap: 8px;
     max-width: 100%;
-    color: #e5e7eb;
+    color: var(--theme-text-primary, #e5e7eb);
     background: transparent;
     border: 0;
     padding: 0;
@@ -334,15 +335,15 @@
   .badge {
     padding: 2px 7px;
     border-radius: 999px;
-    background: #27272a;
-    color: #f4f4f5;
+    background: var(--theme-surface-hover, #1b1e24);
+    color: var(--theme-text-primary, #f4f4f5);
     font-size: 9px;
     line-height: 1.2;
   }
 
   .badge.pending {
-    background: rgba(251, 191, 36, 0.16);
-    color: #fde68a;
+    background: var(--theme-badge-pending-bg, rgba(140, 200, 255, 0.1));
+    color: var(--theme-badge-pending, #8cc8ff);
   }
 
   @media (max-width: 900px) {

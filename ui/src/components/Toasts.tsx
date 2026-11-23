@@ -21,7 +21,7 @@ export function Toasts() {
 			</div>}
 			{toasts.map(toast => (
 				<div key={toast.id} className={`toast${toast.kind === 'danger' ? ' toast-danger' : ''}`} role={toast.kind === 'danger' ? 'alert' : 'status'} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-					{toast.kind === 'danger' ? explainWalletError(toast.text) : toast.text}
+					<span>{toast.kind === 'danger' ? explainWalletError(toast.text) : toast.text}</span>
 					<button type="button" className="icon-btn" aria-label="Dismiss notification" onClick={() => useApp.getState().dismissToast(toast.id)}>×</button>
 				</div>
 			))}

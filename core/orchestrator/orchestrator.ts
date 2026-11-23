@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { scheduler } from 'node:timers/promises';
 import { safeStringify } from '../protocol/serialization';
 import { REMOTE_RUNTIME } from '../config/constants';
-import { readBooleanEnv, readNonNegativeIntegerEnv, readPositiveIntegerEnv } from '../config/environment';
+import { readBooleanEnv, readPositiveIntegerEnv } from '../config/environment';
 import { createStructuredLogger, registerStructuredLogSink } from '../support/logger';
 import { createHubSpawner } from './process/spawn/hub';
 import { createMarketMakerSpawner } from './process/spawn/market-maker';
@@ -166,18 +166,16 @@ import {
 import { createNativeH1Bootstrap } from './bootstrap/native-h1-bootstrap';
 import { createReadinessWaits } from './bootstrap/readiness-waits';
 import { createChildFailureRecords } from './process/supervisor/child-failure-records';
-import { createOrchestratorRelaySocketHandlers } from './server/relay-socket';
+import { createRelaySocketHandlers } from '../network/relay/socket-handlers';
+import { errorMessage } from '../support/boundary-guards';
 
 const args = parseArgs();
 await installGlobalOpCounters('orchestrator');
 const orchestratorOwnerId = `${process.pid}:${Date.now()}:${randomUUID()}`;
 const orchestratorCodeFingerprint = readOrchestratorCodeFingerprint();
 const staleReapEnabled = process.env['XLN_SKIP_STALE_REAP'] !== '1';
-const MARKET_MAKER_FULL_HEALTH_TIMEOUT_MS = Math.max(
-  CHILD_HEALTH_TIMEOUT_MS,
-  readPositiveIntegerEnv('XLN_MARKET_MAKER_FULL_HEALTH_TIMEOUT_MS', 60_000),
-);
-const marketMakerReadyRestartLimit = readNonNegativeIntegerEnv('XLN_MARKET_MAKER_READY_RESTARTS', 2);
+const MARKET_MAKER_FULL_HEALTH_TIMEOUT_MS = Math.max(CHILD_HEALTH_TIMEOUT_MS, 60_000);
+const marketMakerReadyRestartLimit = 2;
 const MARKET_MAKER_RESTART_FENCING_GRACE_MS = STORAGE_WRITER_LOCK_TTL_MS + 1_000;
 const relayUrl = args.relayUrl;
 // There is one relay store/process. These are only its explicitly authenticated
@@ -376,16 +374,10 @@ const orchestratorOperatorToken = loadOrCreateOperatorToken(
   orchestratorOperatorTokenPath,
   process.env['XLN_ORCHESTRATOR_OPERATOR_TOKEN'],
 );
-const runtimeImportTokenTtlMs = Math.max(
-  60_000,
-  readPositiveIntegerEnv('XLN_RUNTIME_IMPORT_TOKEN_TTL_MS', REMOTE_RUNTIME.IMPORT_TOKEN_TTL_MS),
-);
+const runtimeImportTokenTtlMs = Math.max(60_000, REMOTE_RUNTIME.IMPORT_TOKEN_TTL_MS);
 const runtimeImportRefreshMarginMs = Math.max(
   10_000,
-  Math.min(
-    runtimeImportTokenTtlMs - 1_000,
-    readPositiveIntegerEnv('XLN_RUNTIME_IMPORT_REFRESH_MARGIN_MS', REMOTE_RUNTIME.IMPORT_TOKEN_REFRESH_MARGIN_MS),
-  ),
+  Math.min(runtimeImportTokenTtlMs - 1_000, REMOTE_RUNTIME.IMPORT_TOKEN_REFRESH_MARGIN_MS),
 );
 const runtimeImportManifestPath = process.env['XLN_RUNTIME_IMPORT_MANIFEST_PATH']?.trim()
   || join(args.dbRoot, 'runtime-import-manifest.json');
@@ -427,7 +419,6 @@ const finishTiming = (stage: keyof typeof timings, startedAt: number): void => {
   meshLog.info('timing', { stage, ms: timing.ms });
 };
 
-const serializeError = (error: unknown): string => error instanceof Error ? error.message : String(error);
 const meshLog = createStructuredLogger('mesh.orchestrator');
 const assistantProxy = createAssistantProxyFromEnv(meshLog);
 
@@ -441,11 +432,11 @@ const toFiniteNumber = (value: unknown): number | null => {
 
 let lastBootstrapTailWarning = '';
 const warnBootstrapTailRead = (message: string, path: string, error: unknown): void => {
-  const errorMessage = serializeError(error);
-  const key = `${message}:${path}:${errorMessage}`;
+  const detail = errorMessage(error);
+  const key = `${message}:${path}:${detail}`;
   if (key === lastBootstrapTailWarning) return;
   lastBootstrapTailWarning = key;
-  meshLog.warn(message, { path, error: errorMessage });
+  meshLog.warn(message, { path, error: detail });
 };
 
 const stopProcess = async (proc: ChildProcess | null): Promise<void> => {
@@ -506,10 +497,8 @@ const fetchJson = async <T>(
   timeoutMs = 2_000,
   expectedPending = false,
 ): Promise<T | null> => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchLoopback(url, { signal: controller.signal });
+    const response = await fetchLoopback(url, { signal: AbortSignal.timeout(timeoutMs) });
     if (!response.ok) {
       recordFetchFailure(url, 'http', `status=${response.status}`, expectedPending);
       return null;
@@ -518,7 +507,7 @@ const fetchJson = async <T>(
     try {
       payload = await response.json();
     } catch (error) {
-      recordFetchFailure(url, 'decode', serializeError(error), expectedPending);
+      recordFetchFailure(url, 'decode', errorMessage(error), expectedPending);
       return null;
     }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -533,10 +522,8 @@ const fetchJson = async <T>(
     fetchFailureLog.delete(url);
     return payload as T;
   } catch (error) {
-    recordFetchFailure(url, 'transport', serializeError(error), expectedPending);
+    recordFetchFailure(url, 'transport', errorMessage(error), expectedPending);
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 };
 
@@ -609,7 +596,7 @@ const marketSubscriptionStack = createMarketSubscriptionStack<OrchestratorWebSoc
     pushDebugEvent(relayStore, {
       event: 'error',
       reason: 'MARKET_HANDLER_EXCEPTION',
-      details: { error: serializeError(error), msgType: msg['type'] },
+      details: { error: errorMessage(error), msgType: msg['type'] },
     });
   },
 });
@@ -650,7 +637,7 @@ const pollHubHealth = async (child: HubChild): Promise<void> => {
     try {
       child.lastInfo = validateHubInfoPayload(rawInfo);
     } catch (error) {
-      recordFetchFailure(infoUrl, 'payload', serializeError(error));
+      recordFetchFailure(infoUrl, 'payload', errorMessage(error));
     }
   }
   if (rawHealth) {
@@ -663,7 +650,7 @@ const pollHubHealth = async (child: HubChild): Promise<void> => {
       child.lastHealth = nextHealth;
       observeManagedRuntimeHalt(child, child.lastHealth);
     } catch (error) {
-      recordFetchFailure(healthUrl, 'payload', serializeError(error));
+      recordFetchFailure(healthUrl, 'payload', errorMessage(error));
     }
   }
   const entityIds = new Set<string>();
@@ -814,7 +801,7 @@ const failFastUnexpectedChildExit = (message: string): void => {
     try {
       await stopAllChildren();
     } catch (error) {
-      meshLog.error('child.unexpected_exit.stop_failed', { error: serializeError(error) });
+      meshLog.error('child.unexpected_exit.stop_failed', { error: errorMessage(error) });
     } finally {
       process.exit(1);
     }
@@ -851,7 +838,7 @@ const handleUnexpectedHubFailure = (
   try {
     receiptPath = persistManagedChildFailure(child, observation, decision);
   } catch (error) {
-    const diagnosticError = serializeError(error);
+    const diagnosticError = errorMessage(error);
     meshLog.error('child.failure_receipt_write_failed', {
       child: child.name,
       error: diagnosticError,
@@ -910,7 +897,7 @@ const handleUnexpectedHubFailure = (
         name: child.name,
         code: null,
         signal: null,
-        reason: `HUB_RECOVERY_SPAWN_FAILED:${serializeError(error)}`,
+        reason: `HUB_RECOVERY_SPAWN_FAILED:${errorMessage(error)}`,
       });
     });
   }, decision.backoffMs);
@@ -931,7 +918,7 @@ const handleUnexpectedMarketMakerFailure = (
       resetState.inProgress && decision.action === 'recover' ? 'recover' : undefined,
     );
   } catch (error) {
-    const diagnosticError = serializeError(error);
+    const diagnosticError = errorMessage(error);
     meshLog.error('child.failure_receipt_write_failed', {
       child: marketMakerChild.name,
       error: diagnosticError,
@@ -999,7 +986,7 @@ const handleUnexpectedMarketMakerFailure = (
         name: marketMakerChild.name,
         code: null,
         signal: null,
-        reason: `MM_RECOVERY_SPAWN_FAILED:${serializeError(error)}`,
+        reason: `MM_RECOVERY_SPAWN_FAILED:${errorMessage(error)}`,
       });
     },
   });
@@ -1331,7 +1318,7 @@ const fetchRouteMarketSnapshots = async (
   } catch (error) {
     meshLog.warn('market_snapshot.enrichment_unavailable', {
       hubEntityId,
-      error: serializeError(error),
+      error: errorMessage(error),
     });
     return new Map();
   }
@@ -1423,7 +1410,7 @@ const {
   getCustodySupport: () => custodySupport,
   buildAggregatedHealthResponse,
   warnRefreshFailed: error => {
-    meshLog.warn('runtime_import_manifest.refresh_failed', { error: serializeError(error) });
+    meshLog.warn('runtime_import_manifest.refresh_failed', { error: errorMessage(error) });
   },
 });
 
@@ -1574,7 +1561,7 @@ const runReset = async (options: OrchestratorResetOptions = configuredResetOptio
           jurisdictionId: primaryJurisdiction.key,
         });
       } catch (error) {
-        meshLog.error('custody.bootstrap_failed', { error: serializeError(error) });
+        meshLog.error('custody.bootstrap_failed', { error: errorMessage(error) });
         throw error;
       } finally {
         finishTiming('reset_custody', custodyStartedAt);
@@ -1589,7 +1576,7 @@ const runReset = async (options: OrchestratorResetOptions = configuredResetOptio
     finishTiming('reset_total', resetTotalStartedAt);
     resetState.completedAt = Date.now();
   } catch (error) {
-    resetState.lastError = serializeError(error);
+    resetState.lastError = errorMessage(error);
     resetState.failedAt = Date.now();
     resetState.completedAt = null;
     throw error;
@@ -1709,7 +1696,7 @@ const handleResetRequest = (
     pollAllHubHealth,
     pollMarketMakerHealth,
     buildAggregatedHealthResponse,
-    serializeError,
+    serializeError: errorMessage,
   });
 
 const handleMetadataRequest = (
@@ -1744,7 +1731,7 @@ const handleMetadataRequest = (
       },
     });
   } catch (error) {
-    return new Response(safeStringify({ error: serializeError(error) }), {
+    return new Response(safeStringify({ error: errorMessage(error) }), {
       status: 500,
       headers,
     });
@@ -1928,11 +1915,13 @@ const server = Bun.serve<OrchestratorWebSocket['data']>({
       releaseHttp();
     }
   }),
-  websocket: createOrchestratorRelaySocketHandlers({
+  websocket: createRelaySocketHandlers<OrchestratorWebSocket['data']>({
     relayStore,
     relayHelloChallenges,
     marketSubscriptionStack,
-    routerConfig,
+    getRouterConfig: () => routerConfig,
+    wsType: ws => ws.data.type,
+    helloAudience: ws => ws.data.type === 'relay' ? ws.data.audience : undefined,
   }),
 });
 
@@ -1969,11 +1958,11 @@ if (!args.deferInitialReset) {
       receiptPath = persistOrchestratorFailure(error);
     } catch (receiptError) {
       meshLog.error('reset.failure_receipt_write_failed', {
-        error: serializeError(receiptError),
-        originalFailure: serializeError(error),
+        error: errorMessage(receiptError),
+        originalFailure: errorMessage(error),
       });
     }
-    meshLog.error('reset.initial_failed', { error: serializeError(error), receiptPath });
+    meshLog.error('reset.initial_failed', { error: errorMessage(error), receiptPath });
     await stopAllChildren({
       quiesceRounds: 1,
       quiesceTimeoutMs: CHILD_SHUTDOWN_QUIESCE_TIMEOUT_MS,

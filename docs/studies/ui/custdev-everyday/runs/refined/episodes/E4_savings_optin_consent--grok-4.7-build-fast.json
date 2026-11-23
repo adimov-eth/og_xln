@@ -1,0 +1,268 @@
+{
+  "episodeId": "E4_savings_optin_consent--grok-4.7-build-fast--refined",
+  "scenarioId": "E4_savings_optin_consent",
+  "modelId": "grok-4.7-build-fast",
+  "lineage": "xai-grok-4.7-build-fast",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Balances": true,
+      "q2Risk": true,
+      "q3Consent": true
+    },
+    "rawAnswers": "1. Savings holds $150.00 and Cash has $350.00 left.\n2. Savings is lent to earn interest and is not protected like Cash.\n3. Yes, Savings required explicit consent (`accept_risk: true`) before the money moved."
+  },
+  "turns": 7,
+  "phantoms": [],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Inspect wallet help and how Savings differs from Cash before moving money",
+      "args": {
+        "intent": "Inspect wallet help and how Savings differs from Cash before moving money",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "discovery": [
+            "(screens)",
+            "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+            "(cash)",
+            "(quote-pay \"CornerCoffee\" 65)",
+            "(quote-cash-out 50)",
+            "(friends)",
+            "(savings)",
+            "(activity)",
+            "(pending-requests)",
+            "(terms)",
+            "(actions)",
+            "(actions 'pay)",
+            "(help 'split-bill)"
+          ],
+          "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+        }
+      },
+      "latencyMs": 11276,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Read Savings terms before comparing them to Cash and moving $150",
+      "args": {
+        "intent": "Read Savings terms before comparing them to Cash and moving $150",
+        "expr": "(terms)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash": {
+            "text": "Cash",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "noteWhen": "always"
+          },
+          "arriving": {
+            "text": "Arriving",
+            "note": "Finishing automatically before it joins your Cash.",
+            "noteWhen": "non-zero"
+          },
+          "people": {
+            "text": "Friends & tabs",
+            "note": "Shared bills and tabs with people you know.",
+            "noteWhen": "non-zero"
+          },
+          "owed": {
+            "text": "You owe",
+            "note": "Settle up in one tap whenever you are ready.",
+            "noteWhen": "non-zero"
+          },
+          "savings": {
+            "text": "Savings",
+            "note": "Lent to earn interest — not protected like Cash; separate from Cash and requires explicit consent.",
+            "noteWhen": "always"
+          }
+        }
+      },
+      "latencyMs": 9184,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "See Savings balance and which actions accept the lending terms before moving $150",
+      "args": {
+        "intent": "See Savings balance and which actions accept the lending terms before moving $150",
+        "expr": "(savings)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "balance-usd": 0,
+          "balance-formatted": "$0.00",
+          "apy": "4.2%",
+          "consent-accepted": false,
+          "consent-required": true,
+          "required-consent-param": {
+            "accept_risk": true
+          },
+          "note": "Lent to earn interest — NOT protected like Cash; separate from Cash and requires explicit consent. Explicit accept_risk: true required."
+        }
+      },
+      "latencyMs": 8728,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Find the Savings deposit action and the consent argument before moving $150",
+      "args": {
+        "intent": "Find the Savings deposit action and the consent argument before moving $150",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "actions": [
+            {
+              "action": "pay",
+              "args": "{ to: string, amount_usd: number }",
+              "quote": "(quote-pay to amount_usd)",
+              "note": "Check (quote-pay ...) first to verify fee cap and settled Cash."
+            },
+            {
+              "action": "cash-out",
+              "args": "{ amount_usd: number }",
+              "quote": "(quote-cash-out amount_usd)"
+            },
+            {
+              "action": "request-link",
+              "args": "{ amount_usd: number, to?: string, note?: string }",
+              "note": "Create a shareable payment request link."
+            },
+            {
+              "action": "split-bill",
+              "args": "{ person: string, total_usd: number, note?: string, friend_share_usd?: number, your_share_usd?: number }",
+              "note": "Human friends only from (friends)."
+            },
+            {
+              "action": "settle-up",
+              "args": "{ person: string }",
+              "note": "Settle what you owe a human friend from (friends)."
+            },
+            {
+              "action": "add-savings",
+              "args": "{ amount_usd: number, accept_risk: true }",
+              "note": "Requires explicit accept_risk: true after reading (savings)."
+            },
+            {
+              "action": "move-to-cash",
+              "args": "{ amount_usd: number }"
+            },
+            {
+              "action": "approve-request",
+              "args": "{ request_id: string }",
+              "note": "Inspect id and deltas via (pending-requests) first."
+            },
+            {
+              "action": "reject-request",
+              "args": "{ request_id: string }",
+              "note": "Reject deceptive or unwanted requests from (pending-requests)."
+            },
+            {
+              "action": "export-backup",
+              "args": "{}"
+            },
+            {
+              "action": "wait-settlement",
+              "args": "{}"
+            },
+            {
+              "action": "reload-wallet",
+              "args": "{}"
+            },
+            {
+              "action": "clear-test-data",
+              "args": "{}"
+            }
+          ],
+          "note": "Invoke via act(action, args) with a non-empty intent."
+        }
+      },
+      "latencyMs": 9335,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "discover",
+      "intent": "Confirm Cash covers a $150 Savings deposit before accepting lending risk",
+      "args": {
+        "intent": "Confirm Cash covers a $150 Savings deposit before accepting lending risk",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 500,
+          "cash-formatted": "$500.00",
+          "arriving-usd": 0,
+          "arriving-formatted": "$0.00",
+          "arriving-status": "No incoming payments finishing.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 10696,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "act",
+      "intent": "Move $150 from Cash into Savings after accepting that Savings is lent for interest and not protected like Cash",
+      "args": {
+        "intent": "Move $150 from Cash into Savings after accepting that Savings is lent for interest and not protected like Cash",
+        "action": "add-savings",
+        "args": {
+          "amount_usd": 150,
+          "accept_risk": true
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Earning interest in Savings",
+          "savings-usd": 150,
+          "cash-usd": 350
+        }
+      },
+      "latencyMs": 8929,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "done",
+      "intent": "Confirm the $150 Savings deposit after terms and consent",
+      "args": {
+        "intent": "Confirm the $150 Savings deposit after terms and consent",
+        "summary": "Read Savings terms (lent for 4.2% interest, not protected like Cash, consent required). Cash was $500. Moved $150 into Savings with accept_risk true. Savings is now $150 and Cash is $350."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Read Savings terms (lent for 4.2% interest, not protected like Cash, consent required). Cash was $500. Moved $150 into Savings with accept_risk true. Savings is now $150 and Cash is $350."
+        }
+      },
+      "latencyMs": 9617,
+      "definesRecorded": []
+    }
+  ],
+  "durationMs": 75859,
+  "finalSummary": "Read Savings terms (lent for 4.2% interest, not protected like Cash, consent required). Cash was $500. Moved $150 into Savings with accept_risk true. Savings is now $150 and Cash is $350."
+}

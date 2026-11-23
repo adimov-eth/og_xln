@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { normalizeId } from '../../../utils/primitives';
   import type { RuntimeAdapterActivityPage, RuntimeActivityEvent } from '@xln/core/api/public/runtime-module';
   import { runtimeControllerHandle } from '#lib/stores/runtimeControllerStore.ts';
   import { runtimeQueryClient } from '#lib/stores/runtimeQueryClient.ts';
@@ -12,7 +13,6 @@
   let lastKey = '';
   let requestId = 0;
 
-  const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
   const count = (value: unknown): string => Math.max(0, Math.floor(Number(value || 0))).toLocaleString('en-US');
   const short = (value: unknown): string => {
     const text = String(value || '');
@@ -102,7 +102,7 @@
 </section>
 
 <style>
-  .audit { height: 100%; overflow: auto; box-sizing: border-box; padding: 16px; color: #e5edf3; background: #080d12; }
+  .audit { height: 100%; overflow: auto; box-sizing: border-box; padding: 16px; color: var(--theme-text-primary, #e5edf3); background: var(--theme-surface, #121418); }
   header, .status, .coverage, .events article { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   header { margin-bottom: 12px; } h2 { margin: 3px 0 0; font-size: 18px; } small { color: #7890a3; }
   button { border: 1px solid #28445a; border-radius: 6px; background: #0e1b26; color: #bcecff; padding: 7px 10px; }

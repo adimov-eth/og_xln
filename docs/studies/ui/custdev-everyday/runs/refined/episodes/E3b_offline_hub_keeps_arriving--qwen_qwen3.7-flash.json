@@ -1,0 +1,321 @@
+{
+  "episodeId": "E3b_offline_hub_keeps_arriving--qwen/qwen3.7-flash--refined",
+  "scenarioId": "E3b_offline_hub_keeps_arriving",
+  "modelId": "qwen/qwen3.7-flash",
+  "lineage": "qwen-3.7",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1StillZero": true,
+      "q2Arriving": true,
+      "q3HubOffline": true
+    },
+    "rawAnswers": "1. You currently have $0.00 in settled Cash available to spend.\n2. The $50.00 is currently held in \"arriving\" status as transient hub float.\n3. It cannot settle yet because the payment provider is offline."
+  },
+  "turns": 10,
+  "phantoms": [
+    {
+      "episodeId": "E3b_offline_hub_keeps_arriving--qwen/qwen3.7-flash--refined",
+      "scenarioId": "E3b_offline_hub_keeps_arriving",
+      "modelId": "qwen/qwen3.7-flash",
+      "lineage": "qwen-3.7",
+      "specMode": "refined",
+      "turn": 2,
+      "tool": "discover",
+      "actionOrExpr": "(quote-pay 'CornerCoffee 10)",
+      "intent": "Check if paying CornerCoffee $10 is possible with current balance",
+      "category": "eval",
+      "error": "quote-pay: arguments rejected — 1 problem(s):\n  arg 1 — expected AString, got symbol: \"CornerCoffee\""
+    },
+    {
+      "episodeId": "E3b_offline_hub_keeps_arriving--qwen/qwen3.7-flash--refined",
+      "scenarioId": "E3b_offline_hub_keeps_arriving",
+      "modelId": "qwen/qwen3.7-flash",
+      "lineage": "qwen-3.7",
+      "specMode": "refined",
+      "turn": 7,
+      "tool": "driver",
+      "actionOrExpr": "text-reply",
+      "intent": "",
+      "category": "parse",
+      "error": "Expected a structured tool call (discover, act, or done), got plain text."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check wallet state including cash balance, pending payments, and available actions",
+      "args": {
+        "intent": "Check wallet state including cash balance, pending payments, and available actions",
+        "expr": "(cash)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 0,
+          "cash-formatted": "$0.00",
+          "arriving-usd": 50,
+          "arriving-formatted": "+$50.00 arriving · finishing...",
+          "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+          "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+          "note": "Your money, ready to spend or cash out anytime.",
+          "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+        }
+      },
+      "latencyMs": 3814,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check for pending incoming payments",
+      "args": {
+        "intent": "Check for pending incoming payments",
+        "expr": "(pending-requests)"
+      },
+      "outcome": {
+        "success": true,
+        "data": []
+      },
+      "latencyMs": 3814,
+      "definesRecorded": []
+    },
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "List available wallet actions",
+      "args": {
+        "intent": "List available wallet actions",
+        "expr": "(actions)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "actions": [
+            {
+              "action": "pay",
+              "args": "{ to: string, amount_usd: number }",
+              "quote": "(quote-pay to amount_usd)",
+              "note": "Check (quote-pay ...) first to verify fee cap and settled Cash."
+            },
+            {
+              "action": "cash-out",
+              "args": "{ amount_usd: number }",
+              "quote": "(quote-cash-out amount_usd)"
+            },
+            {
+              "action": "request-link",
+              "args": "{ amount_usd: number, to?: string, note?: string }",
+              "note": "Create a shareable payment request link."
+            },
+            {
+              "action": "split-bill",
+              "args": "{ person: string, total_usd: number, note?: string, friend_share_usd?: number, your_share_usd?: number }",
+              "note": "Human friends only from (friends)."
+            },
+            {
+              "action": "settle-up",
+              "args": "{ person: string }",
+              "note": "Settle what you owe a human friend from (friends)."
+            },
+            {
+              "action": "add-savings",
+              "args": "{ amount_usd: number, accept_risk: true }",
+              "note": "Requires explicit accept_risk: true after reading (savings)."
+            },
+            {
+              "action": "move-to-cash",
+              "args": "{ amount_usd: number }"
+            },
+            {
+              "action": "approve-request",
+              "args": "{ request_id: string }",
+              "note": "Inspect id and deltas via (pending-requests) first."
+            },
+            {
+              "action": "reject-request",
+              "args": "{ request_id: string }",
+              "note": "Reject deceptive or unwanted requests from (pending-requests)."
+            },
+            {
+              "action": "export-backup",
+              "args": "{}"
+            },
+            {
+              "action": "wait-settlement",
+              "args": "{}"
+            },
+            {
+              "action": "reload-wallet",
+              "args": "{}"
+            },
+            {
+              "action": "clear-test-data",
+              "args": "{}"
+            }
+          ],
+          "note": "Invoke via act(action, args) with a non-empty intent."
+        }
+      },
+      "latencyMs": 3814,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check if paying CornerCoffee $10 is possible with current balance",
+      "args": {
+        "intent": "Check if paying CornerCoffee $10 is possible with current balance",
+        "expr": "(quote-pay 'CornerCoffee 10)"
+      },
+      "outcome": {
+        "success": false,
+        "error": "quote-pay: arguments rejected — 1 problem(s):\n  arg 1 — expected AString, got symbol: \"CornerCoffee\"",
+        "phantomCategory": "eval"
+      },
+      "latencyMs": 2575,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check if paying CornerCoffee $10 is possible with current balance",
+      "args": {
+        "intent": "Check if paying CornerCoffee $10 is possible with current balance",
+        "expr": "(quote-pay \"CornerCoffee\" 10)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "recipient": "CornerCoffee",
+          "amount-usd": 10,
+          "fee-usd": 0.05,
+          "max-fee-usd": 2,
+          "within-fee-cap": true,
+          "can-complete": false,
+          "inline-preview": "CornerCoffee · $10.00 + $0.05 fee",
+          "reason": "Insufficient settled Cash ($0.00); $50.00 is still arriving."
+        }
+      },
+      "latencyMs": 4340,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Wait for the $50.00 incoming payment to finish settling",
+      "args": {
+        "intent": "Wait for the $50.00 incoming payment to finish settling",
+        "action": "wait-settlement"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Still finishing — payment provider is offline; arriving funds kept separate from Cash.",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 4254,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Reload wallet to refresh state and potentially trigger settlement",
+      "args": {
+        "intent": "Reload wallet to refresh state and potentially trigger settlement",
+        "action": "reload-wallet"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Reloaded",
+          "cash-usd": 0,
+          "arriving-usd": 50
+        }
+      },
+      "latencyMs": 3310,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "discover",
+      "intent": "Check home screen for more details about the pending payment",
+      "args": {
+        "intent": "Check home screen for more details about the pending payment",
+        "expr": "(screen 'home)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "id": "home",
+          "purpose": "See your Cash, pay anyone, or request money in one tap.",
+          "cash": {
+            "cash-usd": 0,
+            "cash-formatted": "$0.00",
+            "arriving-usd": 50,
+            "arriving-formatted": "+$50.00 arriving · finishing...",
+            "arriving-status": "Payment still finishing — we will keep retrying automatically.",
+            "transit-policy": "$250 transit cap · $1 immediate auto-settle",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "arriving-note": "Transient hub float currently auto-settling into Cash, kept strictly separate until confirmed on-chain."
+          },
+          "buttons": [
+            "Pay",
+            "Request",
+            "Cash out"
+          ],
+          "pending-external-requests": 0
+        }
+      },
+      "latencyMs": 3869,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "text",
+      "intent": "",
+      "args": {
+        "raw": "## Summary\n\n### Incoming $50.00 Payment Status\nYour incoming $50.00 payment is **still finishing**. The payment provider"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Expected a structured tool call (discover, act, or done), got plain text.",
+        "phantomCategory": "parse"
+      },
+      "latencyMs": 6646,
+      "definesRecorded": []
+    },
+    {
+      "turn": 8,
+      "tool": "done",
+      "intent": "Complete the task by summarizing the incoming payment status and payment capability",
+      "args": {
+        "intent": "Complete the task by summarizing the incoming payment status and payment capability",
+        "summary": "Task completed. Found that the incoming $50.00 payment is still finishing - it remains in \"arriving\" status with the payment provider currently offline. The funds are kept separate from Cash until on-chain confirmation completes. Current Cash balance is $0.00 (settled). Cannot pay CornerCoffee $10.00 right now because there is insufficient settled Cash ($0.00), even though $50.00 is arriving. The quote-pay call confirmed can-complete: false with the reason \"Insufficient settled Cash ($0.00); $50.00 is still arriving.\" Once the payment settles into Cash, you'll have sufficient funds to make the payment."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Task completed. Found that the incoming $50.00 payment is still finishing - it remains in \"arriving\" status with the payment provider currently offline. The funds are kept separate from Cash until on-chain confirmation completes. Current Cash balance is $0.00 (settled). Cannot pay CornerCoffee $10.00 right now because there is insufficient settled Cash ($0.00), even though $50.00 is arriving. The quote-pay call confirmed can-complete: false with the reason \"Insufficient settled Cash ($0.00); $50.00 is still arriving.\" Once the payment settles into Cash, you'll have sufficient funds to make the payment."
+        }
+      },
+      "latencyMs": 6145,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Check your incoming $50.00 payment and wait to see if it finishes. Verify whether you can pay CornerCoffee $10.00 now, and explain why.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check wallet state including cash balance, pending payments, and available actions\", args={\"intent\":\"Check wallet state including cash balance, pending payments, and available actions\",\"expr\":\"(cash)\"}) -> OK: {\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"arriving-usd\":50,\"arriving-formatted\":\"+$50.00 arriving · finishing...\",\"arriving-status\":\"Payment still finishing — we will keep retrying a\nTurn 1: discover(intent=\"Check for pending incoming payments\", args={\"intent\":\"Check for pending incoming payments\",\"expr\":\"(pending-requests)\"}) -> OK: []\nTurn 1: discover(intent=\"List available wallet actions\", args={\"intent\":\"List available wallet actions\",\"expr\":\"(actions)\"}) -> OK: {\"actions\":[{\"action\":\"pay\",\"args\":\"{ to: string, amount_usd: number }\",\"quote\":\"(quote-pay to amount_usd)\",\"note\":\"Check (quote-pay ...) first to verify fee cap and settled Cash.\"\nTurn 2: discover(intent=\"Check if paying CornerCoffee $10 is possible with current balance\", args={\"intent\":\"Check if paying CornerCoffee $10 is possible with current balance\",\"expr\":\"(quote-pay 'CornerCoffee 10)\"}) -> ERROR (eval): quote-pay: arguments rejected — 1 problem(s):\n  arg 1 — expected AString, got symbol: \"CornerCoffee\"\nTurn 3: discover(intent=\"Check if paying CornerCoffee $10 is possible with current balance\", args={\"intent\":\"Check if paying CornerCoffee $10 is possible with current balance\",\"expr\":\"(quote-pay \\\"CornerCoffee\\\" 10)\"}) -> OK: {\"recipient\":\"CornerCoffee\",\"amount-usd\":10,\"fee-usd\":0.05,\"max-fee-usd\":2,\"within-fee-cap\":true,\"can-complete\":false,\"inline-preview\":\"CornerCoffee · $10.00 + $0.05 fee\",\"reason\":\nTurn 4: act(intent=\"Wait for the $50.00 incoming payment to finish settling\", args={\"intent\":\"Wait for the $50.00 incoming payment to finish settling\",\"action\":\"wait-settlement\"}) -> OK: {\"status\":\"Still finishing — payment provider is offline; arriving funds kept separate from Cash.\",\"cash-usd\":0,\"arriving-usd\":50}\nTurn 5: act(intent=\"Reload wallet to refresh state and potentially trigger settlement\", args={\"intent\":\"Reload wallet to refresh state and potentially trigger settlement\",\"action\":\"reload-wallet\"}) -> OK: {\"status\":\"Reloaded\",\"cash-usd\":0,\"arriving-usd\":50}\nTurn 6: discover(intent=\"Check home screen for more details about the pending payment\", args={\"intent\":\"Check home screen for more details about the pending payment\",\"expr\":\"(screen 'home)\"}) -> OK: {\"id\":\"home\",\"purpose\":\"See your Cash, pay anyone, or request money in one tap.\",\"cash\":{\"cash-usd\":0,\"cash-formatted\":\"$0.00\",\"arriving-usd\":50,\"arriving-formatted\":\"+$50.00 arriv\nTurn 7: text(intent=\"\", args={\"raw\":\"## Summary\\n\\n### Incoming $50.00 Payment Status\\nYour incoming $50.00 payment is **still finishing**. The payment provider\"}) -> ERROR (parse): Expected a structured tool call (discover, act, or done), got plain text.\nTurn 8: done(intent=\"Complete the task by summarizing the incoming payment status and payment capability\", args={\"intent\":\"Complete the task by summarizing the incoming payment status and payment capability\",\"summary\":\"Task completed. Found that the incoming $50.00 payment is still finishing - it remains in \\\"arriving\\\" status with the payment provider currently offline. The funds are kept separate from Cash until on-chain confirmation completes. Current Cash balance is $0.00 (settled). Cannot pay CornerCoffee $10.00 right now because there is insufficient settled Cash ($0.00), even though $50.00 is arriving. The quote-pay call confirmed can-complete: false with the reason \\\"Insufficient settled Cash ($0.00); $50.00 is still arriving.\\\" Once the payment settles into Cash, you'll have sufficient funds to make the payment.\"}) -> OK: {\"done\":true,\"summary\":\"Task completed. Found that the incoming $50.00 payment is still finishing - it remains in \\\"arriving\\\" status with the payment provider currently offline. T\nHere is what would have worked:\ndiscover(\"(cash)\"), act(\"wait-settlement\"), discover(\"(quote-pay \\\"CornerCoffee\\\" 10)\") or observe $0 Cash while $50 stays arriving, then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "**Naming**\n- `wait-settlement` implies an active blocking command, but it’s a passive state poll. This",
+    "latencyMs": 25835
+  },
+  "durationMs": 107243,
+  "finalSummary": "Task completed. Found that the incoming $50.00 payment is still finishing - it remains in \"arriving\" status with the payment provider currently offline. The funds are kept separate from Cash until on-chain confirmation completes. Current Cash balance is $0.00 (settled). Cannot pay CornerCoffee $10.00 right now because there is insufficient settled Cash ($0.00), even though $50.00 is arriving. The quote-pay call confirmed can-complete: false with the reason \"Insufficient settled Cash ($0.00); $50.00 is still arriving.\" Once the payment settles into Cash, you'll have sufficient funds to make the payment."
+}

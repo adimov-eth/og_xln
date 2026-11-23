@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { Glob } from 'bun';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 import {
@@ -22,7 +23,6 @@ const repoRoot = process.cwd();
 const readRuntimeOutputRoutingBoundary = (): string => {
   const deliveryDir = join(repoRoot, 'core/runtime/delivery');
   const paths = [
-    join(repoRoot, 'core/runtime/delivery/topology/output-routing.ts'),
     ...readdirSync(deliveryDir)
       .filter(file => file.endsWith('.ts'))
       .sort()
@@ -32,7 +32,7 @@ const readRuntimeOutputRoutingBoundary = (): string => {
 };
 
 const readText = (path: string): string => {
-  if (path === 'core/runtime/delivery/topology/output-routing.ts') return readRuntimeOutputRoutingBoundary();
+  if (path === 'core/runtime/delivery/*.ts') return readRuntimeOutputRoutingBoundary();
   if (path === 'core/orchestrator/mm-node.ts') {
     return [
       'mm-node.ts',
@@ -158,19 +158,9 @@ assertDelivery(classifyRelayDeliveryEvent({
 });
 
 const collectRuntimeSourceFiles = (dir: string): string[] =>
-  readdirSync(dir).flatMap((entry) => {
-    const fullPath = join(dir, entry);
+  [...new Glob(`${dir}/**/*.ts`).scanSync({ dot: true, onlyFiles: true })].filter((fullPath) => {
     const relPath = relative(repoRoot, fullPath);
-    if (
-      relPath.includes('/__tests__/') ||
-      relPath.includes('/scenarios/') ||
-      relPath.includes('/scripts/')
-    ) {
-      return [];
-    }
-    const stats = statSync(fullPath);
-    if (stats.isDirectory()) return collectRuntimeSourceFiles(fullPath);
-    return fullPath.endsWith('.ts') ? [fullPath] : [];
+    return !(relPath.includes('/__tests__/') || relPath.includes('/scenarios/') || relPath.includes('/scripts/'));
   });
 
 const runtimeSources = collectRuntimeSourceFiles(join(repoRoot, 'core'));
@@ -217,7 +207,7 @@ for (const [path, markers] of [
     'export const classifyUndeliveredDelivery',
     'export const deliveryFailure',
   ]],
-  ['core/runtime/delivery/topology/output-routing.ts', [
+  ['core/runtime/delivery/*.ts', [
     'enqueueEntityInputsDelivery(\n    targetRuntimeId: string,\n    envelope: RuntimeEntityInputsEnvelope,\n    ingressTimestamp?: number,\n  ): DeliveryResult;',
     'export type RuntimeEntityInputRoutingResult = {',
     'delivery: DeliveryResult;',

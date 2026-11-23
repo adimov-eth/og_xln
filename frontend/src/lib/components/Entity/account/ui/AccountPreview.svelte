@@ -622,7 +622,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
     --account-preview-text: var(--theme-text-primary, #e4e4e7);
     --account-preview-text-secondary: var(--theme-text-secondary, #a1a1aa);
     --account-preview-text-muted: var(--theme-text-muted, #71717a);
-    --account-preview-accent: var(--theme-accent, #fbbf24);
+    --account-preview-accent: var(--theme-accent, #c5cfde);
     --account-preview-credit: var(--theme-credit, #4ade80);
     --account-preview-debit: var(--theme-debit, #f43f5e);
     background: var(--account-preview-bg);
@@ -773,9 +773,9 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
     color: color-mix(in srgb, var(--account-preview-text-muted) 80%, transparent);
     font-weight: 600;
   }
-  .status-indicator.green .status-frame { color: color-mix(in srgb, var(--account-preview-credit) 76%, white 24%); }
-  .status-indicator.amber .status-frame { color: color-mix(in srgb, var(--account-preview-accent) 76%, white 24%); }
-  .status-indicator.red .status-frame { color: color-mix(in srgb, var(--account-preview-debit) 68%, white 32%); }
+  .status-indicator.green .status-frame { color: color-mix(in srgb, var(--account-preview-credit) 76%, var(--theme-text-primary, white) 24%); }
+  .status-indicator.amber .status-frame { color: color-mix(in srgb, var(--account-preview-accent) 76%, var(--theme-text-primary, white) 24%); }
+  .status-indicator.red .status-frame { color: color-mix(in srgb, var(--account-preview-debit) 68%, var(--theme-text-primary, white) 32%); }
 
   .status-coverage {
     font-family: 'JetBrains Mono', monospace;
@@ -785,9 +785,9 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
     border-radius: 3px;
     margin-left: 2px;
   }
-  .status-coverage.cov-good { color: var(--account-preview-credit); background: color-mix(in srgb, var(--account-preview-credit) 12%, transparent); }
+  .status-coverage.cov-good { color: color-mix(in srgb, var(--account-preview-credit) 70%, var(--theme-text-primary, white) 30%); background: color-mix(in srgb, var(--account-preview-credit) 12%, transparent); }
   .status-coverage.cov-caution { color: var(--account-preview-accent); background: color-mix(in srgb, var(--account-preview-accent) 12%, transparent); }
-  .status-coverage.cov-warn { color: color-mix(in srgb, var(--account-preview-debit) 72%, white 28%); background: color-mix(in srgb, var(--account-preview-debit) 15%, transparent); }
+  .status-coverage.cov-warn { color: color-mix(in srgb, var(--account-preview-debit) 72%, var(--theme-text-primary, white) 28%); background: color-mix(in srgb, var(--account-preview-debit) 15%, transparent); }
 
   .popover-dot {
     display: inline-block;
@@ -816,6 +816,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
     display: none;
     z-index: 12;
     backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   }
 
   .status-dot-wrap:hover .consensus-popover,
@@ -847,7 +848,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
   }
 
   .consensus-popover-row.dispute strong {
-    color: color-mix(in srgb, var(--account-preview-debit) 48%, white 52%);
+    color: color-mix(in srgb, var(--account-preview-debit) 48%, var(--theme-text-primary, white) 52%);
   }
 
   .consensus-popover-row.dim {
@@ -1004,7 +1005,7 @@ import type { AccountReadView } from '#lib/components/Entity/core/entity-panel-t
   }
 
   .lock-badge.outgoing {
-    color: color-mix(in srgb, var(--account-preview-debit) 72%, white 28%);
+    color: color-mix(in srgb, var(--account-preview-debit) 72%, var(--theme-text-primary, white) 28%);
     background: color-mix(in srgb, var(--account-preview-debit) 10%, transparent);
     border-color: color-mix(in srgb, var(--account-preview-debit) 24%, transparent);
   }

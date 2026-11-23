@@ -1,3 +1,4 @@
+import { bytesToHex } from './bytes/hex-bytes';
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as buffer from 'buffer';
 
@@ -51,10 +52,7 @@ export const createHash = (algorithm: string): XlnSha256Hash => {
 /** Browser-compatible asynchronous SHA-256 for non-consensus tooling. */
 export const cryptoHash = async (content: string): Promise<string> => {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
-  const hex = Array.from(new Uint8Array(digest))
-    .map(byte => byte.toString(16).padStart(2, '0'))
-    .join('');
-  return `0x${hex}`;
+  return bytesToHex(new Uint8Array(digest));
 };
 
 const getBuffer = (): typeof buffer.Buffer => {

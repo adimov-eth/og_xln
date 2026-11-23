@@ -1,0 +1,183 @@
+{
+  "episodeId": "E2_friends_split_and_settle--google/gemini-2.5-pro--baseline",
+  "scenarioId": "E2_friends_split_and_settle",
+  "modelId": "google/gemini-2.5-pro",
+  "lineage": "google-gemini-2.5-pro",
+  "specMode": "baseline",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Jamie": true,
+      "q2SamZero": true,
+      "q3Cash": true
+    },
+    "rawAnswers": "1. Jamie owes me $40.00.\n2. My tab with Sam is all settled up.\n3. I have $165.00 left in cash."
+  },
+  "turns": 6,
+  "phantoms": [
+    {
+      "episodeId": "E2_friends_split_and_settle--google/gemini-2.5-pro--baseline",
+      "scenarioId": "E2_friends_split_and_settle",
+      "modelId": "google/gemini-2.5-pro",
+      "lineage": "google-gemini-2.5-pro",
+      "specMode": "baseline",
+      "turn": 3,
+      "tool": "act",
+      "actionOrExpr": "split-bill",
+      "intent": "Split an $80.00 dinner with Jamie.",
+      "category": "validation",
+      "error": "split-bill requires { person: string, total_usd: positive number }."
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check my cash balance.",
+      "args": {
+        "expr": "(cash)",
+        "intent": "Check my cash balance."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash-usd": 180,
+          "cash-formatted": "$180.00",
+          "note": "Your money, ready to spend or cash out anytime."
+        }
+      },
+      "latencyMs": 2687,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check my contacts for Jamie and Sam.",
+      "args": {
+        "intent": "Check my contacts for Jamie and Sam.",
+        "expr": "(friends)"
+      },
+      "outcome": {
+        "success": true,
+        "data": [
+          {
+            "id": "alex",
+            "name": "Alex",
+            "balance-usd": 40,
+            "status": "Alex owes you $40.00"
+          },
+          {
+            "id": "sam",
+            "name": "Sam",
+            "balance-usd": -15,
+            "status": "You owe Sam $15.00"
+          },
+          {
+            "id": "jamie",
+            "name": "Jamie",
+            "balance-usd": 0,
+            "status": "All settled up"
+          }
+        ]
+      },
+      "latencyMs": 2492,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "act",
+      "intent": "Split an $80.00 dinner with Jamie.",
+      "args": {
+        "args": {
+          "to": "jamie",
+          "note": "Tacos",
+          "amount_usd": 80
+        },
+        "action": "split-bill",
+        "intent": "Split an $80.00 dinner with Jamie."
+      },
+      "outcome": {
+        "success": false,
+        "error": "split-bill requires { person: string, total_usd: positive number }.",
+        "phantomCategory": "validation"
+      },
+      "latencyMs": 2399,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "act",
+      "intent": "Split an $80.00 dinner with Jamie.",
+      "args": {
+        "intent": "Split an $80.00 dinner with Jamie.",
+        "args": {
+          "person": "jamie",
+          "total_usd": 80,
+          "note": "Tacos"
+        },
+        "action": "split-bill"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Added to tab",
+          "friend": "Jamie",
+          "friend-balance-usd": 40
+        }
+      },
+      "latencyMs": 2403,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Settle up with Sam.",
+      "args": {
+        "action": "settle-up",
+        "args": {
+          "person": "sam"
+        },
+        "intent": "Settle up with Sam."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "All settled up",
+          "friend": "Sam",
+          "paid-usd": 15,
+          "remaining-cash-usd": 165
+        }
+      },
+      "latencyMs": 2564,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "done",
+      "intent": "Finish the task.",
+      "args": {
+        "summary": "I successfully split an $80.00 dinner with Jamie and paid back the $15.00 I owed to Sam.",
+        "intent": "Finish the task."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "I successfully split an $80.00 dinner with Jamie and paid back the $15.00 I owed to Sam."
+        }
+      },
+      "latencyMs": 4148,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Split an $80.00 dinner 50/50 with Jamie (note: Tacos), and pay back what you owe Sam.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check my cash balance.\", args={\"expr\":\"(cash)\",\"intent\":\"Check my cash balance.\"}) -> OK: {\"cash-usd\":180,\"cash-formatted\":\"$180.00\",\"note\":\"Your money, ready to spend or cash out anytime.\"}\nTurn 2: discover(intent=\"Check my contacts for Jamie and Sam.\", args={\"intent\":\"Check my contacts for Jamie and Sam.\",\"expr\":\"(friends)\"}) -> OK: [{\"id\":\"alex\",\"name\":\"Alex\",\"balance-usd\":40,\"status\":\"Alex owes you $40.00\"},{\"id\":\"sam\",\"name\":\"Sam\",\"balance-usd\":-15,\"status\":\"You owe Sam $15.00\"},{\"id\":\"jamie\",\"name\":\"Jamie\"\nTurn 3: act(intent=\"Split an $80.00 dinner with Jamie.\", args={\"args\":{\"to\":\"jamie\",\"note\":\"Tacos\",\"amount_usd\":80},\"action\":\"split-bill\",\"intent\":\"Split an $80.00 dinner with Jamie.\"}) -> ERROR (validation): split-bill requires { person: string, total_usd: positive number }.\nTurn 4: act(intent=\"Split an $80.00 dinner with Jamie.\", args={\"intent\":\"Split an $80.00 dinner with Jamie.\",\"args\":{\"person\":\"jamie\",\"total_usd\":80,\"note\":\"Tacos\"},\"action\":\"split-bill\"}) -> OK: {\"status\":\"Added to tab\",\"friend\":\"Jamie\",\"friend-balance-usd\":40}\nTurn 5: act(intent=\"Settle up with Sam.\", args={\"action\":\"settle-up\",\"args\":{\"person\":\"sam\"},\"intent\":\"Settle up with Sam.\"}) -> OK: {\"status\":\"All settled up\",\"friend\":\"Sam\",\"paid-usd\":15,\"remaining-cash-usd\":165}\nTurn 6: done(intent=\"Finish the task.\", args={\"summary\":\"I successfully split an $80.00 dinner with Jamie and paid back the $15.00 I owed to Sam.\",\"intent\":\"Finish the task.\"}) -> OK: {\"done\":true,\"summary\":\"I successfully split an $80.00 dinner with Jamie and paid back the $15.00 I owed to Sam.\"}\nHere is what would have worked:\ndiscover(\"(friends)\"), act(\"split-bill\", { person: \"Jamie\", total_usd: 80, note: \"Tacos\" }), act(\"settle-up\", { person: \"Sam\" }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "Based on the interaction, here is concrete feedback on the interface's naming and labels:\n\n*   **Misleading Naming in `split-bill`:** The argument `total_usd` is ambiguous. It's unclear if this is the *total bill amount* to be split or the *amount one person owes*. The user initially tried `amount_usd`, which is a common parameter for sending money, leading to the error. Renaming `total_usd` to `bill_total_usd` would be more explicit.\n\n*   **Inconsistent Parameter Names:** The `split-bill` action requires the argument `person`, but the user first tried `to`. Since sending money likely uses `to`, this inconsistency makes it harder to guess the correct argument for a related action like splitting a bill. Using `person` or `contact` consistently across all person-related actions would help.\n\n*   **Missing Cues in Error Message:** The error message `split-bill requires { person: string, total_usd: positive number }` is helpful but incomplete. It doesn't mention that the optional `note` parameter is also supported. A more helpful error would list all valid parameters (required and optional) to prevent the user from having to guess again.",
+    "latencyMs": 10240
+  },
+  "durationMs": 49187,
+  "finalSummary": "I successfully split an $80.00 dinner with Jamie and paid back the $15.00 I owed to Sam."
+}

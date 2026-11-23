@@ -5,7 +5,11 @@ import { prepareEntityTxState } from '../../../state-clone';
 import { addMessage } from '../../../frame-events';
 import { findAccountKey } from '../../account-key';
 import type { AccountTxTarget } from '../account';
-import { persistVerifiedPaymentSecret, inboundPaymentTimeoutError } from '../../../../paybook/lifecycle';
+import {
+  inboundPaymentTimeoutError,
+  persistVerifiedPaymentSecret,
+  queueInboundSecretResolution,
+} from '../../../../paybook/lifecycle';
 import type { BookIntentSlotWriter } from '../../../books/book-intents';
 
 type EntityTxOf<T extends EntityTx['type']> = Extract<EntityTx, { type: T }>;
@@ -47,7 +51,7 @@ export const handleResolveHtlcLockEntityTx = (
   }
   const account = entityState.accounts.get(normalizedCounterparty);
   const lock = account?.state.locks?.get(lockId);
-  if (!lock) {
+  if (!account || !lock) {
     throw new Error(`HTLC_RESOLVE_LOCK_MISSING:${normalizedCounterparty}:${lockId}`);
   }
   if (lock.hashlock !== expectedHashlock) {
@@ -57,18 +61,24 @@ export const handleResolveHtlcLockEntityTx = (
   const newState = prepareEntityTxState(entityState, mutableFrameState);
   const outputs: EntityInput[] = [];
   const accountTxs: AccountTxTarget[] = [];
-  persistVerifiedPaymentSecret(newState, normalizedCounterparty, lock, secret, bookIntentSlot);
-  accountTxs.push({
-    accountId: normalizedCounterparty,
-    tx: {
-      type: 'htlc_resolve',
-      data: {
-        lockId,
-        outcome: 'secret',
-        secret,
+  const localIsLeft = account.state.leftEntity.toLowerCase() === entityState.entityId.toLowerCase();
+  const localSentLock = lock.senderIsLeft === localIsLeft;
+  const route = persistVerifiedPaymentSecret(newState, normalizedCounterparty, lock, secret, bookIntentSlot);
+  if (!localSentLock) {
+    queueInboundSecretResolution(newState, route, accountTxs, lockId);
+  } else {
+    accountTxs.push({
+      accountId: normalizedCounterparty,
+      tx: {
+        type: 'htlc_resolve',
+        data: {
+          lockId,
+          outcome: 'secret',
+          secret,
+        },
       },
-    },
-  });
+    });
+  }
   addMessage(newState, `🔓 HTLC resolve queued for ${normalizedCounterparty}`);
   wakeLocalProposer(entityState, outputs);
   return { newState, outputs, accountTxs };

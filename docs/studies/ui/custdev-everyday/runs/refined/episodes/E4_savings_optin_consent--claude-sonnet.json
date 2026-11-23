@@ -1,0 +1,232 @@
+{
+  "episodeId": "E4_savings_optin_consent--claude-sonnet--refined",
+  "scenarioId": "E4_savings_optin_consent",
+  "modelId": "claude-sonnet",
+  "lineage": "anthropic-claude-sonnet",
+  "specMode": "refined",
+  "passed": true,
+  "statePassed": true,
+  "comprehension": {
+    "passed": true,
+    "checks": {
+      "q1Balances": true,
+      "q2Risk": true,
+      "q3Consent": true
+    },
+    "rawAnswers": "1. Savings has $150, Cash has $350 left.\n2. Savings is lent out to earn interest and NOT protected like Cash is.\n3. Yes, explicit consent with accept_risk: true was required before moving money."
+  },
+  "turns": 7,
+  "phantoms": [
+    {
+      "episodeId": "E4_savings_optin_consent--claude-sonnet--refined",
+      "scenarioId": "E4_savings_optin_consent",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "refined",
+      "turn": 1,
+      "tool": "discover",
+      "actionOrExpr": "(screen 'savings')",
+      "intent": "Check what Savings is and its terms",
+      "category": "parse",
+      "error": "Parse Error: expecting datum after ''' at 1:16"
+    },
+    {
+      "episodeId": "E4_savings_optin_consent--claude-sonnet--refined",
+      "scenarioId": "E4_savings_optin_consent",
+      "modelId": "claude-sonnet",
+      "lineage": "anthropic-claude-sonnet",
+      "specMode": "refined",
+      "turn": 5,
+      "tool": "act",
+      "actionOrExpr": "move-to-savings",
+      "intent": "Accept Savings terms and move $150 into Savings",
+      "category": "unknown_action",
+      "error": "Unknown action 'move-to-savings'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data, request-link"
+    }
+  ],
+  "defines": [],
+  "traces": [
+    {
+      "turn": 1,
+      "tool": "discover",
+      "intent": "Check what Savings is and its terms",
+      "args": {
+        "intent": "Check what Savings is and its terms",
+        "expr": "(screen 'savings')"
+      },
+      "outcome": {
+        "success": false,
+        "error": "Parse Error: expecting datum after ''' at 1:16",
+        "phantomCategory": "parse"
+      },
+      "latencyMs": 5707,
+      "definesRecorded": []
+    },
+    {
+      "turn": 2,
+      "tool": "discover",
+      "intent": "Check what Savings is and its terms",
+      "args": {
+        "intent": "Check what Savings is and its terms",
+        "expr": "(help)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "discovery": [
+            "(screens)",
+            "(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)",
+            "(cash)",
+            "(quote-pay \"CornerCoffee\" 65)",
+            "(quote-cash-out 50)",
+            "(friends)",
+            "(savings)",
+            "(activity)",
+            "(pending-requests)",
+            "(terms)",
+            "(actions)",
+            "(actions 'pay)",
+            "(help 'split-bill)"
+          ],
+          "note": "Preview fees/Cash with (quote-pay ...) or (quote-cash-out ...) before acting; inspect external links with (pending-requests)."
+        }
+      },
+      "latencyMs": 4396,
+      "definesRecorded": []
+    },
+    {
+      "turn": 3,
+      "tool": "discover",
+      "intent": "Check Savings account details and terms",
+      "args": {
+        "intent": "Check Savings account details and terms",
+        "expr": "(savings)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "balance-usd": 0,
+          "balance-formatted": "$0.00",
+          "apy": "4.2%",
+          "consent-accepted": false,
+          "consent-required": true,
+          "required-consent-param": {
+            "accept_risk": true
+          },
+          "note": "Lent to earn interest — NOT protected like Cash; separate from Cash and requires explicit consent. Explicit accept_risk: true required."
+        }
+      },
+      "latencyMs": 3758,
+      "definesRecorded": []
+    },
+    {
+      "turn": 4,
+      "tool": "discover",
+      "intent": "Check terms to understand Savings vs Cash difference",
+      "args": {
+        "intent": "Check terms to understand Savings vs Cash difference",
+        "expr": "(terms)"
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "cash": {
+            "text": "Cash",
+            "note": "Your money, ready to spend or cash out anytime.",
+            "noteWhen": "always"
+          },
+          "arriving": {
+            "text": "Arriving",
+            "note": "Finishing automatically before it joins your Cash.",
+            "noteWhen": "non-zero"
+          },
+          "people": {
+            "text": "Friends & tabs",
+            "note": "Shared bills and tabs with people you know.",
+            "noteWhen": "non-zero"
+          },
+          "owed": {
+            "text": "You owe",
+            "note": "Settle up in one tap whenever you are ready.",
+            "noteWhen": "non-zero"
+          },
+          "savings": {
+            "text": "Savings",
+            "note": "Lent to earn interest — not protected like Cash; separate from Cash and requires explicit consent.",
+            "noteWhen": "always"
+          }
+        }
+      },
+      "latencyMs": 4207,
+      "definesRecorded": []
+    },
+    {
+      "turn": 5,
+      "tool": "act",
+      "intent": "Accept Savings terms and move $150 into Savings",
+      "args": {
+        "intent": "Accept Savings terms and move $150 into Savings",
+        "action": "move-to-savings",
+        "args": {
+          "amount_usd": 150,
+          "accept_risk": true
+        }
+      },
+      "outcome": {
+        "success": false,
+        "error": "Unknown action 'move-to-savings'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data, request-link",
+        "phantomCategory": "unknown_action"
+      },
+      "latencyMs": 5088,
+      "definesRecorded": []
+    },
+    {
+      "turn": 6,
+      "tool": "act",
+      "intent": "Move $150 into Savings after accepting risk",
+      "args": {
+        "intent": "Move $150 into Savings after accepting risk",
+        "action": "add-savings",
+        "args": {
+          "amount_usd": 150,
+          "accept_risk": true
+        }
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "status": "Earning interest in Savings",
+          "savings-usd": 150,
+          "cash-usd": 350
+        }
+      },
+      "latencyMs": 4800,
+      "definesRecorded": []
+    },
+    {
+      "turn": 7,
+      "tool": "done",
+      "intent": "Completed moving $150 to Savings after reviewing terms",
+      "args": {
+        "intent": "Completed moving $150 to Savings after reviewing terms",
+        "summary": "Reviewed Savings terms: 4.2% APY, lent to earn interest, NOT protected like Cash. Accepted risk and moved $150 from Cash into Savings. New balances: Savings $150, Cash $350."
+      },
+      "outcome": {
+        "success": true,
+        "data": {
+          "done": true,
+          "summary": "Reviewed Savings terms: 4.2% APY, lent to earn interest, NOT protected like Cash. Accepted risk and moved $150 from Cash into Savings. New balances: Savings $150, Cash $350."
+        }
+      },
+      "latencyMs": 6826,
+      "definesRecorded": []
+    }
+  ],
+  "postMortem": {
+    "prompt": "You were given this task: \"Check Savings terms, then move $150.00 into Savings to earn interest after accepting what Savings means compared to Cash.\"\nNote: you finished the task, but hit tool/surface errors along the way.\nHere is what you tried:\nTurn 1: discover(intent=\"Check what Savings is and its terms\", args={\"intent\":\"Check what Savings is and its terms\",\"expr\":\"(screen 'savings')\"}) -> ERROR (parse): Parse Error: expecting datum after ''' at 1:16\nTurn 2: discover(intent=\"Check what Savings is and its terms\", args={\"intent\":\"Check what Savings is and its terms\",\"expr\":\"(help)\"}) -> OK: {\"discovery\":[\"(screens)\",\"(screen 'home) | (screen 'people) | (screen 'earn) | (screen 'activity)\",\"(cash)\",\"(quote-pay \\\"CornerCoffee\\\" 65)\",\"(quote-cash-out 50)\",\"(friends)\",\"(s\nTurn 3: discover(intent=\"Check Savings account details and terms\", args={\"intent\":\"Check Savings account details and terms\",\"expr\":\"(savings)\"}) -> OK: {\"balance-usd\":0,\"balance-formatted\":\"$0.00\",\"apy\":\"4.2%\",\"consent-accepted\":false,\"consent-required\":true,\"required-consent-param\":{\"accept_risk\":true},\"note\":\"Lent to earn intere\nTurn 4: discover(intent=\"Check terms to understand Savings vs Cash difference\", args={\"intent\":\"Check terms to understand Savings vs Cash difference\",\"expr\":\"(terms)\"}) -> OK: {\"cash\":{\"text\":\"Cash\",\"note\":\"Your money, ready to spend or cash out anytime.\",\"noteWhen\":\"always\"},\"arriving\":{\"text\":\"Arriving\",\"note\":\"Finishing automatically before it joins y\nTurn 5: act(intent=\"Accept Savings terms and move $150 into Savings\", args={\"intent\":\"Accept Savings terms and move $150 into Savings\",\"action\":\"move-to-savings\",\"args\":{\"amount_usd\":150,\"accept_risk\":true}}) -> ERROR (unknown_action): Unknown action 'move-to-savings'. Available actions: pay, cash-out, split-bill, settle-up, add-savings, move-to-cash, approve-request, reject-request, export-backup, wait-settlement, reload-wallet, clear-test-data, request-link\nTurn 6: act(intent=\"Move $150 into Savings after accepting risk\", args={\"intent\":\"Move $150 into Savings after accepting risk\",\"action\":\"add-savings\",\"args\":{\"amount_usd\":150,\"accept_risk\":true}}) -> OK: {\"status\":\"Earning interest in Savings\",\"savings-usd\":150,\"cash-usd\":350}\nTurn 7: done(intent=\"Completed moving $150 to Savings after reviewing terms\", args={\"intent\":\"Completed moving $150 to Savings after reviewing terms\",\"summary\":\"Reviewed Savings terms: 4.2% APY, lent to earn interest, NOT protected like Cash. Accepted risk and moved $150 from Cash into Savings. New balances: Savings $150, Cash $350.\"}) -> OK: {\"done\":true,\"summary\":\"Reviewed Savings terms: 4.2% APY, lent to earn interest, NOT protected like Cash. Accepted risk and moved $150 from Cash into Savings. New balances: Savings\nHere is what would have worked:\ndiscover(\"(savings)\"), act(\"add-savings\", { amount_usd: 150, accept_risk: true }), then done().\nWhat made it hard to find the working approach? Be concrete about naming, missing cues, or misleading labels.",
+    "response": "Looking at your trace:\n\n**Turn 1: `(screen 'savings')` parse error**\n\nThe error message `\"expecting datum after '''\"` is accurate but cryptic if you don't know Scheme quoting rules. The real issue: `(screens)` lists `'home`, `'people`, `'earn`, `'activity` — no `'savings`. You have a `(savings)` function (Turn 3 proves it) but no `(screen 'savings)`. \n\n**Missing cue:** When `(screens)` returned four options and none were \"savings\", I should have inferred that \"savings\" is not a screen, it's probably a data function like `(cash)`. But `(cash)` appeared in the same help list as `(screens)`, creating no distinction between \"screen nav\" and \"data query\" functions. They look identical in the list.\n\n**What would help:** Group or label the help output — `\"Screens: (screen 'home) …\"` vs `\"Queries: (cash), (savings), (friends) …\"` — or return a gentler error when quoting a function that exists unquoted: `\"'savings' not found as screen. Try (savings) to query balance.\"`\n\n---\n\n**Turn 5: `move-to-savings` doesn't exist**\n\nI invented `move-to-savings` because the task said \"move $150 into Savings.\" The error listed `add-savings` and `move-to-cash` as available actions. \n\n**Misleading asymmetry:** `move-to-cash` exists but `move-to-savings` does not. The pair implies a parallel that isn't there. `add-savings` sounds like \"add a new savings account\" or \"add to existing savings\", not \"move cash into savings.\" It's not obviously the inverse of `move-to-cash`.\n\n**What would help:** Either rename `add-savings` → `move-to-savings` for symmetry, or when `move-to-savings` is attempted, error message could say `\"Did you mean 'add-savings'?\"` The current error just dumps the full action list with no hint about proximity.\n\n---\n\n**General:**\n\n- `(help)` returned a flat list with no grouping or arity hints. I didn't know `(savings)` took no args vs `(quote-pay ...)` taking two until I tried them.\n- `consent-required: true` and `required-consent-param: {\"accept_risk\": true}` in Turn 3 was clear. That part worked.\n- The task completion was fast once I hit Turn 6. The friction was entirely in Turn 1 (screen vs function ambiguity) and Turn 5 (action name mismatch).\n\n**Concrete fixes:**\n\n1. Help output: cluster by type (screens, queries, actions) or add a sentence: `\"Screens are navigated with (screen 'name). Data is fetched with (cash), (savings), (friends). Actions use (act …).\"`\n2. Error on `'savings`: `\"No screen named 'savings'. Did you mean the query (savings)?\"` \n3. Error on `move-to-savings`: `\"Unknown action 'move-to-savings'. Did you mean 'add-savings'?\"`\n4. Rename: `add-savings` → `move-to-savings` or document that \"add\" means \"move from cash.\"\n\nThe names aren't wrong individually; the asymmetry (`move-to-cash` / `add-savings`) creates a false picture of the action space.",
+    "latencyMs": 27426
+  },
+  "durationMs": 68958,
+  "finalSummary": "Reviewed Savings terms: 4.2% APY, lent to earn interest, NOT protected like Cash. Accepted risk and moved $150 from Cash into Savings. New balances: Savings $150, Cash $350."
+}
