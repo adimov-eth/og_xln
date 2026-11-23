@@ -10,9 +10,12 @@ test('a board mixing this wallet\'s seat with another wallet\'s is refused', () 
   expect(splitBoardRefusal([{ name: mine }, { name: theirs.toUpperCase().replace('0X', '0x') }], local)).toBe(SPLIT_BOARD_REFUSAL);
 });
 
-test('boards held entirely by this wallet, or not by it at all, are allowed', () => {
+test('two of this wallet\'s own signers are refused too: Formation imports only one seat', () => {
+  expect(splitBoardRefusal([{ name: mine }, { name: alsoMine }], local)).toBe(SPLIT_BOARD_REFUSAL);
+});
+
+test('a one-signer board of this wallet, or a board it does not sit on, is allowed', () => {
   expect(splitBoardRefusal([{ name: mine }], local)).toBeNull();
-  expect(splitBoardRefusal([{ name: mine }, { name: alsoMine }], local)).toBeNull();
   // A registered board this wallet does not sit on is never imported here, so nothing halts.
-  expect(splitBoardRefusal([{ name: theirs }], local)).toBeNull();
+  expect(splitBoardRefusal([{ name: theirs }, { name: '0x' + 'cc'.repeat(20) }], local)).toBeNull();
 });
